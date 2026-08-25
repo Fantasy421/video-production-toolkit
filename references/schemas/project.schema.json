@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Video Production Toolkit Project",
+  "type": "object",
+  "required": ["schema_version", "project_id", "workflow", "phase"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "project_id": {"type": "string", "minLength": 1},
+    "workflow": {"type": "string", "minLength": 1},
+    "phase": {
+      "enum": [
+        "initialized",
+        "content_ready",
+        "direction_ready",
+        "storyboard_ready",
+        "production_ready",
+        "assembled",
+        "review_ready",
+        "handoff_ready"
+      ]
+    }
+  },
+  "additionalProperties": false
+}
