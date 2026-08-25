@@ -1,4 +1,6 @@
 import json
+import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 import unittest
@@ -6,6 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from scripts.toolkit import artifacts
 from scripts.toolkit.artifacts import approve_artifact, create_artifact
 
 
@@ -122,6 +125,50 @@ class ArtifactTests(unittest.TestCase):
 
         self.assertEqual(1, sum(result == "exists" for result in results))
         self.assertEqual(1, sum(isinstance(result, Path) for result in results))
+
+    def test_successful_artifact_creation_leaves_no_lock(self):
+        """Catches a transient acquisition lock becoming durable project state."""
+        create_artifact(self.root, self.artifact)
+
+        self.assertFalse((self.root / "artifacts" / ".locks" / "style-v1.json").exists())
+
+    def test_keyboard_interrupt_during_publication_releases_lock(self):
+        """Catches interruption leaving a lock that permanently blocks retries."""
+        publish_json = artifacts._publish_json
+
+        def interrupt_artifact_publication(destination, payload):
+            if destination.parent.name == ".locks":
+                return publish_json(destination, payload)
+            raise KeyboardInterrupt
+
+        with patch(
+            "scripts.toolkit.artifacts._publish_json", side_effect=interrupt_artifact_publication
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                create_artifact(self.root, self.artifact)
+
+        self.assertFalse((self.root / "artifacts" / ".locks" / "style-v1.json").exists())
+        create_artifact(self.root, self.artifact)
+
+    def test_dead_pid_lock_is_reclaimed_for_retry(self):
+        """Catches a crashed process permanently reserving an unpublished artifact ID."""
+        lock = self.root / "artifacts" / ".locks" / "style-v1.json"
+        lock.parent.mkdir(parents=True)
+        lock.write_text(json.dumps({"pid": 999999, "timestamp": time.time()}), encoding="utf-8")
+
+        with patch("scripts.toolkit.artifacts._pid_is_alive", return_value=False):
+            create_artifact(self.root, self.artifact)
+
+        self.assertFalse(lock.exists())
+
+    def test_live_pid_lock_refuses_concurrent_writer(self):
+        """Catches a live writer's lock being reclaimed by a concurrent create."""
+        lock = self.root / "artifacts" / ".locks" / "style-v1.json"
+        lock.parent.mkdir(parents=True)
+        lock.write_text(json.dumps({"pid": os.getpid(), "timestamp": time.time()}), encoding="utf-8")
+
+        with self.assertRaises(FileExistsError):
+            create_artifact(self.root, self.artifact)
 
 
 if __name__ == "__main__":

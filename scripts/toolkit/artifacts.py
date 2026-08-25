@@ -3,6 +3,7 @@
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
@@ -36,12 +37,11 @@ def create_artifact(root: Path, artifact: dict[str, Any]) -> Path:
 
     destination = artifacts_root / artifact["type"] / f"{artifact_id}.json"
     _require_within(artifacts_root, destination)
-    reservation = _reserve_artifact_id(artifacts_root, artifact_id)
+    lock = _acquire_artifact_lock(artifacts_root, artifact_id)
     try:
         _publish_json(destination, payload)
-    except Exception:
-        reservation.unlink(missing_ok=True)
-        raise
+    finally:
+        lock.unlink(missing_ok=True)
     return destination
 
 
@@ -95,15 +95,48 @@ def _read_valid_artifact(path: Path) -> Optional[dict[str, Any]]:
     return artifact
 
 
-def _reserve_artifact_id(artifacts_root: Path, artifact_id: str) -> Path:
-    reservation = artifacts_root / ".ids" / f"{artifact_id}.reservation"
-    reservation.parent.mkdir(parents=True, exist_ok=True)
+def _acquire_artifact_lock(artifacts_root: Path, artifact_id: str) -> Path:
+    lock = artifacts_root / ".locks" / f"{artifact_id}.json"
+    payload = _serialize_json({"pid": os.getpid(), "timestamp": time.time()})
+    while True:
+        try:
+            _publish_json(lock, payload)
+            return lock
+        except FileExistsError:
+            if artifact_id in _artifact_paths_by_id(artifacts_root):
+                raise FileExistsError(f"artifact already exists: {artifact_id}") from None
+            owner = _read_lock(lock)
+            if owner is None or _pid_is_alive(owner["pid"]):
+                raise FileExistsError(f"artifact is locked: {artifact_id}") from None
+            lock.unlink(missing_ok=True)
+
+
+def _read_lock(lock: Path) -> Optional[dict[str, Any]]:
     try:
-        with reservation.open("x", encoding="utf-8") as stream:
-            stream.write(f"{artifact_id}\n")
-    except FileExistsError:
-        raise FileExistsError(f"artifact already exists: {artifact_id}") from None
-    return reservation
+        owner = json.loads(lock.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(owner, dict):
+        return None
+    pid = owner.get("pid")
+    timestamp = owner.get("timestamp")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid < 1:
+        return None
+    if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)):
+        return None
+    return owner
+
+
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+    return True
 
 
 def _serialize_json(value: dict[str, Any]) -> str:
