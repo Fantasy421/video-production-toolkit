@@ -1,8 +1,10 @@
 """Durable immutable artifacts and user approvals for toolkit projects."""
 
 import json
+import os
+import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from uuid import uuid4
 
 
@@ -18,13 +20,10 @@ ARTIFACT_STATUSES = {"draft", "approved", "stale", "superseded", "invalid"}
 
 
 def create_artifact(root: Path, artifact: dict[str, Any]) -> Path:
-    """Persist one immutable artifact metadata record and return its path.
-
-    Every declared parent must already be durable in the project, so a stored
-    record never contains a dangling DAG edge.
-    """
+    """Persist one immutable artifact metadata record and return its path."""
     root = Path(root)
     _validate_artifact(artifact)
+    payload = _serialize_json(artifact)
     artifacts_root = root / "artifacts"
     existing = _artifact_paths_by_id(artifacts_root)
     artifact_id = artifact["artifact_id"]
@@ -36,10 +35,13 @@ def create_artifact(root: Path, artifact: dict[str, Any]) -> Path:
         raise ValueError(f"artifact parents do not exist: {', '.join(missing_parents)}")
 
     destination = artifacts_root / artifact["type"] / f"{artifact_id}.json"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with destination.open("x", encoding="utf-8") as stream:
-        json.dump(artifact, stream, separators=(",", ":"))
-        stream.write("\n")
+    _require_within(artifacts_root, destination)
+    reservation = _reserve_artifact_id(artifacts_root, artifact_id)
+    try:
+        _publish_json(destination, payload)
+    except Exception:
+        reservation.unlink(missing_ok=True)
+        raise
     return destination
 
 
@@ -55,16 +57,15 @@ def approve_artifact(root: Path, target_id: str, scope: str, notes: str) -> str:
 
     approval_id = f"approval-{uuid4().hex}"
     approval_path = root / "approvals" / f"{approval_id}.json"
-    approval_path.parent.mkdir(parents=True, exist_ok=True)
     approval = {
         "approval_id": approval_id,
         "target_id": target_id,
         "scope": scope,
         "notes": notes,
     }
-    with approval_path.open("x", encoding="utf-8") as stream:
-        json.dump(approval, stream, separators=(",", ":"))
-        stream.write("\n")
+    payload = _serialize_json(approval)
+    _require_within(root / "approvals", approval_path)
+    _publish_json(approval_path, payload)
     return approval_id
 
 
@@ -73,11 +74,63 @@ def _artifact_paths_by_id(artifacts_root: Path) -> dict[str, Path]:
         return {}
     paths: dict[str, Path] = {}
     for path in artifacts_root.glob("*/*.json"):
-        artifact_id = path.stem
+        artifact = _read_valid_artifact(path)
+        if artifact is None:
+            continue
+        artifact_id = artifact["artifact_id"]
         if artifact_id in paths:
             raise ValueError(f"duplicate artifact id in project: {artifact_id}")
         paths[artifact_id] = path
     return paths
+
+
+def _read_valid_artifact(path: Path) -> Optional[dict[str, Any]]:
+    try:
+        artifact = json.loads(path.read_text(encoding="utf-8"))
+        _validate_artifact(artifact)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if path.name != f"{artifact['artifact_id']}.json":
+        return None
+    return artifact
+
+
+def _reserve_artifact_id(artifacts_root: Path, artifact_id: str) -> Path:
+    reservation = artifacts_root / ".ids" / f"{artifact_id}.reservation"
+    reservation.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with reservation.open("x", encoding="utf-8") as stream:
+            stream.write(f"{artifact_id}\n")
+    except FileExistsError:
+        raise FileExistsError(f"artifact already exists: {artifact_id}") from None
+    return reservation
+
+
+def _serialize_json(value: dict[str, Any]) -> str:
+    return json.dumps(value, separators=(",", ":")) + "\n"
+
+
+def _publish_json(destination: Path, payload: str) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Optional[Path] = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=destination.parent, delete=False
+        ) as stream:
+            stream.write(payload)
+            temporary_path = Path(stream.name)
+        os.link(temporary_path, destination)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def _require_within(root: Path, destination: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    try:
+        destination.resolve().relative_to(root.resolve())
+    except ValueError:
+        raise ValueError("artifact destination must remain inside its storage directory") from None
 
 
 def _validate_artifact(artifact: dict[str, Any]) -> None:
@@ -90,8 +143,8 @@ def _validate_artifact(artifact: dict[str, Any]) -> None:
         value = artifact[key]
         if not isinstance(value, str) or not value:
             raise ValueError(f"artifact {key} must be a non-empty string")
-    if "/" in artifact["artifact_id"] or "/" in artifact["type"]:
-        raise ValueError("artifact_id and type cannot contain path separators")
+    if not _is_safe_component(artifact["artifact_id"]) or not _is_safe_component(artifact["type"]):
+        raise ValueError("artifact_id and type must be safe single path components")
     if isinstance(artifact["version"], bool) or not isinstance(artifact["version"], int) or artifact["version"] < 1:
         raise ValueError("artifact version must be a positive integer")
     if artifact["status"] not in ARTIFACT_STATUSES:
@@ -102,3 +155,7 @@ def _validate_artifact(artifact: dict[str, Any]) -> None:
         raise ValueError("artifact parents must be a list of non-empty IDs")
     if len(set(artifact["parents"])) != len(artifact["parents"]):
         raise ValueError("artifact parents must not contain duplicates")
+
+
+def _is_safe_component(value: str) -> bool:
+    return value not in {".", ".."} and "/" not in value and "\\" not in value
