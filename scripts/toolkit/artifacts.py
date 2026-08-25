@@ -100,12 +100,16 @@ def _read_valid_artifact(path: Path) -> Optional[dict[str, Any]]:
 
 def _acquire_artifact_lock(artifacts_root: Path, artifact_id: str) -> tuple[Path, int]:
     lock = artifacts_root / ".locks" / f"{artifact_id}.json"
-    payload = _serialize_json({"pid": os.getpid(), "timestamp": time.time()})
+    owner_token = uuid4().hex
+    payload = _serialize_json(
+        {"pid": os.getpid(), "timestamp": time.time(), "owner_token": owner_token}
+    )
     while True:
         try:
             _publish_json(lock, payload)
             return _hold_published_lock(lock)
         except FileExistsError:
+            _remove_lock_if_owned(lock, owner_token)
             if artifact_id in _artifact_paths_by_id(artifacts_root):
                 raise FileExistsError(f"artifact already exists: {artifact_id}") from None
             try:
@@ -123,6 +127,9 @@ def _acquire_artifact_lock(artifacts_root: Path, artifact_id: str) -> tuple[Path
                 lock.unlink(missing_ok=True)
             finally:
                 os.close(guard[1])
+        except BaseException:
+            _remove_lock_if_owned(lock, owner_token)
+            raise
 
 
 def _hold_published_lock(lock: Path) -> tuple[Path, int]:
@@ -150,6 +157,31 @@ def _release_artifact_lock(lock: tuple[Path, int]) -> None:
             path.unlink(missing_ok=True)
     finally:
         os.close(descriptor)
+
+
+def _remove_lock_if_owned(lock: Path, owner_token: str) -> None:
+    try:
+        descriptor = os.open(lock, os.O_RDONLY)
+    except FileNotFoundError:
+        return
+    try:
+        if _lock_owner_token(descriptor) != owner_token:
+            return
+        if _is_current_lock(lock, descriptor):
+            lock.unlink(missing_ok=True)
+    finally:
+        os.close(descriptor)
+
+
+def _lock_owner_token(descriptor: int) -> Optional[str]:
+    try:
+        owner = json.loads(os.read(descriptor, 65_537).decode("utf-8"))
+    except (OSError, UnicodeDecodeError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(owner, dict):
+        return None
+    owner_token = owner.get("owner_token")
+    return owner_token if isinstance(owner_token, str) else None
 
 
 def _is_current_lock(lock: Path, descriptor: int) -> bool:

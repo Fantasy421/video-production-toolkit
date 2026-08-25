@@ -150,6 +150,55 @@ class ArtifactTests(unittest.TestCase):
         self.assertFalse((self.root / "artifacts" / ".locks" / "style-v1.json").exists())
         create_artifact(self.root, self.artifact)
 
+    def test_keyboard_interrupt_during_published_lock_retry_allows_retry(self):
+        """Catches interruption during flock retry leaving the creator's live lock."""
+        lock = self.root / "artifacts" / ".locks" / "style-v1.json"
+
+        with patch(
+            "scripts.toolkit.artifacts._hold_lock", side_effect=BlockingIOError
+        ), patch(
+            "scripts.toolkit.artifacts.time.sleep", side_effect=KeyboardInterrupt
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                create_artifact(self.root, self.artifact)
+
+        self.assertEqual(
+            self.root / "artifacts" / "style-pack" / "style-v1.json",
+            create_artifact(self.root, self.artifact),
+        )
+        self.assertFalse(lock.exists())
+
+    def test_interrupted_lock_retry_preserves_replacement_owner(self):
+        """Catches failed-acquisition cleanup unlinking a replacement live lock."""
+        lock = self.root / "artifacts" / ".locks" / "style-v1.json"
+        replacement = lock.with_name("replacement.json")
+        replacement_owner = {
+            "pid": os.getpid(),
+            "timestamp": time.time(),
+            "owner_token": "replacement-owner",
+        }
+
+        def replace_lock_then_interrupt(_delay):
+            artifacts._publish_json(
+                replacement, artifacts._serialize_json(replacement_owner)
+            )
+            os.replace(replacement, lock)
+            raise KeyboardInterrupt
+
+        with patch(
+            "scripts.toolkit.artifacts._hold_lock", side_effect=BlockingIOError
+        ), patch(
+            "scripts.toolkit.artifacts.time.sleep",
+            side_effect=replace_lock_then_interrupt,
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                create_artifact(self.root, self.artifact)
+
+        self.assertEqual(
+            replacement_owner, json.loads(lock.read_text(encoding="utf-8"))
+        )
+        lock.unlink()
+
     def test_dead_pid_lock_is_reclaimed_for_retry(self):
         """Catches a crashed process permanently reserving an unpublished artifact ID."""
         lock = self.root / "artifacts" / ".locks" / "style-v1.json"

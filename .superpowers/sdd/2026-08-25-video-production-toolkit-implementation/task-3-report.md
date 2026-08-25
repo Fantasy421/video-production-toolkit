@@ -34,6 +34,20 @@ Verification: `PYTHONPYCACHEPREFIX=/private/tmp/video_toolkit_pycache python3 -m
 
 Fix concerns: none.
 
+Fix round 5/5 status: complete
+
+Fix commit: recorded with this report (`fix: clean interrupted artifact lock acquisition`)
+
+Root cause: after atomically publishing its live-PID JSON lock, the creator retried `BlockingIOError` until it could hold the inode. `KeyboardInterrupt`, `SystemExit`, cancellation, or another `BaseException` escaping anywhere before `_hold_published_lock` returned bypassed both the collision handler and the normal handle-release path, leaving the creator's live lock permanently unreclaimable.
+
+Fix evidence: each acquisition now writes an opaque `owner_token` alongside PID and timestamp. Publication through handle return is covered by `BaseException` cleanup. Cleanup opens the visible lock, verifies the token through that descriptor, then verifies the pathname still identifies the same inode before unlinking; a missing path, replacement inode, malformed record, or another owner's token is preserved. Returned handles retain the prior inode-checked release behavior, and collision-path writers remain fail-fast.
+
+Regression evidence: `test_keyboard_interrupt_during_published_lock_retry_allows_retry` deterministically makes the creator encounter `BlockingIOError`, interrupts the retry sleep, then proves a real second creation succeeds. The regression failed before the fix because the second attempt reported `artifact is locked: style-v1`. `test_interrupted_lock_retry_preserves_replacement_owner` replaces the creator's pathname during that retry and proves interruption cleanup leaves the replacement owner's live lock intact. All earlier publication-gap, competing-reclaimer, and displaced-handle regressions remain green.
+
+Verification: `PYTHONPYCACHEPREFIX=/tmp/video_toolkit_task3_fix5_full_pycache python3 -m unittest discover -s tests -v` — 28 passed. `PYTHONPYCACHEPREFIX=/tmp/video_toolkit_task3_fix5_compile_pycache python3 -m py_compile scripts/toolkit/*.py scripts/*.py tests/*.py` — passed. `git diff --check` — passed.
+
+Fix concerns: none.
+
 Fix round 4/5 status: complete
 
 Fix commit: recorded with this report (`fix: retain published artifact lock ownership`)
