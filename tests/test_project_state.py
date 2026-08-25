@@ -60,6 +60,34 @@ class ProjectStateTests(unittest.TestCase):
             self.assertEqual("direction_ready", replay_events(root)["phase"])
             self.assertEqual(3, len((root / "events" / "events.jsonl").read_text(encoding="utf-8").splitlines()))
 
+    def test_initialize_rejects_any_existing_state_file_before_writing(self):
+        """Catches reinitialization deleting an existing project snapshot or event log."""
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            project_path = root / "project.json"
+            project_path.write_text('{"project_id":"original"}\n', encoding="utf-8")
+
+            with self.assertRaises(FileExistsError):
+                initialize_project(root, "kv-new", "knowledge-video")
+
+            self.assertEqual('{"project_id":"original"}\n', project_path.read_text(encoding="utf-8"))
+            self.assertFalse((root / "events").exists())
+
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            event_log = root / "events" / "events.jsonl"
+            event_log.parent.mkdir()
+            event_log.write_text('{"event":"project.initialized","project_id":"original"}\n', encoding="utf-8")
+
+            with self.assertRaises(FileExistsError):
+                initialize_project(root, "kv-new", "knowledge-video")
+
+            self.assertEqual(
+                '{"event":"project.initialized","project_id":"original"}\n',
+                event_log.read_text(encoding="utf-8"),
+            )
+            self.assertFalse((root / "project.json").exists())
+
     def test_cli_prints_project_path_and_id_for_initialized_project(self):
         """Catches a CLI that initializes elsewhere or emits non-contract output."""
         with TemporaryDirectory() as folder:

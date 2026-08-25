@@ -31,6 +31,11 @@ RUNTIME_DIRECTORIES = (
 def initialize_project(target: Path, project_id: str, workflow: str) -> dict[str, Any]:
     """Initialize *target* with an atomic project snapshot and initial event."""
     root = Path(target)
+    project_path = root / "project.json"
+    event_log = root / "events" / "events.jsonl"
+    if project_path.exists() or event_log.exists():
+        raise FileExistsError(f"project state already exists at {root}")
+
     root.mkdir(parents=True, exist_ok=True)
     for directory in RUNTIME_DIRECTORIES:
         (root / directory).mkdir(exist_ok=True)
@@ -42,7 +47,7 @@ def initialize_project(target: Path, project_id: str, workflow: str) -> dict[str
         "phase": "initialized",
     }
     _write_project_atomically(root, state)
-    (root / "events" / "events.jsonl").write_text("", encoding="utf-8")
+    event_log.write_text("", encoding="utf-8")
     append_event(
         root,
         {
