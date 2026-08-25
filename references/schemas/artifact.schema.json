@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Video Production Toolkit Artifact",
+  "type": "object",
+  "required": ["artifact_id", "type", "version", "status", "parents", "path"],
+  "properties": {
+    "artifact_id": {"type": "string", "minLength": 1},
+    "type": {"type": "string", "minLength": 1},
+    "version": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["draft", "approved", "stale", "superseded", "invalid"]},
+    "parents": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "path": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": true
+}
