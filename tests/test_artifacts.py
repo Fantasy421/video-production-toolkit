@@ -170,6 +170,61 @@ class ArtifactTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             create_artifact(self.root, self.artifact)
 
+    def test_creator_waits_for_contender_in_publish_to_flock_gap(self):
+        """Catches a creator abandoning its live-PID lock before it can hold the inode."""
+        lock = self.root / "artifacts" / ".locks" / "style-v1.json"
+        publish_json = artifacts._publish_json
+        hold_lock = artifacts._hold_lock
+        lock_published = Event()
+        contender_holds_lock = Event()
+        creator_encountered_contention = Event()
+        release_contender = Event()
+
+        def publish_then_wait_for_contender(destination, payload):
+            result = publish_json(destination, payload)
+            if destination == lock:
+                lock_published.set()
+                self.assertTrue(contender_holds_lock.wait(timeout=1))
+            return result
+
+        def observe_creator_hold(path, *args, **kwargs):
+            if contender_holds_lock.is_set() and not release_contender.is_set():
+                creator_encountered_contention.set()
+                raise BlockingIOError
+            return hold_lock(path, *args, **kwargs)
+
+        def hold_creator_lock_as_contender():
+            self.assertTrue(lock_published.wait(timeout=1))
+            guard = hold_lock(lock)
+            contender_holds_lock.set()
+            try:
+                self.assertTrue(release_contender.wait(timeout=1))
+            finally:
+                os.close(guard[1])
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            contender = executor.submit(hold_creator_lock_as_contender)
+            try:
+                with patch(
+                    "scripts.toolkit.artifacts._publish_json",
+                    side_effect=publish_then_wait_for_contender,
+                ), patch(
+                    "scripts.toolkit.artifacts._hold_lock",
+                    side_effect=observe_creator_hold,
+                ):
+                    creation = executor.submit(create_artifact, self.root, self.artifact)
+                    self.assertTrue(creator_encountered_contention.wait(timeout=1))
+                    release_contender.set()
+                    self.assertEqual(
+                        self.root / "artifacts" / "style-pack" / "style-v1.json",
+                        creation.result(timeout=1),
+                    )
+            finally:
+                release_contender.set()
+                contender.result(timeout=1)
+
+        self.assertFalse(lock.exists())
+
     def test_post_lock_scan_rejects_artifact_published_in_another_type(self):
         """Catches a cross-type artifact appearing between the scan and lock acquisition."""
         acquire_lock = artifacts._acquire_artifact_lock

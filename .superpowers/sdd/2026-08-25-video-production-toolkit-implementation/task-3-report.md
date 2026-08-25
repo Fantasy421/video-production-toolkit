@@ -34,6 +34,20 @@ Verification: `PYTHONPYCACHEPREFIX=/private/tmp/video_toolkit_pycache python3 -m
 
 Fix concerns: none.
 
+Fix round 4/5 status: complete
+
+Fix commit: recorded with this report (`fix: retain published artifact lock ownership`)
+
+Root cause: the lock creator atomically published its live-PID JSON path and only afterward attempted a nonblocking `flock`. A contender could acquire that newly visible inode in the gap; the creator then propagated `BlockingIOError` without receiving a lock handle, so no release path removed its own live-PID record. Failed nonblocking holds also left their opened descriptors unclosed.
+
+Fix evidence: the process that successfully publishes a new lock now treats `BlockingIOError` as temporary ownership handoff contention and retries until it holds that inode. Collision-path writers remain fail-fast. `_hold_lock` closes its descriptor on every failed `flock`, while the existing handle identity checks continue to protect replacement locks during reclaim and release.
+
+Regression evidence: `test_creator_waits_for_contender_in_publish_to_flock_gap` publishes the creator's real JSON lock, makes a contender hold that inode before the creator's first `_hold_lock`, and releases the contender only after the creator encounters contention. The regression failed before the fix with the expected `BlockingIOError`; after the fix, artifact creation completes and removes the transient lock.
+
+Verification: `PYTHONPYCACHEPREFIX=/tmp/video_toolkit_task3_fix4_pycache python3 -m unittest discover -s tests -v` — 26 passed. `PYTHONPYCACHEPREFIX=/tmp/video_toolkit_task3_fix4_pycache python3 -m py_compile scripts/toolkit/*.py` — passed. `git diff --check` and pre-commit `git diff --cached --check` — passed.
+
+Fix concerns: none.
+
 Fix round 2/5 status: complete
 
 Fix commit: 6dfa168857a79fa0ee1bff318449b7ef41f08b90 (`fix: use transient JSON artifact locks`)

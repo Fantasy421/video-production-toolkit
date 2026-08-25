@@ -104,7 +104,7 @@ def _acquire_artifact_lock(artifacts_root: Path, artifact_id: str) -> tuple[Path
     while True:
         try:
             _publish_json(lock, payload)
-            return _hold_lock(lock)
+            return _hold_published_lock(lock)
         except FileExistsError:
             if artifact_id in _artifact_paths_by_id(artifacts_root):
                 raise FileExistsError(f"artifact already exists: {artifact_id}") from None
@@ -125,9 +125,21 @@ def _acquire_artifact_lock(artifacts_root: Path, artifact_id: str) -> tuple[Path
                 os.close(guard[1])
 
 
+def _hold_published_lock(lock: Path) -> tuple[Path, int]:
+    while True:
+        try:
+            return _hold_lock(lock)
+        except BlockingIOError:
+            time.sleep(0.001)
+
+
 def _hold_lock(lock: Path) -> tuple[Path, int]:
     descriptor = os.open(lock, os.O_RDONLY)
-    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BaseException:
+        os.close(descriptor)
+        raise
     return lock, descriptor
 
 
