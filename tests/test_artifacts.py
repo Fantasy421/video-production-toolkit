@@ -2,7 +2,7 @@ import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Barrier, Event
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -169,6 +169,78 @@ class ArtifactTests(unittest.TestCase):
 
         with self.assertRaises(FileExistsError):
             create_artifact(self.root, self.artifact)
+
+    def test_post_lock_scan_rejects_artifact_published_in_another_type(self):
+        """Catches a cross-type artifact appearing between the scan and lock acquisition."""
+        acquire_lock = artifacts._acquire_artifact_lock
+        lock_acquired = Event()
+        artifact_published = Event()
+
+        def acquire_then_wait_for_competing_write(artifacts_root, artifact_id):
+            lock = acquire_lock(artifacts_root, artifact_id)
+            lock_acquired.set()
+            self.assertTrue(artifact_published.wait(timeout=1))
+            return lock
+
+        def publish_competing_artifact():
+            self.assertTrue(lock_acquired.wait(timeout=1))
+            published = {**self.artifact, "type": "layout-pack"}
+            path = self.root / "artifacts" / "layout-pack" / "style-v1.json"
+            artifacts._publish_json(path, artifacts._serialize_json(published))
+            artifact_published.set()
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with patch(
+                "scripts.toolkit.artifacts._acquire_artifact_lock",
+                side_effect=acquire_then_wait_for_competing_write,
+            ):
+                competing_write = executor.submit(publish_competing_artifact)
+                with self.assertRaises(FileExistsError):
+                    create_artifact(self.root, self.artifact)
+            competing_write.result()
+
+        self.assertFalse((self.root / "artifacts" / ".locks" / "style-v1.json").exists())
+
+    def test_competing_reclaimers_do_not_remove_a_new_live_lock(self):
+        """Catches one dead-lock reclaimer unlinking another reclaimer's new lock."""
+        lock = self.root / "artifacts" / ".locks" / "style-v1.json"
+        lock.parent.mkdir(parents=True)
+        lock.write_text(json.dumps({"pid": 999999, "timestamp": time.time()}), encoding="utf-8")
+        barrier = Barrier(2)
+
+        def acquire():
+            barrier.wait()
+            try:
+                return artifacts._acquire_artifact_lock(self.root / "artifacts", "style-v1")
+            except FileExistsError:
+                return "locked"
+
+        with patch("scripts.toolkit.artifacts._pid_is_alive", return_value=False):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(lambda _: acquire(), range(2)))
+
+        handles = [result for result in results if result != "locked"]
+        self.assertEqual(1, len(handles))
+        self.assertEqual(1, results.count("locked"))
+        artifacts._release_artifact_lock(handles[0])
+
+    def test_releasing_displaced_lock_does_not_remove_replacement_lock(self):
+        """Catches a stale lock handle deleting a replacement writer's live lock."""
+        handle = artifacts._acquire_artifact_lock(self.root / "artifacts", "style-v1")
+        lock = handle[0]
+        replacement = lock.with_name("replacement.json")
+        artifacts._publish_json(
+            replacement, json.dumps({"pid": os.getpid(), "timestamp": time.time()})
+        )
+        os.replace(replacement, lock)
+
+        artifacts._release_artifact_lock(handle)
+
+        self.assertTrue(lock.exists())
+        self.assertEqual(
+            os.getpid(), json.loads(lock.read_text(encoding="utf-8"))["pid"]
+        )
+        lock.unlink()
 
 
 if __name__ == "__main__":

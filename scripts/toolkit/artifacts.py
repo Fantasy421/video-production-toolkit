@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import time
+import fcntl
 from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
@@ -39,9 +40,11 @@ def create_artifact(root: Path, artifact: dict[str, Any]) -> Path:
     _require_within(artifacts_root, destination)
     lock = _acquire_artifact_lock(artifacts_root, artifact_id)
     try:
+        if artifact_id in _artifact_paths_by_id(artifacts_root):
+            raise FileExistsError(f"artifact already exists: {artifact_id}")
         _publish_json(destination, payload)
     finally:
-        lock.unlink(missing_ok=True)
+        _release_artifact_lock(lock)
     return destination
 
 
@@ -95,20 +98,53 @@ def _read_valid_artifact(path: Path) -> Optional[dict[str, Any]]:
     return artifact
 
 
-def _acquire_artifact_lock(artifacts_root: Path, artifact_id: str) -> Path:
+def _acquire_artifact_lock(artifacts_root: Path, artifact_id: str) -> tuple[Path, int]:
     lock = artifacts_root / ".locks" / f"{artifact_id}.json"
     payload = _serialize_json({"pid": os.getpid(), "timestamp": time.time()})
     while True:
         try:
             _publish_json(lock, payload)
-            return lock
+            return _hold_lock(lock)
         except FileExistsError:
             if artifact_id in _artifact_paths_by_id(artifacts_root):
                 raise FileExistsError(f"artifact already exists: {artifact_id}") from None
-            owner = _read_lock(lock)
-            if owner is None or _pid_is_alive(owner["pid"]):
+            try:
+                guard = _hold_lock(lock)
+            except FileNotFoundError:
+                continue
+            except BlockingIOError:
                 raise FileExistsError(f"artifact is locked: {artifact_id}") from None
-            lock.unlink(missing_ok=True)
+            try:
+                if not _is_current_lock(lock, guard[1]):
+                    continue
+                owner = _read_lock(lock)
+                if owner is None or _pid_is_alive(owner["pid"]):
+                    raise FileExistsError(f"artifact is locked: {artifact_id}")
+                lock.unlink(missing_ok=True)
+            finally:
+                os.close(guard[1])
+
+
+def _hold_lock(lock: Path) -> tuple[Path, int]:
+    descriptor = os.open(lock, os.O_RDONLY)
+    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return lock, descriptor
+
+
+def _release_artifact_lock(lock: tuple[Path, int]) -> None:
+    path, descriptor = lock
+    try:
+        if _is_current_lock(path, descriptor):
+            path.unlink(missing_ok=True)
+    finally:
+        os.close(descriptor)
+
+
+def _is_current_lock(lock: Path, descriptor: int) -> bool:
+    try:
+        return os.stat(lock).st_ino == os.fstat(descriptor).st_ino
+    except FileNotFoundError:
+        return False
 
 
 def _read_lock(lock: Path) -> Optional[dict[str, Any]]:
