@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Video Production Toolkit Task Result",
+  "type": "object",
+  "required": ["task_id", "status", "inputs", "artifacts", "checks", "warnings"],
+  "properties": {
+    "task_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["blocked", "waiting_external", "waiting_user", "succeeded", "failed", "cancelled"]},
+    "inputs": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "artifacts": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "checks": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "warnings": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "error": {"type": "string", "minLength": 1},
+    "user_decision_request": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}
