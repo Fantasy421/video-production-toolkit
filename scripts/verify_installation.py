@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -28,6 +29,10 @@ PLUGIN_ID = "video-production-toolkit"
 LEGACY_SKILL = "knowledge-video-visual-director"
 MIGRATION_REPORT = Path("docs/migration/knowledge-video-visual-director.md")
 BASELINE = Path("references/policies/knowledge-video-visual-director-baseline.json")
+_PLUGIN_TABLE = re.compile(
+    r"^\[\s*plugins\s*\.\s*(?:\"([^\"]+)\"|'([^']+)'|([A-Za-z0-9_.-]+))\s*\]\s*(?:#.*)?$"
+)
+_ENABLED_VALUE = re.compile(r"^enabled\s*=\s*(true|false)\s*(?:#.*)?$", re.IGNORECASE)
 
 
 def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, Any]:
@@ -179,7 +184,11 @@ def verify_installation(
 
     external: dict[str, dict[str, Any]] = {}
     if check_external_skills:
-        discovered = _all_personal_skill_names(personal_home)
+        try:
+            discovered = _all_personal_skill_names(personal_home)
+        except ValueError as error:
+            errors.append(str(error))
+            discovered = set()
         adapters_root = plugin_root / "registries" / "adapters"
         for path in sorted(adapters_root.glob("*.json")):
             try:
@@ -187,9 +196,10 @@ def verify_installation(
             except (OSError, UnicodeError, json.JSONDecodeError) as error:
                 errors.append(f"invalid adapter manifest: {path.name}: {error}")
                 continue
+            adapter_id = manifest.get("id", path.stem)
             required = manifest.get("installed_skill")
-            available = _matches_installed_skill(required, discovered)
-            external[manifest.get("id", path.stem)] = {
+            available = _matches_installed_skill(required, discovered, adapter_id)
+            external[adapter_id] = {
                 "installed_skill": required,
                 "available": available,
                 "required": False,
@@ -266,11 +276,11 @@ def discover_host_installed_plugin(home: Path, plugin_id: str = PLUGIN_ID) -> Pa
 def _check_four_gates() -> bool:
     cases = (
         ("narration.plan", "content", "decision-pack", {}),
-        ("storyboard.plan", "visual-direction", "decision-pack", {}),
+        ("storyboard.plan", "visual-direction", "style-pack", {}),
         (
             "scene.produce",
             "storyboard-and-cost",
-            "decision-pack",
+            "storyboard",
             {"production_scope": "representative-slice"},
         ),
         (
@@ -290,7 +300,42 @@ def _check_four_gates() -> bool:
         if calculate_ready_tasks(state, artifacts, []):
             return False
         approval = {"target_id": target_id, "scope": gate, "decision": "approved"}
+        if calculate_ready_tasks(
+            state,
+            [_artifact(target_id, "unrelated-review-artifact")],
+            [approval],
+        ):
+            return False
         if calculate_ready_tasks(state, artifacts, [approval]) != [capability]:
+            return False
+        descendant_id = f"gate-input-{index}"
+        unrelated_task = _candidate(
+            f"unrelated-gate-task-{index}",
+            capability,
+            [descendant_id],
+            gate,
+            target_id,
+            **extra,
+        )
+        unrelated_state = {
+            "candidate_tasks": [unrelated_task],
+            "locked_task_ids": [],
+        }
+        if calculate_ready_tasks(
+            unrelated_state,
+            [artifacts[0], _artifact(descendant_id, "task-input")],
+            [approval],
+        ):
+            return False
+        related_artifacts = [
+            artifacts[0],
+            _artifact(descendant_id, "task-input", parents=[target_id]),
+        ]
+        if calculate_ready_tasks(
+            unrelated_state,
+            related_artifacts,
+            [approval],
+        ) != [capability]:
             return False
     return True
 
@@ -418,25 +463,40 @@ def _read_personal_marketplace(home: Path) -> dict[str, Any]:
 
 
 def _plugin_is_enabled(config: Path, plugin_key: str) -> bool:
-    expected_table = f'[plugins."{plugin_key}"]'
-    in_plugin_table = False
+    return plugin_key in _enabled_plugin_keys(config)
+
+
+def _enabled_plugin_keys(config: Path) -> set[str]:
+    if not config.exists():
+        return set()
+    if config.is_symlink() or not config.is_file():
+        raise ValueError("Codex plugin configuration is unreadable")
     try:
         lines = config.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError) as error:
         raise ValueError("Codex plugin configuration is unreadable") from error
+    enabled: set[str] = set()
+    current: Optional[str] = None
     for raw_line in lines:
-        line = raw_line.split("#", 1)[0].strip()
-        if not line:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
             continue
         if line.startswith("["):
-            in_plugin_table = line == expected_table
+            match = _PLUGIN_TABLE.fullmatch(line)
+            current = None if match is None else next(
+                value for value in match.groups() if value is not None
+            )
             continue
-        if not in_plugin_table:
+        if current is None:
             continue
-        key, separator, value = line.partition("=")
-        if separator and key.strip() == "enabled":
-            return value.strip().lower() == "true"
-    return False
+        match = _ENABLED_VALUE.fullmatch(line)
+        if match is None:
+            continue
+        if match.group(1).casefold() == "true":
+            enabled.add(current)
+        else:
+            enabled.discard(current)
+    return enabled
 
 
 def _safe_component(value: Any) -> bool:
@@ -473,13 +533,28 @@ def _all_personal_skill_names(home: Path) -> set[str]:
         for path in root.glob("*/SKILL.md"):
             names.add(_frontmatter_name(path) or path.parent.name)
             names.add(path.parent.name)
+    config = home / ".codex" / "config.toml"
     cache = home / ".codex" / "plugins" / "cache"
-    if cache.is_dir():
-        for path in cache.glob("*/*/*/skills/*/SKILL.md"):
-            skill_name = _frontmatter_name(path) or path.parent.name
-            plugin_name = path.parents[3].name
-            names.add(f"{plugin_name}:{skill_name}")
-            names.add(f"{plugin_name}:{path.parent.name}")
+    for plugin_key in sorted(_enabled_plugin_keys(config)):
+        plugin_name, separator, marketplace_name = plugin_key.rpartition("@")
+        if (
+            not separator
+            or not _safe_component(plugin_name)
+            or not _safe_component(marketplace_name)
+        ):
+            continue
+        versions = cache / marketplace_name / plugin_name
+        if versions.is_symlink() or not versions.is_dir():
+            continue
+        for path in versions.glob("*/skills/*/SKILL.md"):
+            if path.is_symlink() or any(
+                parent.is_symlink() for parent in list(path.parents)[:3]
+            ):
+                continue
+            for skill_name in (_frontmatter_name(path), path.parent.name):
+                identity = _skill_identity(skill_name)
+                if identity is not None:
+                    names.add(f"{plugin_name}:{identity[1]}")
     return names
 
 
@@ -499,14 +574,33 @@ def _frontmatter_name(path: Path) -> Optional[str]:
     return None
 
 
-def _matches_installed_skill(required: Any, discovered: set[str]) -> bool:
-    if not isinstance(required, str) or not required:
+def _matches_installed_skill(
+    required: Any,
+    discovered: set[str],
+    adapter_namespace: Any,
+) -> bool:
+    required_identity = _skill_identity(required)
+    if required_identity is None:
         return False
-    if required in discovered:
-        return True
-    if ":" in required:
-        return required.split(":", 1)[1] in discovered
-    return False
+    required_namespace, skill_name = required_identity
+    expected_namespace = required_namespace
+    if expected_namespace is None and _safe_component(adapter_namespace):
+        expected_namespace = adapter_namespace
+    allowed = {skill_name}
+    if expected_namespace is not None:
+        allowed.add(f"{expected_namespace}:{skill_name}")
+    return bool(allowed & discovered)
+
+
+def _skill_identity(value: Any) -> Optional[tuple[Optional[str], str]]:
+    if not isinstance(value, str) or not value:
+        return None
+    parts = value.split(":")
+    if len(parts) == 1 and _safe_component(parts[0]):
+        return None, parts[0]
+    if len(parts) == 2 and all(_safe_component(part) for part in parts):
+        return parts[0], parts[1]
+    return None
 
 
 def _skill_is_discoverable(home: Path, plugin_root: Path, name: str) -> bool:

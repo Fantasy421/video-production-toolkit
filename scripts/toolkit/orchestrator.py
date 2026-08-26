@@ -42,6 +42,11 @@ _BASE_GATES = {
 _UNGATED_CAPABILITIES = {"project.manage"}
 _EXPANSION_SCOPES = {"full-production", "final-draft", "handoff", "export"}
 _VALID_DECISIONS = {"approved", "delegated", "skipped"}
+_GATE_TARGET_TYPES = {
+    "content": "decision-pack",
+    "visual-direction": "style-pack",
+    "storyboard-and-cost": "storyboard",
+}
 _FINAL_GATE_TARGET_TYPES = {
     "full-production": "representative-slice",
     "final-draft": "final-draft",
@@ -189,12 +194,13 @@ def _has_gate_approval(
         return False
     if not _target_is_in_input_lineage(target_id, candidate["inputs"], artifacts):
         return False
-    expected_type = _FINAL_GATE_TARGET_TYPES.get(
-        candidate["constraints"].get("production_scope")
-    )
-    if gate == "representative-slice-and-final-draft" and (
-        expected_type is None or target.get("type") != expected_type
-    ):
+    if gate == "representative-slice-and-final-draft":
+        expected_type = _FINAL_GATE_TARGET_TYPES.get(
+            candidate["constraints"].get("production_scope")
+        )
+    else:
+        expected_type = _GATE_TARGET_TYPES.get(gate)
+    if expected_type is None or target.get("type") != expected_type:
         return False
     return any(
         approval["target_id"] == target_id

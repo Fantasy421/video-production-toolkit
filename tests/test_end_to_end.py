@@ -1,3 +1,4 @@
+import hashlib
 import json
 import shutil
 import subprocess
@@ -8,6 +9,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from scripts.install_personal_plugin import install_personal_plugin
+from scripts.migration_audit import DISPOSITIONS
 from scripts.retire_legacy_skill import retire_legacy_skill
 from scripts.toolkit.artifacts import approve_artifact, create_artifact
 from scripts.toolkit.orchestrator import (
@@ -54,6 +56,78 @@ def activate_personal_plugin(home, source):
     return cache
 
 
+def add_cached_plugin_skill(
+    home,
+    *,
+    marketplace,
+    plugin,
+    skill,
+    frontmatter_name=None,
+    enabled=None,
+):
+    """Create an isolated plugin-cache skill and optionally configure activation."""
+    path = (
+        Path(home)
+        / ".codex"
+        / "plugins"
+        / "cache"
+        / marketplace
+        / plugin
+        / "1.0.0"
+        / "skills"
+        / skill
+        / "SKILL.md"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"---\nname: {frontmatter_name or skill}\ndescription: test fixture\n---\n",
+        encoding="utf-8",
+    )
+    if enabled is not None:
+        config = Path(home) / ".codex" / "config.toml"
+        with config.open("a", encoding="utf-8") as stream:
+            stream.write(
+                f'\n[plugins."{plugin}@{marketplace}"]\nenabled = '
+                f"{'true' if enabled else 'false'}\n"
+            )
+    return path
+
+
+def populate_auditable_legacy(repo, legacy):
+    """Build an isolated legacy tree and matching baseline for retirement tests."""
+    entries = []
+    for relative in sorted(DISPOSITIONS):
+        payload = (
+            b"#!/usr/bin/env python3\n"
+            if relative.startswith("scripts/")
+            else f"fixture:{relative}\n".encode("utf-8")
+        )
+        path = Path(legacy) / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        entries.append(
+            {"path": relative, "sha256": hashlib.sha256(payload).hexdigest()}
+        )
+    baseline = (
+        Path(repo)
+        / "references"
+        / "policies"
+        / "knowledge-video-visual-director-baseline.json"
+    )
+    baseline.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "legacy_skill": "knowledge-video-visual-director",
+                "files": entries,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def artifact(
     artifact_id,
     artifact_type,
@@ -92,14 +166,14 @@ def candidate(task_id, capability, inputs, gate, target_id, **constraints):
 
 class CoordinatorTests(unittest.TestCase):
     def test_all_four_gates_require_an_exact_durable_approval(self):
-        """Catches any creative stage advancing on silence or the wrong scope."""
+        """Catches wrong-scope, wrong-type, or unrelated approvals advancing work."""
         cases = (
             ("narration.plan", "content", "decision-pack", {}),
-            ("storyboard.plan", "visual-direction", "decision-pack", {}),
+            ("storyboard.plan", "visual-direction", "style-pack", {}),
             (
                 "scene.produce",
                 "storyboard-and-cost",
-                "decision-pack",
+                "storyboard",
                 {"production_scope": "representative-slice"},
             ),
             (
@@ -132,12 +206,64 @@ class CoordinatorTests(unittest.TestCase):
                         [{"target_id": target_id, "scope": f"wrong-{gate}", "decision": "approved"}],
                     ),
                 )
+                approval = {
+                    "target_id": target_id,
+                    "scope": gate,
+                    "decision": "approved",
+                }
+                self.assertEqual(
+                    [],
+                    calculate_ready_tasks(
+                        state,
+                        [artifact(target_id, "unrelated-review-artifact")],
+                        [approval],
+                    ),
+                    "the gate must reject an approval targeting the wrong artifact type",
+                )
                 self.assertEqual(
                     [capability],
                     calculate_ready_tasks(
                         state,
                         artifacts,
-                        [{"target_id": target_id, "scope": gate, "decision": "approved"}],
+                        [approval],
+                    ),
+                )
+
+                descendant_id = f"gate-input-{index}"
+                unrelated_task = candidate(
+                    f"unrelated-task-{index}",
+                    capability,
+                    [descendant_id],
+                    gate,
+                    target_id,
+                    **extra,
+                )
+                unrelated_state = {
+                    "candidate_tasks": [unrelated_task],
+                    "locked_task_ids": [],
+                }
+                self.assertEqual(
+                    [],
+                    calculate_ready_tasks(
+                        unrelated_state,
+                        [artifacts[0], artifact(descendant_id, "task-input")],
+                        [approval],
+                    ),
+                    "an artifact of the right type must not approve another lineage",
+                )
+                self.assertEqual(
+                    [capability],
+                    calculate_ready_tasks(
+                        unrelated_state,
+                        [
+                            artifacts[0],
+                            artifact(
+                                descendant_id,
+                                "task-input",
+                                parents=[target_id],
+                            ),
+                        ],
+                        [approval],
                     ),
                 )
 
@@ -621,6 +747,26 @@ class SmokeAndInstallationTests(unittest.TestCase):
             self.assertEqual("failed", blocked["checks"]["migration_audit"])
             self.assertEqual("migration-audit-required", blocked["blocker"]["code"])
 
+    def test_resume_smoke_exercises_gate_type_and_lineage_counterexamples(self):
+        """Catches an installed smoke accepting any same-scope approval token."""
+
+        def weak_gate_router(state, artifacts, approvals):
+            if not approvals:
+                return []
+            task = state["candidate_tasks"][0]
+            capability = task["capability"]
+            scene_id = task["constraints"].get("scene_id")
+            return [capability if scene_id is None else f"{capability}:{scene_id}"]
+
+        with patch(
+            "scripts.verify_installation.calculate_ready_tasks",
+            side_effect=weak_gate_router,
+        ):
+            result = run_smoke(ROOT)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("approval-gate-failed", result["blocker"]["code"])
+
     def test_installer_registers_a_personal_marketplace_without_overwriting_other_plugins(self):
         """Catches install copying over unrelated targets or dropping marketplace entries."""
         with TemporaryDirectory() as folder:
@@ -755,8 +901,151 @@ class SmokeAndInstallationTests(unittest.TestCase):
 
             self.assertTrue(result["external_adapters"]["video-shotcraft"]["available"])
 
+    def test_verifier_uses_only_enabled_plugin_caches_for_adapter_availability(self):
+        """Catches disabled and unconfigured cache residue being reported available."""
+        with TemporaryDirectory() as folder:
+            home = Path(folder) / "home"
+            activate_personal_plugin(home, ROOT)
+            add_cached_plugin_skill(
+                home,
+                marketplace="chatcut-inc",
+                plugin="chatcut",
+                skill="chatcut-plugin-basics",
+                enabled=False,
+            )
+            add_cached_plugin_skill(
+                home,
+                marketplace="stale-marketplace",
+                plugin="video-shotcraft",
+                skill="video-shotcraft",
+            )
+
+            result = verify_installation(
+                repo=None,
+                home=home,
+                check_external_skills=True,
+            )
+
+            self.assertFalse(result["external_adapters"]["chatcut"]["available"])
+            self.assertFalse(
+                result["external_adapters"]["video-shotcraft"]["available"]
+            )
+
+    def test_verifier_matches_canonical_skill_to_its_enabled_plugin_namespace(self):
+        """Catches an enabled remotion:skill cache missing its canonical manifest name."""
+        with TemporaryDirectory() as folder:
+            home = Path(folder) / "home"
+            activate_personal_plugin(home, ROOT)
+            add_cached_plugin_skill(
+                home,
+                marketplace="unrelated-owner",
+                plugin="not-remotion",
+                skill="remotion-best-practices",
+                enabled=True,
+            )
+
+            unrelated = verify_installation(
+                repo=None,
+                home=home,
+                check_external_skills=True,
+            )
+            self.assertFalse(
+                unrelated["external_adapters"]["remotion"]["available"],
+                "a matching skill name from another enabled plugin is not Remotion",
+            )
+
+            add_cached_plugin_skill(
+                home,
+                marketplace="openai-bundled",
+                plugin="remotion",
+                skill="remotion-best-practices",
+                frontmatter_name="remotion:remotion-best-practices",
+                enabled=True,
+            )
+            result = verify_installation(
+                repo=None,
+                home=home,
+                check_external_skills=True,
+            )
+
+            self.assertTrue(result["external_adapters"]["remotion"]["available"])
+
 
 class RetirementSafetyTests(unittest.TestCase):
+    def isolated_retirement_fixture(self, root):
+        repo = Path(root) / "repo"
+        legacy = (
+            Path(root)
+            / ".codex"
+            / "skills"
+            / "knowledge-video-visual-director"
+        )
+        shutil.copytree(
+            ROOT,
+            repo,
+            ignore=shutil.ignore_patterns(".git", "__pycache__"),
+        )
+        populate_auditable_legacy(repo, legacy)
+        installed = activate_personal_plugin(root, repo)
+        return repo, legacy, installed
+
+    def test_retirement_runs_smoke_from_the_installed_plugin_in_isolation(self):
+        """Catches repository imports masking a broken installed orchestrator."""
+        with TemporaryDirectory() as folder:
+            repo, legacy, installed = self.isolated_retirement_fixture(Path(folder))
+            for root in (repo, installed):
+                (root / "scripts" / "toolkit" / "orchestrator.py").write_text(
+                    "raise RuntimeError('broken installed orchestrator')\n",
+                    encoding="utf-8",
+                )
+
+            with self.assertRaisesRegex(RuntimeError, "installed"):
+                retire_legacy_skill(
+                    legacy,
+                    repo,
+                    confirmation=None,
+                    dry_run=True,
+                )
+
+            self.assertTrue(legacy.is_dir())
+
+    def test_retirement_requires_installed_runtime_content_to_match_repository(self):
+        """Catches manifest-only equality accepting a modified installed package."""
+        with TemporaryDirectory() as folder:
+            repo, legacy, installed = self.isolated_retirement_fixture(Path(folder))
+            skill = installed / "skills" / "video-director" / "SKILL.md"
+            skill.write_text(
+                skill.read_text(encoding="utf-8") + "\nmodified installed content\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "content|match"):
+                retire_legacy_skill(
+                    legacy,
+                    repo,
+                    confirmation=None,
+                    dry_run=True,
+                )
+
+            self.assertTrue(legacy.is_dir())
+
+    def test_retirement_requires_critical_runtime_files_in_both_package_copies(self):
+        """Catches matching but incomplete packages reaching the installed verifier."""
+        with TemporaryDirectory() as folder:
+            repo, legacy, installed = self.isolated_retirement_fixture(Path(folder))
+            for root in (repo, installed):
+                (root / "scripts" / "verify_installation.py").unlink()
+
+            with self.assertRaisesRegex(RuntimeError, "required runtime files"):
+                retire_legacy_skill(
+                    legacy,
+                    repo,
+                    confirmation=None,
+                    dry_run=True,
+                )
+
+            self.assertTrue(legacy.is_dir())
+
     def test_retirement_refuses_missing_confirmation_and_symlinks(self):
         """Catches an unapproved or redirected path reaching recursive deletion."""
         with TemporaryDirectory() as folder:

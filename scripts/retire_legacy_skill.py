@@ -2,9 +2,11 @@
 """Retire the exact audited legacy skill only after smoke and approval."""
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -17,10 +19,39 @@ if __package__ in {None, ""}:
 
 from scripts.migration_audit import REPORT_PATH, audit_legacy
 from scripts.validate_package import validate_package
-from scripts.verify_installation import discover_host_installed_plugin, run_smoke
 
 
 EXPECTED_BASENAME = "knowledge-video-visual-director"
+PLUGIN_ID = "video-production-toolkit"
+_RUNTIME_ROOTS = (
+    ".codex-plugin",
+    "agents",
+    "skills",
+    "scripts",
+    "references",
+    "registries",
+    "tests/fixtures",
+    "docs/migration",
+)
+_RUNTIME_REQUIRED = {
+    ".codex-plugin/plugin.json",
+    "agents/openai.yaml",
+    "skills/video-director/SKILL.md",
+    "scripts/verify_installation.py",
+    "scripts/migration_audit.py",
+    "scripts/validate_package.py",
+    "scripts/plan_representative_slice.py",
+    "scripts/toolkit/artifacts.py",
+    "scripts/toolkit/invalidation.py",
+    "scripts/toolkit/orchestrator.py",
+    "scripts/toolkit/project_state.py",
+    "scripts/toolkit/tasks.py",
+    "references/policies/decision-gates.md",
+    "references/policies/knowledge-video-visual-director-baseline.json",
+    "tests/fixtures/knowledge-video-minimal/scene-contracts.json",
+    "docs/migration/knowledge-video-visual-director.md",
+}
+_RUNTIME_IGNORED_NAMES = {"__pycache__", ".DS_Store"}
 
 
 def retire_legacy_skill(
@@ -54,17 +85,13 @@ def retire_legacy_skill(
         raise PermissionError("exact resolved target confirmation is required")
     repo = _existing_repo(repo_root)
     personal_home = target.parents[2]
-    try:
-        installed = discover_host_installed_plugin(personal_home)
-    except ValueError as error:
-        raise RuntimeError(f"replacement plugin is not host-installed: {error}") from error
-    package_issues = validate_package(installed)
+    installed = _installed_plugin_candidate(personal_home)
+    package_issues = validate_package(repo)
     if package_issues:
         raise RuntimeError(
-            "host-installed replacement plugin is invalid: " + ", ".join(package_issues)
+            "replacement repository package is invalid: " + ", ".join(package_issues)
         )
-    if _plugin_manifest(installed) != _plugin_manifest(repo):
-        raise RuntimeError("host-installed replacement release does not match the repository")
+    _require_matching_runtime_packages(repo, installed)
 
     try:
         audit = audit_legacy(target, repo)
@@ -72,15 +99,8 @@ def retire_legacy_skill(
         raise RuntimeError(f"live migration audit failed: {error}") from error
     if not audit["ok"]:
         raise RuntimeError("live migration audit failed; retirement is blocked")
-    try:
-        installed_audit = audit_legacy(target, installed)
-    except ValueError as error:
-        raise RuntimeError(f"host-installed migration audit failed: {error}") from error
-    if not installed_audit["ok"]:
-        raise RuntimeError("host-installed migration audit failed; retirement is blocked")
-    smoke = run_smoke(installed, legacy_root=target)
-    if not smoke["ok"]:
-        raise RuntimeError(f"resume and representative-slice smoke failed: {smoke['blocker']}")
+    verification = _run_installed_verifier(installed, personal_home, target)
+    smoke = verification["resume_smoke"]
     report = _retirement_report(repo)
     if dry_run:
         return {
@@ -173,16 +193,178 @@ def _restore_report(report: Path, payload: bytes) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def _plugin_manifest(root: Path) -> dict[str, Any]:
+def _installed_plugin_candidate(home: Path) -> Path:
+    marketplace = home / ".agents" / "plugins" / "marketplace.json"
+    if marketplace.is_symlink() or not marketplace.is_file():
+        raise RuntimeError("replacement plugin is not host-installed: marketplace is missing")
     try:
-        value = json.loads(
-            (root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
-        )
+        catalog = json.loads(marketplace.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise RuntimeError("replacement plugin manifest is unreadable") from error
-    if not isinstance(value, dict):
-        raise RuntimeError("replacement plugin manifest is invalid")
-    return value
+        raise RuntimeError("replacement plugin is not host-installed: marketplace is invalid") from error
+    plugins = catalog.get("plugins") if isinstance(catalog, dict) else None
+    matches = (
+        [item for item in plugins if isinstance(item, dict) and item.get("name") == PLUGIN_ID]
+        if isinstance(plugins, list)
+        else []
+    )
+    marketplace_name = catalog.get("name") if isinstance(catalog, dict) else None
+    if len(matches) != 1 or not _safe_component(marketplace_name):
+        raise RuntimeError("replacement plugin is not host-installed: marketplace entry is invalid")
+    candidate = (
+        home
+        / ".codex"
+        / "plugins"
+        / "cache"
+        / marketplace_name
+        / PLUGIN_ID
+        / "local"
+    )
+    if candidate.is_symlink():
+        raise RuntimeError("replacement plugin is not host-installed: cache is unsafe")
+    try:
+        installed = candidate.resolve(strict=True)
+        installed.relative_to(home.resolve())
+    except (FileNotFoundError, OSError, ValueError) as error:
+        raise RuntimeError("replacement plugin is not host-installed: cache is missing") from error
+    if not installed.is_dir():
+        raise RuntimeError("replacement plugin is not host-installed: cache is invalid")
+    return installed
+
+
+def _require_matching_runtime_packages(repo: Path, installed: Path) -> None:
+    source_hashes = _runtime_hashes(repo, "replacement repository")
+    installed_hashes = _runtime_hashes(installed, "host-installed replacement")
+    if source_hashes == installed_hashes:
+        return
+    missing = sorted(set(source_hashes) - set(installed_hashes))
+    extra = sorted(set(installed_hashes) - set(source_hashes))
+    changed = sorted(
+        relative
+        for relative in set(source_hashes) & set(installed_hashes)
+        if source_hashes[relative] != installed_hashes[relative]
+    )
+    detail = []
+    if missing:
+        detail.append(f"missing={missing}")
+    if extra:
+        detail.append(f"extra={extra}")
+    if changed:
+        detail.append(f"changed={changed}")
+    raise RuntimeError(
+        "host-installed replacement content does not match the repository: "
+        + "; ".join(detail)
+    )
+
+
+def _runtime_hashes(root: Path, label: str) -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    for relative_root in _RUNTIME_ROOTS:
+        base = root / relative_root
+        if base.is_symlink() or not base.exists():
+            raise RuntimeError(f"{label} runtime root is missing or unsafe: {relative_root}")
+        paths = [base] if base.is_file() else sorted(base.rglob("*"))
+        for path in paths:
+            relative = path.relative_to(root)
+            if any(part in _RUNTIME_IGNORED_NAMES for part in relative.parts):
+                continue
+            if path.suffix == ".pyc":
+                continue
+            if path.is_symlink():
+                raise RuntimeError(f"{label} runtime file is a symlink: {relative.as_posix()}")
+            if not path.is_file():
+                continue
+            digest = hashlib.sha256()
+            try:
+                with path.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            except OSError as error:
+                raise RuntimeError(
+                    f"{label} runtime file is unreadable: {relative.as_posix()}"
+                ) from error
+            hashes[relative.as_posix()] = digest.hexdigest()
+    missing_required = sorted(_RUNTIME_REQUIRED - set(hashes))
+    if missing_required:
+        raise RuntimeError(f"{label} is missing required runtime files: {missing_required}")
+    return hashes
+
+
+def _run_installed_verifier(
+    installed: Path,
+    home: Path,
+    legacy: Path,
+) -> dict[str, Any]:
+    entrypoint = installed / "scripts" / "verify_installation.py"
+    environment = os.environ.copy()
+    for name in ("PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP"):
+        environment.pop(name, None)
+    command = [
+        sys.executable,
+        "-I",
+        str(entrypoint),
+        "--home",
+        str(home),
+        "--legacy-root",
+        str(legacy),
+        "--require-skill",
+        "video-director",
+        "--require-resume-smoke",
+    ]
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            completed = subprocess.run(
+                command,
+                cwd=folder,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError("installed verifier could not execute in isolation") from error
+    try:
+        result = json.loads(completed.stdout)
+    except (TypeError, json.JSONDecodeError) as error:
+        detail = completed.stderr.strip().splitlines()
+        suffix = detail[-1] if detail else "no structured verifier result"
+        raise RuntimeError(f"installed verifier failed in isolation: {suffix}") from error
+    if not isinstance(result, dict):
+        raise RuntimeError("installed verifier returned a non-object result")
+    plugin = result.get("plugin")
+    smoke = result.get("resume_smoke")
+    reported_root = plugin.get("root") if isinstance(plugin, dict) else None
+    try:
+        root_matches = Path(reported_root).resolve() == installed.resolve()
+    except (OSError, TypeError):
+        root_matches = False
+    smoke_checks = smoke.get("checks") if isinstance(smoke, dict) else None
+    if (
+        completed.returncode != 0
+        or result.get("ok") is not True
+        or not isinstance(plugin, dict)
+        or plugin.get("discovery") != "host-installed"
+        or plugin.get("valid") is not True
+        or not root_matches
+        or not isinstance(smoke, dict)
+        or smoke.get("ok") is not True
+        or not isinstance(smoke_checks, dict)
+        or smoke_checks.get("migration_audit") != "passed"
+    ):
+        raise RuntimeError(
+            "installed verifier blocked retirement: "
+            + repr(result.get("errors") or smoke or result)
+        )
+    return result
+
+
+def _safe_component(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and value not in {"", ".", ".."}
+        and "/" not in value
+        and "\\" not in value
+    )
 
 
 def _existing_repo(value: Path) -> Path:

@@ -7,12 +7,17 @@ is not approval. A revision invalidates the superseded approval's scope.
 Legacy approval records without a decision are read as `approved` and are not
 rewritten.
 
-| Gate | Required decision | Allows |
-| --- | --- | --- |
-| Content | audience, platform, content and teaching direction | confirmed narration and timing |
-| Visual direction | style, layout, character direction, preview and motion language | storyboard planning |
-| Storyboard and cost | complete storyboard, media plan, paid or batch scope | scene and motion production |
-| Representative slice and final draft | editable representative slice, then final draft | full expansion, handoff, or authorized export |
+| Gate | Approval target artifact type | Required decision | Allows |
+| --- | --- | --- | --- |
+| Content | `decision-pack` | audience, platform, content and teaching direction | confirmed narration and timing |
+| Visual direction | `style-pack` | style, layout, character direction, preview and motion language | storyboard planning |
+| Storyboard and cost | `storyboard` | complete storyboard, media plan, paid or batch scope | scene and motion production |
+| Representative slice and final draft | `representative-slice` before full production; `final-draft` before final review, handoff, or export | editable representative slice, then final draft | full expansion, handoff, or authorized export |
+
+The approval target must be a declared task input or an ancestor of a declared
+input in the immutable artifact DAG. A same-typed artifact from another
+lineage, or a differently typed artifact carrying the expected scope string,
+does not authorize the task.
 
 Motion-contract approval is a scoped sub-decision within the approved storyboard
 and cost plan. It records the selected mechanism, backend, editable properties,

@@ -492,9 +492,11 @@ def _render_report(result: dict[str, Any]) -> str:
             "",
             "This audit only establishes disposition coverage. It does not authorize removal",
             "or modification of the installed legacy skill. Retirement remains blocked until",
-            "the replacement plugin is host-installed and enabled, that installed copy passes",
-            "the recovery and representative-slice smoke tests, and the user gives execution-time",
-            "approval for the exact legacy directory.",
+            "the replacement plugin is host-installed and enabled, its required runtime files and",
+            "content hashes match the reviewed repository, and its own verifier runs in an isolated",
+            "Python subprocess. That installed verifier must pass the live migration audit, recovery,",
+            "four-gate type and lineage counterexamples, and representative-slice smoke tests before",
+            "the user gives execution-time approval for the exact legacy directory.",
             "",
         ]
     )
