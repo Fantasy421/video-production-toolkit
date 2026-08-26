@@ -129,6 +129,16 @@ class RepresentativeSliceTests(unittest.TestCase):
         self.assertEqual(((0, 10000), (30000, 40000)), selected.ranges)
         self.assertTrue(selected.composite)
 
+    def test_shorter_valid_range_beats_low_risk_extras_with_equal_high_risk_coverage(self):
+        contracts = [
+            {"scene_id": "S01", "start_ms": 0, "end_ms": 10000, "primary_carrier": "scene", "purpose": "show causality"},
+            {"scene_id": "S02", "start_ms": 10000, "end_ms": 20000, "primary_carrier": "b-roll", "generated_video": True, "captions": True, "purpose": "add texture"},
+        ]
+        selected = select_representative_slice(contracts)
+        self.assertEqual(["S01"], selected)
+        self.assertEqual(((0, 10000),), selected.ranges)
+        self.assertFalse(selected.composite)
+
     def test_distant_short_scene_and_motion_ranges_form_a_ten_second_composite(self):
         contracts = [
             {"scene_id": "S01", "start_ms": 0, "end_ms": 5000, "primary_carrier": "scene", "purpose": "show causality"},

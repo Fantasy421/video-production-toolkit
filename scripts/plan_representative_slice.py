@@ -139,10 +139,10 @@ def _plan_key(plan: tuple[tuple[int, int], ...], contracts: list[dict[str, Any]]
     carriers = frozenset(item["carrier"] for item in selected)
     return (
         -len(high_carriers),
+        _duration(plan, contracts),
         -sum(_WEIGHTS[risk] for risk in risks),
         -len(risks),
         -len(carriers),
-        _duration(plan, contracts),
         len(plan),
         tuple((contracts[start]["start"], contracts[end]["end"]) for start, end in plan),
         tuple(item["id"] for item in selected),
