@@ -26,7 +26,10 @@
   syntax, and actual PNG alpha when deterministically inspectable. PNG parsing
   validates every chunk length and CRC, exact `IHDR`/`IDAT` ordering, and a
   terminal `IEND` without trailing data. File, checksum, structure, and format
-  failures return stable issues.
+  failures return stable issues. Review round 3 additionally enforces legal
+  `PLTE` placement and shape for the supported color types, rejects unknown
+  critical chunks, and requires exactly one complete zlib stream with exact
+  decoded scanline size and valid filters.
 - Added `audit_legacy(legacy_root, new_root)` and its CLI. Roots are supplied at
   runtime, owner paths are constrained to the new repository, symlink escapes
   are rejected, cache files are ignored, incomplete audits cannot be published,
@@ -56,14 +59,17 @@
   failed all six new regression methods (eight assertions) against CRC,
   terminal-`IEND`, malformed chunk order, project-coupled naming, version
   suffix, and metadata/filename drift before the final 23 validation tests
-  passed.
+  passed. Review round 3 then failed the exact three added regression methods
+  (seven assertions) for illegal `PLTE`, unknown critical chunks, and trailing
+  or concatenated zlib data before the final 26 validation tests passed.
 - Regressions cover decorative-only motion, beat ownership, exact interval
   gaps, narration-language beat labels, contract-declared hold thresholds,
   invalid timing, unknown executable validators, missing expected legacy files,
   same-path source drift, missing owners, cache stability, safe report paths,
   atomic report ownership, promoted-asset metadata, opaque/corrupt/transparent
-  PNG behavior, CRC and terminal structure, exact legacy filename syntax,
-  malformed evidence, and JSON-safe results.
+  PNG behavior, CRC and terminal structure, critical-chunk legality, complete
+  zlib streams, exact legacy filename syntax, malformed evidence, and JSON-safe
+  results.
 
 ## Migration audit
 
@@ -80,8 +86,8 @@
 
 ## Verification
 
-- `python3 -m unittest discover -s tests -v` — 139 tests passed.
-- `PYTHONPYCACHEPREFIX=/private/tmp/video-toolkit-task9-fix2-pycache python3 -m py_compile $(rg --files scripts tests -g '*.py')` — passed.
+- `python3 -m unittest discover -s tests -v` — 142 tests passed.
+- `PYTHONPYCACHEPREFIX=/private/tmp/video-toolkit-task9-fix3-pycache python3 -m py_compile $(rg --files scripts tests -g '*.py')` — passed.
 - `python3 scripts/validate_package.py .` — `package valid`.
 - Installed legacy audit — passed with zero undisposed executables.
 - Installed legacy read-only snapshot — all 19 pre-task SHA-256 hashes unchanged.

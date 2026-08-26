@@ -310,6 +310,7 @@ def _inspect_png_transparency(path: Path) -> Optional[bool]:
         chunk_index = 0
         idat: list[bytes] = []
         seen_ihdr = False
+        seen_plte = False
         seen_idat = False
         idat_closed = False
         seen_iend = False
@@ -339,6 +340,18 @@ def _inspect_png_transparency(path: Path) -> Optional[bool]:
                 if compression != 0 or filter_method != 0:
                     return None
                 seen_ihdr = True
+            elif kind == b"PLTE":
+                if (
+                    not seen_ihdr
+                    or seen_plte
+                    or seen_idat
+                    or color_type == 4
+                    or length == 0
+                    or length % 3 != 0
+                    or length > 768
+                ):
+                    return None
+                seen_plte = True
             elif kind == b"IDAT":
                 if not seen_ihdr or idat_closed:
                     return None
@@ -349,8 +362,11 @@ def _inspect_png_transparency(path: Path) -> Optional[bool]:
                     return None
                 seen_iend = True
                 break
-            elif seen_idat:
-                idat_closed = True
+            else:
+                if kind[0] & 0x20 == 0:
+                    return None
+                if seen_idat:
+                    idat_closed = True
             chunk_index += 1
         if (
             not seen_ihdr
@@ -369,8 +385,15 @@ def _inspect_png_transparency(path: Path) -> Optional[bool]:
         bytes_per_sample = bit_depth // 8
         bytes_per_pixel = channels * bytes_per_sample
         stride = width * bytes_per_pixel
-        decompressed = zlib.decompress(b"".join(idat))
-        if len(decompressed) != height * (stride + 1):
+        expected_size = height * (stride + 1)
+        decompressor = zlib.decompressobj()
+        decompressed = decompressor.decompress(b"".join(idat), expected_size + 1)
+        if (
+            len(decompressed) != expected_size
+            or not decompressor.eof
+            or decompressor.unused_data
+            or decompressor.unconsumed_tail
+        ):
             return None
         previous = bytearray(stride)
         offset = 0

@@ -123,24 +123,38 @@ class ValidationTests(unittest.TestCase):
         destination.write_text(json.dumps(artifact), encoding="utf-8")
 
     @staticmethod
-    def rgba_png_bytes(alpha):
-        def chunk(kind, payload):
-            checksum = zlib.crc32(kind + payload) & 0xFFFFFFFF
-            return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", checksum)
+    def png_chunk(kind, payload):
+        checksum = zlib.crc32(kind + payload) & 0xFFFFFFFF
+        return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", checksum)
 
+    @classmethod
+    def rgba_png_bytes(cls, alpha):
         header = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
         pixel = bytes((32, 64, 96, alpha))
         return (
             b"\x89PNG\r\n\x1a\n"
-            + chunk(b"IHDR", header)
-            + chunk(b"IDAT", zlib.compress(b"\x00" + pixel))
-            + chunk(b"IEND", b"")
+            + cls.png_chunk(b"IHDR", header)
+            + cls.png_chunk(b"IDAT", zlib.compress(b"\x00" + pixel))
+            + cls.png_chunk(b"IEND", b"")
         )
 
     def write_rgba_png(self, relative, alpha):
         path = self.root / relative
         path.write_bytes(self.rgba_png_bytes(alpha))
         return path
+
+    def promoted_png_error_codes(self, contents):
+        path = "media/presenter_points-right_right_v01.png"
+        (self.root / path).write_bytes(contents)
+        self.write_artifact(
+            "promoted-character-v1",
+            "promoted-asset",
+            1,
+            "approved",
+            path,
+            **self.promoted_character_metadata(),
+        )
+        return {item["code"] for item in validate_project(self.root)["errors"]}
 
     def promoted_character_metadata(self):
         return {
@@ -368,6 +382,98 @@ class ValidationTests(unittest.TestCase):
                 self.assertIn(
                     "promoted-character-action-alpha-unverifiable",
                     {item["code"] for item in result["errors"]},
+                )
+
+    def test_promoted_character_png_rejects_illegal_plte_chunks(self):
+        """Catches misplaced, duplicate, malformed, or forbidden PLTE chunks."""
+        valid = self.rgba_png_bytes(0)
+        signature = valid[:8]
+        rgba_ihdr = valid[8:33]
+        rgba_idat = valid[33:-12]
+        iend = valid[-12:]
+        plte = self.png_chunk(b"PLTE", b"\x20\x40\x60")
+        grayscale_alpha_ihdr = self.png_chunk(
+            b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 4, 0, 0, 0)
+        )
+        grayscale_alpha_idat = self.png_chunk(
+            b"IDAT", zlib.compress(b"\x00\x20\x00")
+        )
+        malformed_files = {
+            "after-idat": signature + rgba_ihdr + rgba_idat + plte + iend,
+            "duplicate": signature + rgba_ihdr + plte + plte + rgba_idat + iend,
+            "invalid-length": (
+                signature
+                + rgba_ihdr
+                + self.png_chunk(b"PLTE", b"\x00")
+                + rgba_idat
+                + iend
+            ),
+            "forbidden-for-grayscale-alpha": (
+                signature
+                + grayscale_alpha_ihdr
+                + plte
+                + grayscale_alpha_idat
+                + iend
+            ),
+        }
+        for label, contents in malformed_files.items():
+            with self.subTest(label=label):
+                self.assertIn(
+                    "promoted-character-action-alpha-unverifiable",
+                    self.promoted_png_error_codes(contents),
+                )
+
+    def test_promoted_character_png_rejects_unknown_critical_chunks(self):
+        """Catches unknown chunks whose first type byte marks them critical."""
+        valid = self.rgba_png_bytes(0)
+        signature = valid[:8]
+        ihdr = valid[8:33]
+        idat_and_iend = valid[33:]
+        variants = {
+            "unknown-critical": (
+                self.png_chunk(b"VpAg", b"payload"),
+                True,
+            ),
+            "unknown-ancillary": (
+                self.png_chunk(b"vpAg", b"payload"),
+                False,
+            ),
+        }
+        for label, (chunk, expect_unverifiable) in variants.items():
+            with self.subTest(label=label):
+                codes = self.promoted_png_error_codes(
+                    signature + ihdr + chunk + idat_and_iend
+                )
+                self.assertEqual(
+                    expect_unverifiable,
+                    "promoted-character-action-alpha-unverifiable" in codes,
+                )
+
+    def test_promoted_character_png_rejects_invalid_zlib_or_scanline_streams(self):
+        """Catches nonterminal zlib streams and invalid decoded scanlines."""
+        valid = self.rgba_png_bytes(0)
+        signature_and_ihdr = valid[:33]
+        iend = valid[-12:]
+        pixel = bytes((32, 64, 96, 0))
+        scanline = b"\x00" + pixel
+        compressed = zlib.compress(scanline)
+        malformed_streams = {
+            "trailing-zlib-bytes": compressed + b"trailing",
+            "concatenated-zlib-stream": compressed + zlib.compress(scanline),
+            "incomplete-zlib-stream": compressed[:-1],
+            "wrong-decoded-size": zlib.compress(scanline + b"\x00"),
+            "invalid-filter": zlib.compress(b"\x05" + pixel),
+        }
+        for label, stream in malformed_streams.items():
+            with self.subTest(label=label):
+                contents = (
+                    signature_and_ihdr
+                    + self.png_chunk(b"IDAT", stream)
+                    + iend
+                )
+                self.assertIn(
+                    "promoted-character-action-alpha-unverifiable",
+                    self.promoted_png_error_codes(contents),
                 )
 
     def test_promoted_character_name_rejects_project_coupling(self):

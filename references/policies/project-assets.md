@@ -49,12 +49,21 @@ Chinese semantics, topics, or filename wording.
 For character-action PNGs it inspects actual pixels in deterministically
 supported non-interlaced 8- or 16-bit grayscale-alpha/RGBA files. Before pixel
 inspection it requires the exact PNG signature, intact length and CRC fields
-for every chunk, one 13-byte `IHDR` as the first chunk, ordered `IDAT` chunks,
-and one terminal zero-length `IEND` with no trailing data. A fully opaque image
-is an error even when metadata says alpha is present. Missing, corrupt,
-interlaced, palette-based, structurally malformed, or otherwise unsupported
-files produce a stable `promoted-character-action-alpha-unverifiable` issue
-instead of an exception or an assumed pass.
+for every chunk, one 13-byte `IHDR` as the first chunk, consecutive `IDAT`
+chunks, and one terminal zero-length `IEND` with no trailing data. `PLTE` is
+optional only for RGBA, must contain 1–256 RGB entries, must occur at most once
+before `IDAT`, and is forbidden for grayscale-alpha. Any other chunk whose
+first type byte marks it critical is unsupported and rejected; legal ancillary
+chunks remain allowed but cannot split an `IDAT` sequence.
+
+The joined `IDAT` payload must contain exactly one complete zlib stream with
+end-of-stream reached and no unused or unconsumed bytes. Its decoded size must
+exactly match the declared scanlines, and every scanline filter must be one of
+the five supported PNG filters. A fully opaque image is an error even when
+metadata says alpha is present. Missing, corrupt, interlaced, palette-based,
+structurally malformed, or otherwise unsupported files produce a stable
+`promoted-character-action-alpha-unverifiable` issue instead of an exception
+or an assumed pass.
 
 Structural checks return issue-only results with stable codes for unsafe or
 missing paths, invalid metadata, absent provenance, incompatible ownership, or
