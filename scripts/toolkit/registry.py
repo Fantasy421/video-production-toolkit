@@ -1,6 +1,7 @@
 """Versioned registry lookup and evidence-gated lesson promotion."""
 
 import json
+import math
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Optional, Tuple
@@ -16,7 +17,23 @@ COMPACT_FIELDS = (
     "implementation_ref",
     "license",
 )
+MAX_CANDIDATES = 3
 LESSON_STATUSES = ("observed", "candidate", "verified", "global", "deprecated")
+REQUIRED_ENTRY_FIELDS = ("id", "version", "job", "preview", "renderer", "implementation_ref", "license")
+OPTIONAL_ENTRY_FIELDS = {
+    "mechanism",
+    "participants",
+    "duration",
+    "canvas",
+    "carriers",
+    "capabilities",
+    "accepts",
+    "outputs",
+    "editable",
+    "installed_skill",
+    "fallback",
+    "license_mode",
+}
 
 
 def search_registry(root: Path, kind: str, query: Mapping[str, Any], limit: int = 3) -> list[dict[str, Any]]:
@@ -43,7 +60,7 @@ def search_registry(root: Path, kind: str, query: Mapping[str, Any], limit: int 
         candidates.append(_compact_entry(entry, score))
 
     candidates.sort(key=lambda candidate: (-candidate["score"], candidate["id"]))
-    return candidates[:limit]
+    return candidates[: min(limit, MAX_CANDIDATES)]
 
 
 def promote_lesson(lesson: Mapping[str, Any], evidence: Mapping[str, Any]) -> dict[str, Any]:
@@ -74,9 +91,9 @@ def promote_lesson(lesson: Mapping[str, Any], evidence: Mapping[str, Any]) -> di
         if scenes >= 2 and projects >= 2 and user_approved:
             promoted["status"] = "global"
         return promoted
-    if scenes >= 2 and projects >= 2:
+    if status == "candidate" and scenes >= 2 and projects >= 2:
         promoted["status"] = "verified"
-    elif scenes >= 2:
+    elif status == "observed" and scenes >= 2:
         promoted["status"] = "candidate"
     return promoted
 
@@ -113,10 +130,67 @@ def _entries_from_payload(payload: Any, kind: str, path: Path) -> list[dict[str,
 def _validate_entry(entry: Any, path: Path) -> None:
     if not isinstance(entry, Mapping):
         raise ValueError(f"registry entry must be an object: {path}")
-    required = ("id", "version", "job", "preview", "renderer", "implementation_ref", "license")
-    missing = [field for field in required if not isinstance(entry.get(field), str) or not entry[field]]
+    allowed = set(REQUIRED_ENTRY_FIELDS) | OPTIONAL_ENTRY_FIELDS
+    unknown = sorted(set(entry) - allowed)
+    if unknown:
+        raise ValueError(f"registry entry has unknown fields ({', '.join(unknown)}): {path}")
+    missing = [
+        field
+        for field in REQUIRED_ENTRY_FIELDS
+        if not isinstance(entry.get(field), str) or not entry[field]
+    ]
     if missing:
         raise ValueError(f"registry entry missing fields ({', '.join(missing)}): {path}")
+    if "mechanism" in entry:
+        _validate_string(entry["mechanism"], "mechanism", path)
+    for field in ("participants", "canvas", "carriers", "capabilities", "accepts", "outputs"):
+        if field in entry:
+            _validate_string_list(entry[field], field, path)
+    if "duration" in entry:
+        _validate_duration(entry["duration"], path)
+    if "editable" in entry and not isinstance(entry["editable"], bool):
+        raise ValueError(f"registry editable must be a boolean: {path}")
+    if "installed_skill" in entry:
+        _validate_string(entry["installed_skill"], "installed_skill", path)
+    if "fallback" in entry and entry["fallback"] is not None:
+        _validate_string(entry["fallback"], "fallback", path)
+    if "license_mode" in entry and entry["license_mode"] != "external-reference":
+        raise ValueError(f"registry license_mode must be external-reference: {path}")
+
+
+def _validate_string(value: Any, field: str, path: Path) -> None:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"registry {field} must be a non-empty string: {path}")
+
+
+def _validate_string_list(value: Any, field: str, path: Path) -> None:
+    if not isinstance(value, list) or not value or any(not isinstance(item, str) or not item for item in value):
+        raise ValueError(f"registry {field} must be a non-empty string array: {path}")
+    if len(value) != len(set(value)):
+        raise ValueError(f"registry {field} must not repeat values: {path}")
+
+
+def _validate_duration(value: Any, path: Path) -> None:
+    if isinstance(value, bool):
+        raise ValueError(f"registry duration must be a non-negative number or min/max object: {path}")
+    if isinstance(value, (int, float)):
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"registry duration must be a non-negative number: {path}")
+        return
+    if not isinstance(value, Mapping) or set(value) != {"min", "max"}:
+        raise ValueError(f"registry duration must be a min/max object: {path}")
+    minimum, maximum = value["min"], value["max"]
+    if (
+        isinstance(minimum, bool)
+        or isinstance(maximum, bool)
+        or not isinstance(minimum, (int, float))
+        or not isinstance(maximum, (int, float))
+        or not math.isfinite(minimum)
+        or not math.isfinite(maximum)
+        or minimum < 0
+        or maximum < minimum
+    ):
+        raise ValueError(f"registry duration range is invalid: {path}")
 
 
 def _compact_entry(entry: Mapping[str, Any], score: int) -> dict[str, Any]:
@@ -146,7 +220,7 @@ def _score(entry: Mapping[str, Any], query: Mapping[str, Any]) -> int:
     recent_recipes, recent_carriers = _recent_ids(query.get("recent_ids"))
     if entry["id"] in recent_recipes:
         score -= 25
-    if _values(entry.get("carriers", entry.get("carrier"))) & recent_carriers:
+    if _values(entry.get("carriers")) & recent_carriers:
         score -= 12
     return score
 
@@ -154,7 +228,7 @@ def _score(entry: Mapping[str, Any], query: Mapping[str, Any]) -> int:
 def _supports_canvas(entry: Mapping[str, Any], requested: Any) -> bool:
     if requested in (None, "", [], ()):
         return True
-    return bool(_values(entry.get("canvas", entry.get("canvases"))) & _values(requested))
+    return bool(_values(entry.get("canvas")) & _values(requested))
 
 
 def _exact_match(value: Any, requested: Any) -> bool:

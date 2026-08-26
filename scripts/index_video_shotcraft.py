@@ -4,7 +4,7 @@
 import argparse
 import json
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -27,6 +27,7 @@ def index_video_shotcraft(source: Path) -> dict[str, Any]:
         if not isinstance(card, dict) or not isinstance(card.get("name"), str):
             continue
         source_ref = card.get("source") or card.get("sourceUrl")
+        implementation_ref = _implementation_reference(source_ref)
         for style in card.get("styles", []):
             if not isinstance(style, dict) or not isinstance(style.get("key"), str):
                 continue
@@ -38,7 +39,7 @@ def index_video_shotcraft(source: Path) -> dict[str, Any]:
                     "job": card.get("use", card.get("category", "motion recipe")),
                     "preview": media.get("url", ""),
                     "renderer": "remotion",
-                    "implementation_ref": f"video-shotcraft:{source_ref}" if source_ref else "video-shotcraft:gallery",
+                    "implementation_ref": implementation_ref,
                     "license": "Apache-2.0",
                     "mechanism": card.get("category", "motion"),
                     "participants": card.get("tags", []),
@@ -73,6 +74,21 @@ def _index_reference(index_path: Path, source: Path) -> str:
         return f"video-shotcraft:{index_path.relative_to(source)}"
     except ValueError:
         return f"video-shotcraft:{index_path.name}"
+
+
+def _implementation_reference(source_ref: Any) -> str:
+    """Return only a safe, portable external reference from gallery metadata."""
+    if source_ref is None:
+        return "video-shotcraft:gallery"
+    if not isinstance(source_ref, str) or not source_ref:
+        raise ValueError("VideoShotCraft source reference must be a non-empty relative POSIX path")
+    if "\\" in source_ref or any(ord(character) < 32 or ord(character) == 127 for character in source_ref):
+        raise ValueError(f"unsafe VideoShotCraft source reference: {source_ref!r}")
+    parts = source_ref.split("/")
+    path = PurePosixPath(source_ref)
+    if path.is_absolute() or not parts or any(part in {"", ".", ".."} for part in parts):
+        raise ValueError(f"unsafe VideoShotCraft source reference: {source_ref!r}")
+    return f"video-shotcraft:{source_ref}"
 
 
 def _duration_metadata(value: Any) -> dict[str, int]:
