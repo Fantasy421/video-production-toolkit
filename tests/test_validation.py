@@ -229,6 +229,27 @@ class ValidationTests(unittest.TestCase):
         coverage_result = validate_project(self.root)
         self.assertIn("missing-contract-coverage", {item["code"] for item in coverage_result["errors"]})
 
+    def test_nonvisual_tracks_are_exempt_from_scene_contracts_but_visual_tracks_are_not(self):
+        timeline_path = self.root / "timeline" / "timeline-v1.json"
+        base_timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
+        for track_kind in ("voice", "captions", "music", "sfx", "transitions"):
+            with self.subTest(track_kind=track_kind):
+                timeline = json.loads(json.dumps(base_timeline))
+                timeline["tracks"][0]["kind"] = track_kind
+                timeline["tracks"][0]["clips"][0].pop("contract_id")
+                timeline_path.write_text(json.dumps(timeline), encoding="utf-8")
+
+                result = validate_project(self.root)
+                self.assertNotIn("missing-contract-reference", {item["code"] for item in result["errors"]})
+
+        timeline = json.loads(json.dumps(base_timeline))
+        timeline["tracks"][0]["kind"] = "visual"
+        timeline["tracks"][0]["clips"][0].pop("contract_id")
+        timeline_path.write_text(json.dumps(timeline), encoding="utf-8")
+
+        result = validate_project(self.root)
+        self.assertIn("missing-contract-reference", {item["code"] for item in result["errors"]})
+
 
 if __name__ == "__main__":
     unittest.main()

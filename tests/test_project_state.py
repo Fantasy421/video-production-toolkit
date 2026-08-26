@@ -5,7 +5,12 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from scripts.toolkit.project_state import initialize_project, append_event, replay_events
+from scripts.toolkit.project_state import (
+    append_event,
+    initialize_project,
+    replay_events,
+    set_active_timeline,
+)
 
 
 RUNTIME_DIRECTORIES = {
@@ -59,6 +64,49 @@ class ProjectStateTests(unittest.TestCase):
 
             self.assertEqual("direction_ready", replay_events(root)["phase"])
             self.assertEqual(3, len((root / "events" / "events.jsonl").read_text(encoding="utf-8").splitlines()))
+
+    def test_active_timeline_event_updates_snapshot_and_replay(self):
+        """Catches a review timeline pointer that disappears after project recovery."""
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            initialize_project(root, "kv-001", "knowledge-video")
+
+            state = set_active_timeline(root, "timeline-v2")
+
+            snapshot = json.loads((root / "project.json").read_text(encoding="utf-8"))
+            replayed = replay_events(root)
+            self.assertEqual("timeline-v2", state["active_timeline_id"])
+            self.assertEqual(state, snapshot)
+            self.assertEqual(snapshot, replayed)
+            self.assertEqual(
+                {"event": "project.active_timeline_changed", "active_timeline_id": "timeline-v2"},
+                json.loads((root / "events" / "events.jsonl").read_text(encoding="utf-8").splitlines()[-1]),
+            )
+            event_schema = json.loads(
+                (ROOT / "references" / "schemas" / "event.schema.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual({"type": "string", "minLength": 1}, event_schema["properties"]["active_timeline_id"])
+
+    def test_replay_of_legacy_events_keeps_the_legacy_snapshot_shape(self):
+        """Catches the optional timeline event making older project logs unreadable."""
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            event_log = root / "events" / "events.jsonl"
+            event_log.parent.mkdir(parents=True)
+            event_log.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"event": "project.initialized", "schema_version": 1, "project_id": "kv-legacy", "workflow": "knowledge-video"}),
+                        json.dumps({"event": "project.phase_changed", "phase": "content_ready"}),
+                    ]
+                ) + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                {"schema_version": 1, "project_id": "kv-legacy", "workflow": "knowledge-video", "phase": "content_ready"},
+                replay_events(root),
+            )
 
     def test_initialize_rejects_any_existing_state_file_before_writing(self):
         """Catches reinitialization deleting an existing project snapshot or event log."""

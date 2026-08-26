@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from scripts.build_review_pack import build_review_pack
+from scripts.toolkit.project_state import initialize_project, set_active_timeline
 
 
 class ReviewPackTests(unittest.TestCase):
@@ -78,6 +79,7 @@ class ReviewPackTests(unittest.TestCase):
         self.assertEqual(previous_review, (published.parent / "review.json").read_text(encoding="utf-8"))
 
     def test_review_timecodes_only_use_approved_timeline_artifact(self):
+        initialize_project(self.root, "review-test", "knowledge-video")
         (self.root / "timeline" / "active.json").write_text(
             json.dumps(
                 {
@@ -109,10 +111,7 @@ class ReviewPackTests(unittest.TestCase):
             json.dumps({"artifact_id": "timeline-v2", "type": "timeline", "version": 2, "status": "approved", "parents": [], "path": "timeline/other.json"}),
             encoding="utf-8",
         )
-        (self.root / "project.json").write_text(
-            json.dumps({"schema_version": 1, "project_id": "review-test", "workflow": "knowledge-video", "phase": "review_ready", "active_timeline_id": "timeline-v1"}),
-            encoding="utf-8",
-        )
+        set_active_timeline(self.root, "timeline-v1")
 
         path = build_review_pack(self.root, self.root / "review")
 

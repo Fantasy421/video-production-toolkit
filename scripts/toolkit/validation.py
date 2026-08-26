@@ -18,6 +18,16 @@ TASK_REQUIRED_KEYS = {
     "constraints",
 }
 PRIMARY_CARRIERS = {"A-roll", "B-roll", "Scene", "Demo", "Motion Graphics", "Evidence"}
+NON_SEMANTIC_TRACK_KINDS = {
+    "voice",
+    "voiceover",
+    "caption",
+    "captions",
+    "music",
+    "sfx",
+    "transition",
+    "transitions",
+}
 
 
 def validate_project(root: Path) -> dict[str, list[dict[str, Any]]]:
@@ -244,19 +254,19 @@ def _check_timeline(root: Path, timeline_id: str, timeline: dict[str, Any], arti
     tracks = _timeline_tracks(timeline)
     if not tracks:
         errors.append(_issue("missing-timeline-tracks", timeline_id=timeline_id))
-    primary_count = sum(1 for _, primary, _ in tracks if primary)
+    primary_count = sum(1 for _, _, primary, _ in tracks if primary)
     if primary_count != 1:
         errors.append(_issue("invalid-primary-track-count", count=primary_count, timeline_id=timeline_id))
-    for track_id, primary, clips in tracks:
+    for track_id, _, primary, clips in tracks:
         _check_track(timeline_id, track_id, primary or primary_count != 1, clips, duration, artifacts, errors, warnings)
     _check_captions(timeline_id, timeline.get("captions", []), duration, errors)
     _check_contracts(root, timeline_id, timeline, artifacts, errors)
     _check_demo_lifecycle(timeline_id, timeline, errors)
 
 
-def _timeline_tracks(timeline: dict[str, Any]) -> list[tuple[str, bool, list[dict[str, Any]]]]:
+def _timeline_tracks(timeline: dict[str, Any]) -> list[tuple[str, str, bool, list[dict[str, Any]]]]:
     if isinstance(timeline.get("clips"), list):
-        return [("primary", True, _object_list(timeline["clips"]))]
+        return [("primary", "visual", True, _object_list(timeline["clips"]))]
     tracks = timeline.get("tracks")
     if not isinstance(tracks, list):
         return []
@@ -267,7 +277,8 @@ def _timeline_tracks(timeline: dict[str, Any]) -> list[tuple[str, bool, list[dic
         clips = track.get("clips")
         if not isinstance(clips, list):
             continue
-        output.append((str(track.get("id", index)), bool(track.get("primary", False)), _object_list(clips)))
+        kind = track.get("kind", "visual")
+        output.append((str(track.get("id", index)), kind if isinstance(kind, str) else "visual", bool(track.get("primary", False)), _object_list(clips)))
     return output
 
 
@@ -320,10 +331,21 @@ def _check_captions(timeline_id: str, captions: Any, duration: Union[int, float]
             errors.append(_issue("invalid-caption-timing", timeline_id=timeline_id))
 
 
+def _requires_scene_contract(track_kind: str, clip: dict[str, Any]) -> bool:
+    """Require scene contracts for visual/semantic content, not support tracks."""
+    kind = clip.get("kind", track_kind)
+    if not isinstance(kind, str):
+        return True
+    normalized = kind.strip().lower().replace("_", "-")
+    return normalized not in NON_SEMANTIC_TRACK_KINDS
+
+
 def _check_contracts(root: Path, timeline_id: str, timeline: dict[str, Any], artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]]) -> None:
     referenced: dict[str, list[dict[str, Any]]] = {}
-    for _, _, clips in _timeline_tracks(timeline):
+    for _, track_kind, _, clips in _timeline_tracks(timeline):
         for clip in clips:
+            if not _requires_scene_contract(track_kind, clip):
+                continue
             contract_id = clip.get("contract_id")
             if not isinstance(contract_id, str) or not contract_id:
                 errors.append(_issue("missing-contract-reference", scene_id=clip.get("scene_id", "unknown"), timeline_id=timeline_id))
@@ -364,7 +386,7 @@ def _check_demo_lifecycle(timeline_id: str, timeline: dict[str, Any], errors: li
         for demo in _object_list(demos)
         if isinstance(demo.get("demo_id"), str) and demo["demo_id"]
     }
-    for _, _, clips in _timeline_tracks(timeline):
+    for _, _, _, clips in _timeline_tracks(timeline):
         for clip in clips:
             if clip.get("primary_carrier") != "Demo":
                 continue
