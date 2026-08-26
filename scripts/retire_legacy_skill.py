@@ -23,19 +23,11 @@ from scripts.validate_package import validate_package
 
 EXPECTED_BASENAME = "knowledge-video-visual-director"
 PLUGIN_ID = "video-production-toolkit"
-_RUNTIME_ROOTS = (
-    ".codex-plugin",
-    "agents",
-    "skills",
-    "scripts",
-    "references",
-    "registries",
-    "tests/fixtures",
-    "docs/migration",
-)
-_RUNTIME_REQUIRED = {
+_DISTRIBUTABLE_REQUIRED = {
     ".codex-plugin/plugin.json",
     "agents/openai.yaml",
+    "assets/project-template/project.json",
+    "assets/project-template/review-pack/index.html",
     "skills/video-director/SKILL.md",
     "scripts/verify_installation.py",
     "scripts/migration_audit.py",
@@ -51,7 +43,24 @@ _RUNTIME_REQUIRED = {
     "tests/fixtures/knowledge-video-minimal/scene-contracts.json",
     "docs/migration/knowledge-video-visual-director.md",
 }
-_RUNTIME_IGNORED_NAMES = {"__pycache__", ".DS_Store"}
+# Everything outside this explicit generated/Git scratch set participates in
+# installed-package identity, including future top-level runtime asset trees.
+_NON_DISTRIBUTABLE_NAMES = {
+    ".coverage",
+    ".DS_Store",
+    ".git",
+    ".hypothesis",
+    ".mypy_cache",
+    ".nox",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".superpowers",
+    ".tox",
+    ".worktrees",
+    "__pycache__",
+    "htmlcov",
+}
+_NON_DISTRIBUTABLE_SUFFIXES = {".pyc", ".pyo"}
 
 
 def retire_legacy_skill(
@@ -232,8 +241,8 @@ def _installed_plugin_candidate(home: Path) -> Path:
 
 
 def _require_matching_runtime_packages(repo: Path, installed: Path) -> None:
-    source_hashes = _runtime_hashes(repo, "replacement repository")
-    installed_hashes = _runtime_hashes(installed, "host-installed replacement")
+    source_hashes = _distributable_hashes(repo, "replacement repository")
+    installed_hashes = _distributable_hashes(installed, "host-installed replacement")
     if source_hashes == installed_hashes:
         return
     missing = sorted(set(source_hashes) - set(installed_hashes))
@@ -256,23 +265,44 @@ def _require_matching_runtime_packages(repo: Path, installed: Path) -> None:
     )
 
 
-def _runtime_hashes(root: Path, label: str) -> dict[str, str]:
+def _distributable_hashes(root: Path, label: str) -> dict[str, str]:
     hashes: dict[str, str] = {}
-    for relative_root in _RUNTIME_ROOTS:
-        base = root / relative_root
-        if base.is_symlink() or not base.exists():
-            raise RuntimeError(f"{label} runtime root is missing or unsafe: {relative_root}")
-        paths = [base] if base.is_file() else sorted(base.rglob("*"))
-        for path in paths:
-            relative = path.relative_to(root)
-            if any(part in _RUNTIME_IGNORED_NAMES for part in relative.parts):
+    def raise_walk_error(error: OSError) -> None:
+        raise RuntimeError(f"{label} distributable tree is unreadable") from error
+
+    for directory, directory_names, file_names in os.walk(
+        root,
+        topdown=True,
+        onerror=raise_walk_error,
+        followlinks=False,
+    ):
+        parent = Path(directory)
+        distributable_directories = []
+        for name in sorted(directory_names):
+            if name in _NON_DISTRIBUTABLE_NAMES:
                 continue
-            if path.suffix == ".pyc":
-                continue
+            path = parent / name
             if path.is_symlink():
-                raise RuntimeError(f"{label} runtime file is a symlink: {relative.as_posix()}")
-            if not path.is_file():
+                relative = path.relative_to(root).as_posix()
+                raise RuntimeError(f"{label} distributable directory is a symlink: {relative}")
+            distributable_directories.append(name)
+        directory_names[:] = distributable_directories
+
+        for name in sorted(file_names):
+            if name in _NON_DISTRIBUTABLE_NAMES:
                 continue
+            path = parent / name
+            if path.suffix in _NON_DISTRIBUTABLE_SUFFIXES:
+                continue
+            relative = path.relative_to(root)
+            if path.is_symlink():
+                raise RuntimeError(
+                    f"{label} distributable file is a symlink: {relative.as_posix()}"
+                )
+            if not path.is_file():
+                raise RuntimeError(
+                    f"{label} distributable entry is not a regular file: {relative.as_posix()}"
+                )
             digest = hashlib.sha256()
             try:
                 with path.open("rb") as stream:
@@ -280,10 +310,10 @@ def _runtime_hashes(root: Path, label: str) -> dict[str, str]:
                         digest.update(chunk)
             except OSError as error:
                 raise RuntimeError(
-                    f"{label} runtime file is unreadable: {relative.as_posix()}"
+                    f"{label} distributable file is unreadable: {relative.as_posix()}"
                 ) from error
             hashes[relative.as_posix()] = digest.hexdigest()
-    missing_required = sorted(_RUNTIME_REQUIRED - set(hashes))
+    missing_required = sorted(_DISTRIBUTABLE_REQUIRED - set(hashes))
     if missing_required:
         raise RuntimeError(f"{label} is missing required runtime files: {missing_required}")
     return hashes

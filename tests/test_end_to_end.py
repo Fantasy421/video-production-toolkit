@@ -1029,6 +1029,49 @@ class RetirementSafetyTests(unittest.TestCase):
 
             self.assertTrue(legacy.is_dir())
 
+    def test_retirement_requires_installed_review_pack_template(self):
+        """Catches a missing distributable review-pack index reaching retirement."""
+        with TemporaryDirectory() as folder:
+            repo, legacy, installed = self.isolated_retirement_fixture(Path(folder))
+            template = (
+                installed
+                / "assets"
+                / "project-template"
+                / "review-pack"
+                / "index.html"
+            )
+            template.unlink()
+
+            with self.assertRaisesRegex(RuntimeError, "index.html"):
+                retire_legacy_skill(
+                    legacy,
+                    repo,
+                    confirmation=None,
+                    dry_run=True,
+                )
+
+            self.assertTrue(legacy.is_dir())
+
+    def test_retirement_rejects_modified_installed_project_template_content(self):
+        """Catches changed distributable project-template content being ignored."""
+        with TemporaryDirectory() as folder:
+            repo, legacy, installed = self.isolated_retirement_fixture(Path(folder))
+            template = installed / "assets" / "project-template" / "project.json"
+            template.write_text(
+                '{"schema_version":1,"project_id":"modified"}\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "project.json"):
+                retire_legacy_skill(
+                    legacy,
+                    repo,
+                    confirmation=None,
+                    dry_run=True,
+                )
+
+            self.assertTrue(legacy.is_dir())
+
     def test_retirement_requires_critical_runtime_files_in_both_package_copies(self):
         """Catches matching but incomplete packages reaching the installed verifier."""
         with TemporaryDirectory() as folder:

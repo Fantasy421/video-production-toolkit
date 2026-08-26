@@ -1,4 +1,5 @@
 import json
+import shutil
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -27,6 +28,8 @@ class PackageTests(unittest.TestCase):
             for relative in (
                 ".codex-plugin/plugin.json",
                 "agents/openai.yaml",
+                "assets/project-template/project.json",
+                "assets/project-template/review-pack/index.html",
                 "skills/video-director/SKILL.md",
             ):
                 destination = package / relative
@@ -42,6 +45,19 @@ class PackageTests(unittest.TestCase):
                 ["invalid:plugin-name", "invalid:skills-path"],
                 validate_package(package),
             )
+
+    def test_runtime_project_and_review_pack_templates_are_required(self):
+        """Catches a plugin package that cannot initialize or review a project."""
+        for relative in (
+            "assets/project-template/project.json",
+            "assets/project-template/review-pack/index.html",
+        ):
+            with self.subTest(relative=relative), TemporaryDirectory() as folder:
+                package = Path(folder) / "package"
+                shutil.copytree(ROOT, package, ignore=shutil.ignore_patterns(".git"))
+                (package / relative).unlink()
+
+                self.assertIn(f"missing:{relative}", validate_package(package))
 
 
 if __name__ == "__main__":

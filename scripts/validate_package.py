@@ -5,6 +5,8 @@ from pathlib import Path
 REQUIRED = (
     ".codex-plugin/plugin.json",
     "agents/openai.yaml",
+    "assets/project-template/project.json",
+    "assets/project-template/review-pack/index.html",
     "skills/video-director/SKILL.md",
 )
 
