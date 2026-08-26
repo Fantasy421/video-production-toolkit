@@ -2,6 +2,7 @@
 """Audit the legacy knowledge-video skill before retirement is considered."""
 
 import argparse
+import hashlib
 import json
 import os
 import tempfile
@@ -10,6 +11,9 @@ from typing import Any
 
 
 REPORT_PATH = PurePosixPath("docs/migration/knowledge-video-visual-director.md")
+BASELINE_PATH = PurePosixPath(
+    "references/policies/knowledge-video-visual-director-baseline.json"
+)
 ALLOWED_DISPOSITIONS = {"migrated", "replaced", "externalized", "rejected"}
 DISPOSITION_CATEGORIES = {
     "migrated": "migrated",
@@ -105,13 +109,13 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
         "rationale": "Deterministic semantic coverage becomes a pure structured-issue evaluator.",
     },
     "scripts/validate_library.py": {
-        "disposition": "replaced",
+        "disposition": "migrated",
         "owners": [
             "scripts/toolkit/artifacts.py",
             "scripts/toolkit/validation.py",
             "references/policies/project-assets.md",
         ],
-        "rationale": "Safe project paths, immutable ownership, and promotion policy replace the narrow global TSV library.",
+        "rationale": "Safe paths, actual PNG alpha inspection, neutral action metadata, provenance, and promotion ownership move to structural validation.",
     },
     "scripts/validate_router.py": {
         "disposition": "replaced",
@@ -183,12 +187,14 @@ def audit_legacy(legacy_root: Path, new_root: Path) -> dict[str, Any]:
     """Return explicit dispositions for every stable file under ``legacy_root``."""
     legacy_root = _directory(legacy_root, "legacy root")
     new_root = _directory(new_root, "new root")
+    baseline = _load_baseline(new_root)
     legacy_files, unsafe_legacy_paths = _legacy_files(legacy_root)
     missing_legacy_files = sorted(set(DISPOSITIONS) - set(legacy_files))
     inventory = []
     undisposed_files = []
     undisposed_executables = []
     missing_owners = []
+    content_mismatches = []
 
     for relative in legacy_files:
         disposition = DISPOSITIONS.get(relative)
@@ -198,6 +204,8 @@ def audit_legacy(legacy_root: Path, new_root: Path) -> dict[str, Any]:
                 undisposed_executables.append(relative)
             continue
         _validate_disposition(relative, disposition)
+        actual_sha256 = _sha256(legacy_root / relative)
+        expected_sha256 = baseline[relative]
         item = {
             "legacy_path": relative,
             "category": DISPOSITION_CATEGORIES[disposition["disposition"]],
@@ -205,8 +213,18 @@ def audit_legacy(legacy_root: Path, new_root: Path) -> dict[str, Any]:
             "owners": list(disposition["owners"]),
             "rationale": disposition["rationale"],
             "executable": _is_executable_script(legacy_root / relative, relative),
+            "sha256": actual_sha256,
+            "expected_sha256": expected_sha256,
         }
         inventory.append(item)
+        if actual_sha256 != expected_sha256:
+            content_mismatches.append(
+                {
+                    "legacy_path": relative,
+                    "expected_sha256": expected_sha256,
+                    "actual_sha256": actual_sha256,
+                }
+            )
         for owner in item["owners"]:
             owner_path = _owner_path(new_root, owner)
             if not owner_path.is_file():
@@ -230,18 +248,24 @@ def audit_legacy(legacy_root: Path, new_root: Path) -> dict[str, Any]:
             or undisposed_files
             or undisposed_executables
             or missing_owners
+            or content_mismatches
             or unsafe_legacy_paths
         ),
         "summary": {
             "legacy_files": len(legacy_files),
             "expected_legacy_files": len(DISPOSITIONS),
             "missing_legacy_files": len(missing_legacy_files),
+            "content_hash_mismatches": len(content_mismatches),
             "executable_scripts": executable_count,
             "undisposed_executables": len(undisposed_executables),
             "categories": category_counts,
             "dispositions": disposition_counts,
         },
         "inventory": inventory,
+        "baseline_manifest": BASELINE_PATH.as_posix(),
+        "content_mismatches": sorted(
+            content_mismatches, key=lambda item: item["legacy_path"]
+        ),
         "missing_legacy_files": missing_legacy_files,
         "undisposed_files": sorted(undisposed_files),
         "undisposed_executables": sorted(undisposed_executables),
@@ -343,6 +367,56 @@ def _safe_relative(value: Any, label: str) -> PurePosixPath:
     return path
 
 
+def _load_baseline(root: Path) -> dict[str, str]:
+    path = root.joinpath(*BASELINE_PATH.parts)
+    _require_inside(root, path, "baseline manifest must stay inside the new root")
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"baseline manifest is missing: {BASELINE_PATH.as_posix()}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("baseline manifest is not valid JSON") from error
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"schema_version", "legacy_skill", "files"}
+        or payload.get("schema_version") != 1
+        or payload.get("legacy_skill") != "knowledge-video-visual-director"
+        or not isinstance(payload.get("files"), list)
+    ):
+        raise ValueError("baseline manifest has an invalid schema")
+    baseline: dict[str, str] = {}
+    for entry in payload["files"]:
+        if not isinstance(entry, dict) or set(entry) != {"path", "sha256"}:
+            raise ValueError("baseline manifest file entry has an invalid schema")
+        relative = _safe_relative(entry.get("path"), "baseline legacy path").as_posix()
+        digest = entry.get("sha256")
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            raise ValueError(f"baseline SHA-256 is invalid for {relative}")
+        if relative in baseline:
+            raise ValueError(f"baseline legacy path is duplicated: {relative}")
+        baseline[relative] = digest
+    if set(baseline) != set(DISPOSITIONS):
+        raise ValueError("baseline manifest paths must exactly match migration dispositions")
+    if list(baseline) != sorted(baseline):
+        raise ValueError("baseline manifest file entries must be sorted by path")
+    return baseline
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as error:
+        raise ValueError(f"legacy file cannot be hashed: {path.name}") from error
+    return digest.hexdigest()
+
+
 def _directory(value: Path, label: str) -> Path:
     path = Path(value)
     if path.is_symlink():
@@ -371,13 +445,16 @@ def _render_report(result: dict[str, Any]) -> str:
         "",
         "This report inventories the installed legacy skill without modifying it. The",
         "legacy root is supplied at audit time; no machine-local legacy path is part of",
-        "the replacement library.",
+        "the replacement library. Every source hash is compared with the committed",
+        "baseline, so a same-path content change blocks this auditable retirement gate.",
         "",
         "## Summary",
         "",
         f"- Legacy files inventoried: {summary['legacy_files']}",
         f"- Expected stable legacy files: {summary['expected_legacy_files']}",
         f"- Missing expected legacy files: {summary['missing_legacy_files']}",
+        f"- Baseline manifest: `{result['baseline_manifest']}`",
+        f"- Content hash mismatches: {summary['content_hash_mismatches']}",
         f"- Executable legacy scripts: {summary['executable_scripts']}",
         f"- Undisposed executable scripts: {summary['undisposed_executables']}",
         "- Lifecycle categories: "
@@ -392,13 +469,13 @@ def _render_report(result: dict[str, Any]) -> str:
         "",
         "## File dispositions",
         "",
-        "| Legacy file | Category | Disposition | New owner paths | Rationale |",
-        "|---|---|---|---|---|",
+        "| Legacy file | Source SHA-256 | Category | Disposition | New owner paths | Rationale |",
+        "|---|---|---|---|---|---|",
     ]
     for item in result["inventory"]:
         owners = ", ".join(f"`{owner}`" for owner in item["owners"])
         lines.append(
-            f"| `{item['legacy_path']}` | {item['category']} | {item['disposition']} | {owners} | {item['rationale']} |"
+            f"| `{item['legacy_path']}` | `{item['sha256']}` | {item['category']} | {item['disposition']} | {owners} | {item['rationale']} |"
         )
     lines.extend(["", "## Retained rules", ""])
     lines.extend(f"- {rule}" for rule in result["retained_rules"])

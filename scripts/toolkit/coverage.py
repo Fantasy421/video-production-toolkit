@@ -139,14 +139,14 @@ def _visual_states(
         start_ms, end_ms = _interval(
             state, duration_ms, f"shot {shot_id} visual state interval"
         )
-        role = state.get("coverage_role")
-        if role is None:
-            if kind in MEANINGFUL_KINDS:
-                role = "meaningful"
-            elif kind in DECORATIVE_KINDS:
-                role = "decorative"
-            else:
-                role = "neutral"
+        if kind in MEANINGFUL_KINDS or kind in DECORATIVE_KINDS:
+            if "coverage_role" in state:
+                raise ValueError(
+                    f"shot {shot_id} visual state kind {kind} has a canonical coverage_role"
+                )
+            role = "meaningful" if kind in MEANINGFUL_KINDS else "decorative"
+        else:
+            role = state.get("coverage_role", "neutral")
         if role not in {"meaningful", "decorative", "neutral"}:
             raise ValueError(f"shot {shot_id} visual state coverage_role is invalid")
         raw_state_beats = state.get("beats", [])

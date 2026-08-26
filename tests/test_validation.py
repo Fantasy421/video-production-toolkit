@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
+import struct
 from tempfile import TemporaryDirectory
 import unittest
+import zlib
 
 from scripts.toolkit.validation import validate_project
 
@@ -104,7 +106,9 @@ class ValidationTests(unittest.TestCase):
     def tearDown(self):
         self.folder.cleanup()
 
-    def write_artifact(self, artifact_id, artifact_type, version, status, path, parents=None):
+    def write_artifact(
+        self, artifact_id, artifact_type, version, status, path, parents=None, **metadata
+    ):
         artifact = {
             "artifact_id": artifact_id,
             "type": artifact_type,
@@ -112,9 +116,198 @@ class ValidationTests(unittest.TestCase):
             "status": status,
             "parents": parents or [],
             "path": path,
+            **metadata,
         }
         destination = self.root / "artifacts" / artifact_type / f"{artifact_id}.json"
+        destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(json.dumps(artifact), encoding="utf-8")
+
+    def write_rgba_png(self, relative, alpha):
+        def chunk(kind, payload):
+            checksum = zlib.crc32(kind + payload) & 0xFFFFFFFF
+            return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", checksum)
+
+        header = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
+        pixel = bytes((32, 64, 96, alpha))
+        path = self.root / relative
+        path.write_bytes(
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", header)
+            + chunk(b"IDAT", zlib.compress(b"\x00" + pixel))
+            + chunk(b"IEND", b"")
+        )
+        return path
+
+    def promoted_character_metadata(self):
+        return {
+            "promotion": {
+                "ownership": "cross-project-registry",
+                "scope": "project-independent",
+                "source_or_license": "user-owned",
+                "provenance": {
+                    "project_id": "source-project",
+                    "artifact_id": "character-action-v1",
+                },
+                "validation_evidence": ["identity-continuity-reviewed"],
+                "applicability": ["neutral-presenter-action"],
+                "asset_kind": "character-action",
+                "subject": "presenter",
+                "action": "points-right",
+                "orientation": "right",
+                "scene": "",
+                "alpha": "yes",
+            }
+        }
+
+    def test_promoted_character_action_requires_real_transparency(self):
+        """Catches metadata-only alpha claims accepting a fully opaque PNG."""
+        self.write_rgba_png("media/opaque.png", 255)
+        self.write_artifact(
+            "promoted-character-v1",
+            "promoted-asset",
+            1,
+            "approved",
+            "media/opaque.png",
+            **self.promoted_character_metadata(),
+        )
+
+        result = validate_project(self.root)
+
+        self.assertIn(
+            "promoted-character-action-alpha-missing",
+            {item["code"] for item in result["errors"]},
+        )
+
+    def test_promoted_character_action_with_real_transparency_passes(self):
+        """Catches a real transparent pixel being rejected as metadata-only alpha."""
+        self.write_rgba_png("media/transparent.png", 0)
+        self.write_artifact(
+            "promoted-character-v1",
+            "promoted-asset",
+            1,
+            "approved",
+            "media/transparent.png",
+            **self.promoted_character_metadata(),
+        )
+
+        result = validate_project(self.root)
+
+        self.assertEqual(
+            [],
+            [
+                item
+                for item in result["errors"]
+                if "promoted" in item["code"]
+            ],
+        )
+
+    def test_promoted_character_action_requires_neutral_owned_provenance(self):
+        """Catches project-coupled or unattributed media entering cross-project reuse."""
+        self.write_rgba_png("media/coupled.png", 0)
+        metadata = self.promoted_character_metadata()
+        promotion = metadata["promotion"]
+        promotion["ownership"] = "current-project"
+        promotion["source_or_license"] = ""
+        promotion["provenance"] = {}
+        promotion["scene"] = "S04-specific-background"
+        self.write_artifact(
+            "promoted-character-v1",
+            "promoted-asset",
+            1,
+            "approved",
+            "media/coupled.png",
+            **metadata,
+        )
+
+        result = validate_project(self.root)
+        codes = {item["code"] for item in result["errors"]}
+
+        self.assertIn("invalid-promoted-asset-ownership", codes)
+        self.assertIn("missing-promoted-asset-source", codes)
+        self.assertIn("missing-promoted-asset-provenance", codes)
+        self.assertIn("non-neutral-promoted-character-action", codes)
+
+    def test_promoted_character_action_requires_explicit_neutral_scene_metadata(self):
+        """Catches an absent scene field being treated as proven project independence."""
+        self.write_rgba_png("media/transparent.png", 0)
+        metadata = self.promoted_character_metadata()
+        metadata["promotion"].pop("scene")
+        self.write_artifact(
+            "promoted-character-v1",
+            "promoted-asset",
+            1,
+            "approved",
+            "media/transparent.png",
+            **metadata,
+        )
+
+        result = validate_project(self.root)
+
+        self.assertIn(
+            "non-neutral-promoted-character-action",
+            {item["code"] for item in result["errors"]},
+        )
+
+    def test_promoted_character_action_requires_identity_continuity_evidence(self):
+        """Catches generic evidence satisfying the character identity promise."""
+        self.write_rgba_png("media/transparent.png", 0)
+        metadata = self.promoted_character_metadata()
+        metadata["promotion"]["validation_evidence"] = ["alpha-reviewed"]
+        self.write_artifact(
+            "promoted-character-v1",
+            "promoted-asset",
+            1,
+            "approved",
+            "media/transparent.png",
+            **metadata,
+        )
+
+        result = validate_project(self.root)
+
+        self.assertIn(
+            "missing-character-identity-evidence",
+            {item["code"] for item in result["errors"]},
+        )
+
+    def test_promoted_character_alpha_inspection_failure_is_an_issue(self):
+        """Catches corrupt or unsupported files crashing structural validation."""
+        (self.root / "media" / "corrupt.png").write_bytes(b"not a png")
+        self.write_artifact(
+            "promoted-character-v1",
+            "promoted-asset",
+            1,
+            "approved",
+            "media/corrupt.png",
+            **self.promoted_character_metadata(),
+        )
+
+        result = validate_project(self.root)
+
+        self.assertIn(
+            "promoted-character-action-alpha-unverifiable",
+            {item["code"] for item in result["errors"]},
+        )
+
+    def test_malformed_promotion_evidence_is_an_issue_not_an_exception(self):
+        """Catches unhashable metadata values crashing structural validation."""
+        self.write_rgba_png("media/transparent.png", 0)
+        metadata = self.promoted_character_metadata()
+        metadata["promotion"]["validation_evidence"] = [{}]
+        self.write_artifact(
+            "promoted-character-v1",
+            "promoted-asset",
+            1,
+            "approved",
+            "media/transparent.png",
+            **metadata,
+        )
+
+        result = validate_project(self.root)
+
+        self.assertIn(
+            "missing-promoted-asset-validation-evidence",
+            {item["code"] for item in result["errors"]},
+        )
 
     def test_stale_artifact_on_active_timeline_is_error(self):
         self.write_artifact(

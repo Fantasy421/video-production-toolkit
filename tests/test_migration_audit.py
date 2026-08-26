@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -26,11 +27,29 @@ class MigrationAuditTests(unittest.TestCase):
         return path
 
     def populate_complete_inventory(self):
+        entries = []
         for relative, disposition in DISPOSITIONS.items():
             contents = "#!/usr/bin/env python3\n" if relative.startswith("scripts/") else "fixture"
-            self.create(self.legacy, relative, contents)
+            legacy_path = self.create(self.legacy, relative, contents)
+            entries.append(
+                {
+                    "path": relative,
+                    "sha256": hashlib.sha256(legacy_path.read_bytes()).hexdigest(),
+                }
+            )
             for owner in disposition["owners"]:
                 self.create(self.new, owner)
+        self.create(
+            self.new,
+            "references/policies/knowledge-video-visual-director-baseline.json",
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "legacy_skill": "knowledge-video-visual-director",
+                    "files": sorted(entries, key=lambda item: item["path"]),
+                }
+            ),
+        )
 
     def test_known_validator_has_disposition_and_existing_owner(self):
         """Catches a migrated executable disappearing from the explicit inventory."""
@@ -49,6 +68,8 @@ class MigrationAuditTests(unittest.TestCase):
         self.assertEqual("migrated", item["category"])
         self.assertEqual("migrated", item["disposition"])
         self.assertEqual(["scripts/toolkit/coverage.py"], item["owners"])
+        self.assertEqual(item["expected_sha256"], item["sha256"])
+        self.assertRegex(item["sha256"], r"^[0-9a-f]{64}$")
 
     def test_missing_expected_legacy_file_blocks_audit(self):
         """Catches a partial or already-damaged legacy tree satisfying the retirement gate."""
@@ -61,6 +82,20 @@ class MigrationAuditTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(
             ["scripts/validate_coverage.py"], result["missing_legacy_files"]
+        )
+
+    def test_same_legacy_path_with_changed_content_blocks_audit(self):
+        """Catches filename-only disposition checks accepting unreviewed source changes."""
+        self.populate_complete_inventory()
+        changed = self.legacy / "scripts/validate_coverage.py"
+        changed.write_text("#!/usr/bin/env python3\n# changed after audit\n", encoding="utf-8")
+
+        result = audit_legacy(self.legacy, self.new)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(
+            ["scripts/validate_coverage.py"],
+            [item["legacy_path"] for item in result["content_mismatches"]],
         )
 
     def test_rejected_legacy_asset_is_explicitly_categorized_as_retired(self):
@@ -126,7 +161,10 @@ class MigrationAuditTests(unittest.TestCase):
         self.assertEqual(
             self.new.resolve() / "docs/migration/knowledge-video-visual-director.md", path
         )
-        self.assertIn("Undisposed executable scripts: 0", path.read_text(encoding="utf-8"))
+        report = path.read_text(encoding="utf-8")
+        self.assertIn("Undisposed executable scripts: 0", report)
+        self.assertIn("Content hash mismatches: 0", report)
+        self.assertIn("Source SHA-256", report)
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
     def test_report_refuses_a_symlinked_output_directory(self):

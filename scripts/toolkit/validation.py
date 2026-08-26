@@ -3,7 +3,9 @@
 import json
 import math
 from pathlib import Path
+import struct
 from typing import Any, Iterable, Optional, Union
+import zlib
 
 
 ARTIFACT_REQUIRED_KEYS = ("artifact_id", "type", "version", "status", "parents", "path")
@@ -44,6 +46,7 @@ def validate_project(root: Path) -> dict[str, list[dict[str, Any]]]:
     artifacts = _read_artifacts(root, errors)
     approvals = _read_approvals(root, errors)
     _check_artifact_graph(root, artifacts, errors)
+    _check_promoted_assets(root, artifacts, errors)
     _check_tasks(root, artifacts, errors)
     active_timeline = _resolve_active_timeline(root, project, artifacts, errors)
     if active_timeline is not None:
@@ -172,6 +175,176 @@ def _check_artifact_parent_cycles(artifacts: dict[str, dict[str, Any]], errors: 
         visit(artifact_id)
     for artifact_id in sorted(cycle_members):
         errors.append(_issue("artifact-parent-cycle", artifact_id=artifact_id))
+
+
+def _check_promoted_assets(
+    root: Path,
+    artifacts: dict[str, dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> None:
+    """Validate the deterministic boundary for deliberate cross-project reuse."""
+    for artifact_id in sorted(artifacts):
+        artifact = artifacts[artifact_id]
+        if artifact["type"] != "promoted-asset":
+            continue
+        promotion = artifact.get("promotion")
+        if not isinstance(promotion, dict):
+            errors.append(_issue("invalid-promoted-asset-metadata", artifact_id=artifact_id))
+            continue
+        if promotion.get("ownership") != "cross-project-registry":
+            errors.append(_issue("invalid-promoted-asset-ownership", artifact_id=artifact_id))
+        if promotion.get("scope") != "project-independent":
+            errors.append(_issue("invalid-promoted-asset-scope", artifact_id=artifact_id))
+        if not _nonempty_text(promotion.get("source_or_license")):
+            errors.append(_issue("missing-promoted-asset-source", artifact_id=artifact_id))
+        provenance = promotion.get("provenance")
+        if not (
+            isinstance(provenance, dict)
+            and set(provenance) == {"project_id", "artifact_id"}
+            and _safe_component(provenance.get("project_id"))
+            and _safe_component(provenance.get("artifact_id"))
+        ):
+            errors.append(_issue("missing-promoted-asset-provenance", artifact_id=artifact_id))
+        for field, code in (
+            ("validation_evidence", "missing-promoted-asset-validation-evidence"),
+            ("applicability", "missing-promoted-asset-applicability"),
+        ):
+            values = promotion.get(field)
+            if not (
+                isinstance(values, list)
+                and values
+                and all(_nonempty_text(value) for value in values)
+                and len(values) == len(set(values))
+            ):
+                errors.append(_issue(code, artifact_id=artifact_id))
+        if promotion.get("asset_kind") == "character-action":
+            _check_promoted_character_action(root, artifact, promotion, errors)
+        elif not _nonempty_text(promotion.get("asset_kind")):
+            errors.append(_issue("invalid-promoted-asset-kind", artifact_id=artifact_id))
+
+
+def _check_promoted_character_action(
+    root: Path,
+    artifact: dict[str, Any],
+    promotion: dict[str, Any],
+    errors: list[dict[str, Any]],
+) -> None:
+    artifact_id = artifact["artifact_id"]
+    neutral = (
+        all(_nonempty_text(promotion.get(field)) for field in ("subject", "action", "orientation"))
+        and promotion.get("scene") == ""
+        and promotion.get("alpha") == "yes"
+    )
+    if not neutral:
+        errors.append(_issue("non-neutral-promoted-character-action", artifact_id=artifact_id))
+    evidence = promotion.get("validation_evidence")
+    if not isinstance(evidence, list) or "identity-continuity-reviewed" not in evidence:
+        errors.append(_issue("missing-character-identity-evidence", artifact_id=artifact_id))
+    source = _safe_project_path(root, artifact["path"])
+    if source is None or not source.is_file():
+        errors.append(
+            _issue("promoted-character-action-alpha-unverifiable", artifact_id=artifact_id)
+        )
+        return
+    if source.suffix.casefold() != ".png":
+        errors.append(_issue("promoted-character-action-must-be-png", artifact_id=artifact_id))
+        return
+    has_transparency = _inspect_png_transparency(source)
+    if has_transparency is None:
+        errors.append(
+            _issue("promoted-character-action-alpha-unverifiable", artifact_id=artifact_id)
+        )
+    elif not has_transparency:
+        errors.append(_issue("promoted-character-action-alpha-missing", artifact_id=artifact_id))
+
+
+def _inspect_png_transparency(path: Path) -> Optional[bool]:
+    """Inspect non-interlaced 8/16-bit grayscale-alpha or RGBA PNG pixels."""
+    try:
+        data = path.read_bytes()
+        if data[:8] != b"\x89PNG\r\n\x1a\n":
+            return None
+        position = 8
+        idat = []
+        width = height = bit_depth = color_type = interlace = None
+        while position + 12 <= len(data):
+            length = struct.unpack(">I", data[position : position + 4])[0]
+            end = position + 12 + length
+            if end > len(data):
+                return None
+            kind = data[position + 4 : position + 8]
+            payload = data[position + 8 : position + 8 + length]
+            position = end
+            if kind == b"IHDR":
+                width, height, bit_depth, color_type, _compression, _filter, interlace = struct.unpack(
+                    ">IIBBBBB", payload
+                )
+            elif kind == b"IDAT":
+                idat.append(payload)
+            elif kind == b"IEND":
+                break
+        if (
+            not isinstance(width, int)
+            or not isinstance(height, int)
+            or width < 1
+            or height < 1
+            or color_type not in {4, 6}
+            or interlace != 0
+            or bit_depth not in {8, 16}
+            or not idat
+        ):
+            return None
+        channels = 2 if color_type == 4 else 4
+        bytes_per_sample = bit_depth // 8
+        bytes_per_pixel = channels * bytes_per_sample
+        stride = width * bytes_per_pixel
+        decompressed = zlib.decompress(b"".join(idat))
+        if len(decompressed) != height * (stride + 1):
+            return None
+        previous = bytearray(stride)
+        offset = 0
+        for _row in range(height):
+            filter_type = decompressed[offset]
+            offset += 1
+            encoded = decompressed[offset : offset + stride]
+            offset += stride
+            reconstructed = bytearray(stride)
+            for index, value in enumerate(encoded):
+                left = reconstructed[index - bytes_per_pixel] if index >= bytes_per_pixel else 0
+                up = previous[index]
+                upper_left = previous[index - bytes_per_pixel] if index >= bytes_per_pixel else 0
+                predictor = _png_predictor(filter_type, left, up, upper_left)
+                if predictor is None:
+                    return None
+                reconstructed[index] = (value + predictor) & 0xFF
+            for pixel in range(width):
+                alpha_start = (pixel * channels + channels - 1) * bytes_per_sample
+                alpha = reconstructed[alpha_start : alpha_start + bytes_per_sample]
+                if any(value != 255 for value in alpha):
+                    return True
+            previous = reconstructed
+        return False
+    except (OSError, IndexError, ValueError, struct.error, zlib.error):
+        return None
+
+
+def _png_predictor(
+    filter_type: int, left: int, up: int, upper_left: int
+) -> Optional[int]:
+    if filter_type == 0:
+        return 0
+    if filter_type == 1:
+        return left
+    if filter_type == 2:
+        return up
+    if filter_type == 3:
+        return (left + up) // 2
+    if filter_type == 4:
+        estimate = left + up - upper_left
+        values = (left, up, upper_left)
+        distances = tuple(abs(estimate - value) for value in values)
+        return values[distances.index(min(distances))]
+    return None
 
 
 def _check_tasks(root: Path, artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]]) -> None:
@@ -466,6 +639,14 @@ def _relative(root: Path, path: Path) -> str:
 
 def _safe_component(value: Any) -> bool:
     return isinstance(value, str) and value not in {"", ".", ".."} and "/" not in value and "\\" not in value
+
+
+def _nonempty_text(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and all(ord(character) >= 32 and ord(character) != 127 for character in value)
+    )
 
 
 def _duration(value: Any) -> bool:

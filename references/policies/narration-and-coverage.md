@@ -13,8 +13,10 @@ the beat it covers and occupy a real interval. Meaningful states include
 purposeful action, object or framing change, B-roll, Scene, Demo, Motion
 Graphics, formulas, UI, results, and stable evidence. Breathing, floating,
 decorative zooms, caption entry, and idle loops are decorative and do not cover
-a beat by themselves. Unknown state kinds are neutral unless the immutable
-contract explicitly declares their `coverage_role`.
+a beat by themselves. These known kinds have canonical, non-overridable roles;
+they must not declare `coverage_role`. Only an unknown extension kind may
+declare an explicit `meaningful`, `decorative`, or `neutral` role. An unknown
+kind without that field remains neutral.
 
 Important numbers, formulas, evidence, UI, and conclusions declare readable
 holds. When a minimum is necessary, the contract supplies `min_hold_ms` for

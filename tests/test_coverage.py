@@ -45,6 +45,61 @@ class CoverageTests(unittest.TestCase):
 
         self.assertIn("decorative-only", {item["code"] for item in result["issues"]})
 
+    def test_decorative_kind_cannot_override_its_canonical_role(self):
+        """Catches a floating state bypassing coverage by declaring itself meaningful."""
+        shot = {
+            "shot_id": "S1",
+            "duration_ms": 6_000,
+            "semantic_beats": ["premise"],
+            "visual_states": [
+                {
+                    "kind": "floating",
+                    "coverage_role": "meaningful",
+                    "beat": "premise",
+                    "start_ms": 0,
+                    "end_ms": 6_000,
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(ValueError, "canonical coverage_role"):
+            evaluate_coverage([shot])
+
+    def test_known_meaningful_kind_rejects_even_matching_role_override(self):
+        """Catches canonical kinds acquiring two conflicting sources of truth."""
+        shot = {
+            **self.meaningful_shot,
+            "visual_states": [
+                {
+                    "kind": "evidence",
+                    "coverage_role": "meaningful",
+                    "beats": ["premise", "result"],
+                    "start_ms": 0,
+                    "end_ms": 6_000,
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(ValueError, "canonical coverage_role"):
+            evaluate_coverage([shot])
+
+    def test_unknown_kind_may_declare_an_explicit_role(self):
+        """Catches extension kinds losing their contract-declared semantic role."""
+        shot = {
+            **self.meaningful_shot,
+            "visual_states": [
+                {
+                    "kind": "custom-proof-animation",
+                    "coverage_role": "meaningful",
+                    "beats": ["premise", "result"],
+                    "start_ms": 0,
+                    "end_ms": 6_000,
+                }
+            ],
+        }
+
+        self.assertEqual([], evaluate_coverage([shot])["issues"])
+
     def test_meaningful_states_cover_matching_beats(self):
         """Catches matching semantic states being rejected as uncovered."""
         result = evaluate_coverage([self.meaningful_shot])

@@ -19,8 +19,24 @@ must have real alpha, neutral action metadata, identity continuity, and no
 project content. Evidence, UI, data, and cases must retain their real sources
 and must never be fabricated.
 
-Structural checks return stable issues for unsafe or missing paths, invalid
-metadata, absent provenance, or incompatible ownership. The checker does not
-copy, move, delete, or silently promote media. Artifact Manager owns immutable
-persistence; registry promotion owns deliberate cross-project reuse; the user
-owns subjective acceptance.
+Runtime promotion artifacts use `type: promoted-asset` and a `promotion`
+object. That object records `ownership: cross-project-registry`,
+`scope: project-independent`, non-empty `source_or_license`, provenance with
+the source project and artifact IDs, non-empty `validation_evidence` and
+`applicability` lists, and an `asset_kind`. Character actions additionally
+record subject, action, orientation, an explicit empty scene, `alpha: yes`, and
+`identity-continuity-reviewed` in their validation evidence.
+
+`scripts/toolkit/validation.py` validates those records without mutating them.
+For character-action PNGs it inspects actual pixels in deterministically
+supported non-interlaced 8- or 16-bit grayscale-alpha/RGBA files. A fully
+opaque image is an error even when metadata says alpha is present. Missing,
+corrupt, interlaced, palette-based, or otherwise unsupported files produce a
+stable `promoted-character-action-alpha-unverifiable` issue instead of an
+exception or an assumed pass.
+
+Structural checks return issue-only results with stable codes for unsafe or
+missing paths, invalid metadata, absent provenance, incompatible ownership, or
+unverified transparency. The checker does not copy, move, delete, or silently
+promote media. Artifact Manager owns immutable persistence; registry promotion
+owns deliberate cross-project reuse; the user owns subjective acceptance.
