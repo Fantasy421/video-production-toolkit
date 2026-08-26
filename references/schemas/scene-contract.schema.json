@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Video Production Toolkit Scene Contract",
+  "type": "object",
+  "required": ["scene_id", "start_ms", "end_ms", "primary_carrier", "purpose"],
+  "properties": {
+    "scene_id": {"$ref": "#/$defs/safeId"},
+    "start_ms": {"type": "integer", "minimum": 0},
+    "end_ms": {"type": "integer", "minimum": 1},
+    "primary_carrier": {"enum": ["a-roll", "b-roll", "scene", "demo", "motion-graphics", "evidence"]},
+    "secondary_layer": {"$ref": "#/$defs/nonEmptyString"},
+    "purpose": {"$ref": "#/$defs/nonEmptyString"},
+    "new_character_baseline": {"type": "boolean"},
+    "scene_image_generation": {"type": "boolean"},
+    "generated_video": {"type": "boolean"},
+    "captions": {"type": "boolean"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "nonEmptyString": {"type": "string", "minLength": 1},
+    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"}
+  }
+}

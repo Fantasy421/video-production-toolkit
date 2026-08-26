@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Video Production Toolkit Motion Contract",
+  "type": "object",
+  "required": ["contract_id", "scene_id", "mechanism", "adapter", "editable", "purpose"],
+  "properties": {
+    "contract_id": {"$ref": "#/$defs/safeId"},
+    "scene_id": {"$ref": "#/$defs/safeId"},
+    "mechanism": {"$ref": "#/$defs/nonEmptyString"},
+    "adapter": {"$ref": "#/$defs/safeId"},
+    "editable": {"type": "boolean"},
+    "purpose": {"$ref": "#/$defs/nonEmptyString"},
+    "properties": {"type": "array", "items": {"$ref": "#/$defs/nonEmptyString"}, "uniqueItems": true},
+    "output_contract": {"$ref": "#/$defs/nonEmptyString"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "nonEmptyString": {"type": "string", "minLength": 1},
+    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"}
+  }
+}
