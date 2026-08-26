@@ -27,13 +27,34 @@ the source project and artifact IDs, non-empty `validation_evidence` and
 record subject, action, orientation, an explicit empty scene, `alpha: yes`, and
 `identity-continuity-reviewed` in their validation evidence.
 
+Character-action promotion also preserves the legacy deterministic filename
+contract, using the artifact path basename as `name`. The following two regular
+expressions are matched case-insensitively; either match produces
+`project-coupled-promoted-character-name`:
+
+```text
+(?:^|_)(?:S\d{3,}|镜头\d+)(?:_|$)
+(?:^|_)(?:项目|课程|视频)(?:_|$)
+```
+
+The basename must end in `_v\d{2}\.png` case-insensitively or validation emits
+`invalid-promoted-character-version-suffix`. After surrounding whitespace is
+removed, `subject` and `action` must both be non-empty and each literal value
+must occur in the basename; otherwise validation emits
+`promoted-character-name-metadata-mismatch`. These checks intentionally retain
+the legacy syntactic rules only. They do not infer project coupling from wider
+Chinese semantics, topics, or filename wording.
+
 `scripts/toolkit/validation.py` validates those records without mutating them.
 For character-action PNGs it inspects actual pixels in deterministically
-supported non-interlaced 8- or 16-bit grayscale-alpha/RGBA files. A fully
-opaque image is an error even when metadata says alpha is present. Missing,
-corrupt, interlaced, palette-based, or otherwise unsupported files produce a
-stable `promoted-character-action-alpha-unverifiable` issue instead of an
-exception or an assumed pass.
+supported non-interlaced 8- or 16-bit grayscale-alpha/RGBA files. Before pixel
+inspection it requires the exact PNG signature, intact length and CRC fields
+for every chunk, one 13-byte `IHDR` as the first chunk, ordered `IDAT` chunks,
+and one terminal zero-length `IEND` with no trailing data. A fully opaque image
+is an error even when metadata says alpha is present. Missing, corrupt,
+interlaced, palette-based, structurally malformed, or otherwise unsupported
+files produce a stable `promoted-character-action-alpha-unverifiable` issue
+instead of an exception or an assumed pass.
 
 Structural checks return issue-only results with stable codes for unsafe or
 missing paths, invalid metadata, absent provenance, incompatible ownership, or

@@ -115,7 +115,11 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
             "scripts/toolkit/validation.py",
             "references/policies/project-assets.md",
         ],
-        "rationale": "Safe paths, actual PNG alpha inspection, neutral action metadata, provenance, and promotion ownership move to structural validation.",
+        "rationale": (
+            "Safe paths, exact legacy filename checks, strict PNG structure and alpha "
+            "inspection, neutral action metadata, provenance, and promotion ownership "
+            "move to structural validation."
+        ),
     },
     "scripts/validate_router.py": {
         "disposition": "replaced",

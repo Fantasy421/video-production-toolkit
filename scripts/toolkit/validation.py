@@ -3,6 +3,7 @@
 import json
 import math
 from pathlib import Path
+import re
 import struct
 from typing import Any, Iterable, Optional, Union
 import zlib
@@ -30,6 +31,10 @@ NON_SEMANTIC_TRACK_KINDS = {
     "transition",
     "transitions",
 }
+PROJECT_COUPLED_PROMOTED_CHARACTER_PATTERNS = (
+    r"(?:^|_)(?:S\d{3,}|镜头\d+)(?:_|$)",
+    r"(?:^|_)(?:项目|课程|视频)(?:_|$)",
+)
 
 
 def validate_project(root: Path) -> dict[str, list[dict[str, Any]]]:
@@ -230,6 +235,43 @@ def _check_promoted_character_action(
     errors: list[dict[str, Any]],
 ) -> None:
     artifact_id = artifact["artifact_id"]
+    name = Path(artifact["path"]).name
+    if any(
+        re.search(pattern, name, re.IGNORECASE)
+        for pattern in PROJECT_COUPLED_PROMOTED_CHARACTER_PATTERNS
+    ):
+        errors.append(
+            _issue(
+                "project-coupled-promoted-character-name",
+                artifact_id=artifact_id,
+                name=name,
+            )
+        )
+    if re.search(r"_v\d{2}\.png$", name, re.IGNORECASE) is None:
+        errors.append(
+            _issue(
+                "invalid-promoted-character-version-suffix",
+                artifact_id=artifact_id,
+                name=name,
+            )
+        )
+    subject = promotion.get("subject")
+    action = promotion.get("action")
+    subject_text = subject.strip() if isinstance(subject, str) else ""
+    action_text = action.strip() if isinstance(action, str) else ""
+    if (
+        not subject_text
+        or not action_text
+        or subject_text not in name
+        or action_text not in name
+    ):
+        errors.append(
+            _issue(
+                "promoted-character-name-metadata-mismatch",
+                artifact_id=artifact_id,
+                name=name,
+            )
+        )
     neutral = (
         all(_nonempty_text(promotion.get(field)) for field in ("subject", "action", "orientation"))
         and promotion.get("scene") == ""
@@ -265,26 +307,55 @@ def _inspect_png_transparency(path: Path) -> Optional[bool]:
         if data[:8] != b"\x89PNG\r\n\x1a\n":
             return None
         position = 8
-        idat = []
+        chunk_index = 0
+        idat: list[bytes] = []
+        seen_ihdr = False
+        seen_idat = False
+        idat_closed = False
+        seen_iend = False
         width = height = bit_depth = color_type = interlace = None
-        while position + 12 <= len(data):
+        while position < len(data):
+            if position + 12 > len(data):
+                return None
             length = struct.unpack(">I", data[position : position + 4])[0]
             end = position + 12 + length
             if end > len(data):
                 return None
             kind = data[position + 4 : position + 8]
-            payload = data[position + 8 : position + 8 + length]
+            payload_end = position + 8 + length
+            payload = data[position + 8 : payload_end]
+            stored_crc = struct.unpack(">I", data[payload_end : end])[0]
+            if zlib.crc32(kind + payload) & 0xFFFFFFFF != stored_crc:
+                return None
+            if chunk_index == 0 and kind != b"IHDR":
+                return None
             position = end
             if kind == b"IHDR":
-                width, height, bit_depth, color_type, _compression, _filter, interlace = struct.unpack(
+                if seen_ihdr or chunk_index != 0 or length != 13:
+                    return None
+                width, height, bit_depth, color_type, compression, filter_method, interlace = struct.unpack(
                     ">IIBBBBB", payload
                 )
+                if compression != 0 or filter_method != 0:
+                    return None
+                seen_ihdr = True
             elif kind == b"IDAT":
+                if not seen_ihdr or idat_closed:
+                    return None
+                seen_idat = True
                 idat.append(payload)
             elif kind == b"IEND":
+                if length != 0 or not seen_idat or seen_iend or position != len(data):
+                    return None
+                seen_iend = True
                 break
+            elif seen_idat:
+                idat_closed = True
+            chunk_index += 1
         if (
-            not isinstance(width, int)
+            not seen_ihdr
+            or not seen_iend
+            or not isinstance(width, int)
             or not isinstance(height, int)
             or width < 1
             or height < 1

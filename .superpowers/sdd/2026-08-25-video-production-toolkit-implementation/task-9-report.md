@@ -22,8 +22,11 @@
   artifact paths; promotion is explicit, provenance-bearing, and no longer tied
   to a hardcoded machine-local character library. Structural validation checks
   promotion ownership/scope, provenance/source, validation evidence,
-  applicability, neutral character-action metadata, and actual PNG alpha when
-  deterministically inspectable. File/format failures return stable issues.
+  applicability, neutral character-action metadata, exact legacy filename
+  syntax, and actual PNG alpha when deterministically inspectable. PNG parsing
+  validates every chunk length and CRC, exact `IHDR`/`IDAT` ordering, and a
+  terminal `IEND` without trailing data. File, checksum, structure, and format
+  failures return stable issues.
 - Added `audit_legacy(legacy_root, new_root)` and its CLI. Roots are supplied at
   runtime, owner paths are constrained to the new repository, symlink escapes
   are rejected, cache files are ignored, incomplete audits cannot be published,
@@ -49,13 +52,18 @@
   audit tests passed.
 - `python3 -m unittest tests.test_validation -v` proved that promoted-asset
   alpha, ownership, provenance, neutrality, and malformed metadata checks were
-  absent before the final 17 validation tests passed.
+  absent before the original 17 validation tests passed. Review round 2 then
+  failed all six new regression methods (eight assertions) against CRC,
+  terminal-`IEND`, malformed chunk order, project-coupled naming, version
+  suffix, and metadata/filename drift before the final 23 validation tests
+  passed.
 - Regressions cover decorative-only motion, beat ownership, exact interval
   gaps, narration-language beat labels, contract-declared hold thresholds,
   invalid timing, unknown executable validators, missing expected legacy files,
   same-path source drift, missing owners, cache stability, safe report paths,
   atomic report ownership, promoted-asset metadata, opaque/corrupt/transparent
-  PNG behavior, malformed evidence, and JSON-safe results.
+  PNG behavior, CRC and terminal structure, exact legacy filename syntax,
+  malformed evidence, and JSON-safe results.
 
 ## Migration audit
 
@@ -72,8 +80,8 @@
 
 ## Verification
 
-- `python3 -m unittest discover -s tests -v` — 133 tests passed.
-- `PYTHONPYCACHEPREFIX=/private/tmp/video-toolkit-task9-pycache python3 -m py_compile $(rg --files scripts tests -g '*.py')` — passed.
+- `python3 -m unittest discover -s tests -v` — 139 tests passed.
+- `PYTHONPYCACHEPREFIX=/private/tmp/video-toolkit-task9-fix2-pycache python3 -m py_compile $(rg --files scripts tests -g '*.py')` — passed.
 - `python3 scripts/validate_package.py .` — `package valid`.
 - Installed legacy audit — passed with zero undisposed executables.
 - Installed legacy read-only snapshot — all 19 pre-task SHA-256 hashes unchanged.
