@@ -22,10 +22,18 @@ _WEIGHTS = {
 class RepresentativeSlice(list[str]):
     """List-compatible IDs plus explicit metadata needed to render a review gate."""
 
-    def __init__(self, scene_ids: list[str], ranges: tuple[tuple[int, int], ...], composite: bool):
+    def __init__(
+        self,
+        scene_ids: list[str],
+        ranges: tuple[tuple[int, int], ...],
+        composite: bool,
+        blocker: Optional[dict[str, Any]] = None,
+    ):
         super().__init__(scene_ids)
         self.ranges = ranges
         self.composite = composite
+        self.blocker = blocker
+        self.blocked = blocker is not None
 
     @property
     def duration_ms(self) -> int:
@@ -42,19 +50,12 @@ def select_representative_slice(scene_contracts: Sequence[Mapping[str, Any]]) ->
     contracts = _normalize_contracts(scene_contracts)
     if not contracts:
         return RepresentativeSlice([], (), False)
-    candidates = _adjacent_candidates(contracts)
-    candidates.sort(key=lambda candidate: _candidate_key(candidate, contracts), reverse=True)
-    has_scene = any("scene-image-generation" in item["risks"] for item in contracts)
-    has_motion = any("motion-graphics" in item["risks"] for item in contracts)
-    covers_both = [candidate for candidate in candidates if _covers_scene_and_motion(candidate, contracts)]
-    if has_scene and has_motion and not covers_both:
-        composite = _best_composite(candidates, contracts)
-        if composite is not None:
-            return _slice_from_ranges(composite, contracts)
-    if candidates:
-        best = candidates[0]
-        return _slice_from_indexes(best, contracts, composite=False)
-    return _fallback_slice(contracts)
+    candidates = _range_candidates(contracts)
+    plans = _valid_plans(candidates, contracts)
+    if not plans:
+        return _duration_blocker(contracts)
+    best = min(plans, key=lambda plan: _plan_key(plan, contracts))
+    return _slice_from_ranges(best, contracts)
 
 
 def _normalize_contracts(scene_contracts: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -102,89 +103,81 @@ def _risks(contract: Mapping[str, Any], carrier: str) -> frozenset[str]:
     return frozenset(risks)
 
 
-def _adjacent_candidates(contracts: list[dict[str, Any]]) -> list[tuple[int, int]]:
+def _range_candidates(contracts: list[dict[str, Any]]) -> list[tuple[int, int]]:
     candidates = []
     for start_index, first in enumerate(contracts):
         for end_index in range(start_index, len(contracts)):
             duration = contracts[end_index]["end"] - first["start"]
             if duration > 20000:
                 break
-            if duration >= 10000:
-                candidates.append((start_index, end_index))
+            candidates.append((start_index, end_index))
     return candidates
 
 
-def _candidate_key(candidate: tuple[int, int], contracts: list[dict[str, Any]]) -> tuple[int, int, int, int, int]:
-    start_index, end_index = candidate
-    selected = contracts[start_index : end_index + 1]
+def _valid_plans(
+    candidates: list[tuple[int, int]], contracts: list[dict[str, Any]]
+) -> list[tuple[tuple[int, int], ...]]:
+    plans = [(candidate,) for candidate in candidates if _duration((candidate,), contracts) >= 10000]
+    for position, left in enumerate(candidates):
+        for right in candidates[position + 1 :]:
+            if left[1] >= right[0] and right[1] >= left[0]:
+                continue
+            plan = tuple(sorted((left, right)))
+            if 10000 <= _duration(plan, contracts) <= 20000:
+                plans.append(plan)
+    return plans
+
+
+def _plan_key(plan: tuple[tuple[int, int], ...], contracts: list[dict[str, Any]]) -> tuple[Any, ...]:
+    selected = [item for start, end in plan for item in contracts[start : end + 1]]
     risks = frozenset().union(*(item["risks"] for item in selected))
-    high_risks = {risk for risk in risks if _WEIGHTS[risk] >= 4}
-    duration = selected[-1]["end"] - selected[0]["start"]
-    # reverse=True means negative duration gives the shortest range after the
-    # requested maximum high-risk coverage, before lower-risk extras can win.
-    return len(high_risks), -duration, sum(_WEIGHTS[risk] for risk in risks), len(risks), -start_index
-
-
-def _covers_scene_and_motion(candidate: tuple[int, int], contracts: list[dict[str, Any]]) -> bool:
-    risks = frozenset().union(*(item["risks"] for item in contracts[candidate[0] : candidate[1] + 1]))
-    return {"scene-image-generation", "motion-graphics"} <= risks
-
-
-def _slice_from_indexes(candidate: tuple[int, int], contracts: list[dict[str, Any]], composite: bool) -> RepresentativeSlice:
-    selected = contracts[candidate[0] : candidate[1] + 1]
-    return RepresentativeSlice(
-        [item["id"] for item in selected],
-        ((selected[0]["start"], selected[-1]["end"]),),
-        composite,
+    high_carriers = frozenset(
+        item["carrier"]
+        for item in selected
+        if any(_WEIGHTS[risk] >= 4 for risk in item["risks"])
+    )
+    carriers = frozenset(item["carrier"] for item in selected)
+    return (
+        -len(high_carriers),
+        -sum(_WEIGHTS[risk] for risk in risks),
+        -len(risks),
+        -len(carriers),
+        _duration(plan, contracts),
+        len(plan),
+        tuple((contracts[start]["start"], contracts[end]["end"]) for start, end in plan),
+        tuple(item["id"] for item in selected),
     )
 
 
-def _best_composite(candidates: list[tuple[int, int]], contracts: list[dict[str, Any]]) -> Optional[tuple[tuple[int, int], tuple[int, int]]]:
-    pairs = []
-    for left_index, left in enumerate(candidates):
-        for right in candidates[left_index + 1 :]:
-            if left[1] >= right[0] and right[1] >= left[0]:
-                continue
-            ordered = tuple(sorted((left, right)))
-            risks = _range_risks(ordered, contracts)
-            if {"scene-image-generation", "motion-graphics"} <= risks:
-                pairs.append(ordered)
-    if not pairs:
-        return None
-    return max(pairs, key=lambda pair: _composite_key(pair, contracts))
+def _duration(plan: tuple[tuple[int, int], ...], contracts: list[dict[str, Any]]) -> int:
+    return sum(contracts[end]["end"] - contracts[start]["start"] for start, end in plan)
 
 
-def _composite_key(pair: tuple[tuple[int, int], tuple[int, int]], contracts: list[dict[str, Any]]) -> tuple[int, int, int, int, tuple[str, ...]]:
-    risks = _range_risks(pair, contracts)
-    carriers = frozenset().union(*(
-        {item["carrier"] for item in contracts[start : end + 1]} for start, end in pair
-    ))
-    duration = sum(contracts[end]["end"] - contracts[start]["start"] for start, end in pair)
-    ids = tuple(item["id"] for start, end in pair for item in contracts[start : end + 1])
-    return sum(_WEIGHTS[risk] for risk in risks), len(risks), len(carriers), -duration, tuple("".join(chr(255 - ord(char)) for char in item) for item in ids)
-
-
-def _range_risks(ranges: tuple[tuple[int, int], ...], contracts: list[dict[str, Any]]) -> frozenset[str]:
-    return frozenset().union(*(
-        item["risks"] for start, end in ranges for item in contracts[start : end + 1]
-    ))
-
-
-def _slice_from_ranges(ranges: tuple[tuple[int, int], tuple[int, int]], contracts: list[dict[str, Any]]) -> RepresentativeSlice:
+def _slice_from_ranges(ranges: tuple[tuple[int, int], ...], contracts: list[dict[str, Any]]) -> RepresentativeSlice:
     selected = [item for start, end in ranges for item in contracts[start : end + 1]]
     return RepresentativeSlice(
         [item["id"] for item in selected],
         tuple((contracts[start]["start"], contracts[end]["end"]) for start, end in ranges),
-        True,
+        len(ranges) == 2,
     )
 
 
-def _fallback_slice(contracts: list[dict[str, Any]]) -> RepresentativeSlice:
-    best = max(
-        range(len(contracts)),
-        key=lambda index: (sum(_WEIGHTS[risk] for risk in contracts[index]["risks"]), -contracts[index]["start"], contracts[index]["id"]),
+def _duration_blocker(contracts: list[dict[str, Any]]) -> RepresentativeSlice:
+    required = sorted({
+        item["carrier"]
+        for item in contracts
+        if any(_WEIGHTS[risk] >= 4 for risk in item["risks"])
+    })
+    return RepresentativeSlice(
+        [],
+        (),
+        False,
+        {
+            "status": "blocked",
+            "code": "representative-slice-duration-unavailable",
+            "required_high_risk_carriers": required,
+        },
     )
-    return _slice_from_indexes((best, best), contracts, composite=False)
 
 
 def _safe_id(value: Any) -> None:
@@ -214,7 +207,7 @@ def main() -> None:
     with open(args.contracts, encoding="utf-8") as handle:
         contracts = json.load(handle)
     selected = select_representative_slice(contracts)
-    print(json.dumps({"scene_ids": list(selected), "ranges": selected.ranges, "composite": selected.composite}, ensure_ascii=False, separators=(",", ":")))
+    print(json.dumps({"scene_ids": list(selected), "ranges": selected.ranges, "composite": selected.composite, "blocker": selected.blocker}, ensure_ascii=False, separators=(",", ":")))
 
 
 if __name__ == "__main__":

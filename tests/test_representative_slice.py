@@ -26,7 +26,7 @@ class RepresentativeSliceTests(unittest.TestCase):
                 "scene_id": "S03",
                 "start_ms": 12000,
                 "end_ms": 18000,
-                "primary_carrier": "b-roll",
+                "primary_carrier": "evidence",
                 "generated_video": True,
                 "captions": True,
                 "purpose": "show supporting evidence",
@@ -45,7 +45,15 @@ class RepresentativeSliceTests(unittest.TestCase):
 
     def test_prefers_shorter_equal_coverage_adjacent_range(self):
         contracts = [
-            *self.contracts,
+            self.contracts[0],
+            self.contracts[1],
+            {
+                "scene_id": "S03",
+                "start_ms": 12000,
+                "end_ms": 18000,
+                "primary_carrier": "motion-graphics",
+                "purpose": "hold supporting texture",
+            },
             {
                 "scene_id": "S04",
                 "start_ms": 18000,
@@ -109,6 +117,37 @@ class RepresentativeSliceTests(unittest.TestCase):
         self.assertEqual(["S01", "S02", "S03"], selected)
         self.assertEqual(((0, 10000), (30000, 40000)), selected.ranges)
         self.assertTrue(selected.composite)
+
+    def test_high_risk_carrier_coverage_beats_lower_risk_extras(self):
+        contracts = [
+            {"scene_id": "S01", "start_ms": 0, "end_ms": 10000, "primary_carrier": "scene", "purpose": "show causality"},
+            {"scene_id": "S02", "start_ms": 10000, "end_ms": 20000, "primary_carrier": "b-roll", "generated_video": True, "captions": True, "purpose": "add texture"},
+            {"scene_id": "S03", "start_ms": 30000, "end_ms": 40000, "primary_carrier": "motion-graphics", "purpose": "explain abstraction"},
+        ]
+        selected = select_representative_slice(contracts)
+        self.assertEqual(["S01", "S03"], selected)
+        self.assertEqual(((0, 10000), (30000, 40000)), selected.ranges)
+        self.assertTrue(selected.composite)
+
+    def test_distant_short_scene_and_motion_ranges_form_a_ten_second_composite(self):
+        contracts = [
+            {"scene_id": "S01", "start_ms": 0, "end_ms": 5000, "primary_carrier": "scene", "purpose": "show causality"},
+            {"scene_id": "S02", "start_ms": 30000, "end_ms": 35000, "primary_carrier": "motion-graphics", "purpose": "explain abstraction"},
+        ]
+        selected = select_representative_slice(contracts)
+        self.assertEqual(["S01", "S02"], selected)
+        self.assertEqual(((0, 5000), (30000, 35000)), selected.ranges)
+        self.assertEqual(10000, selected.duration_ms)
+        self.assertTrue(selected.composite)
+
+    def test_returns_structured_blocker_when_no_valid_duration_can_cover_risk(self):
+        selected = select_representative_slice([
+            {"scene_id": "S01", "start_ms": 0, "end_ms": 5000, "primary_carrier": "scene", "purpose": "show causality"},
+        ])
+        self.assertEqual([], selected)
+        self.assertTrue(selected.blocked)
+        self.assertEqual("representative-slice-duration-unavailable", selected.blocker["code"])
+        self.assertEqual(["scene"], selected.blocker["required_high_risk_carriers"])
 
 
 if __name__ == "__main__":
