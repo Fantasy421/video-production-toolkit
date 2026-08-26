@@ -20,6 +20,14 @@ ARTIFACT_REQUIRED_KEYS = (
 )
 ARTIFACT_STATUSES = {"draft", "approved", "stale", "superseded", "invalid"}
 APPROVAL_DECISIONS = {"approved", "delegated", "skipped"}
+APPROVAL_REQUIRED_KEYS = (
+    "approval_id",
+    "target_id",
+    "scope",
+    "decision",
+    "notes",
+)
+LEGACY_APPROVAL_KEYS = set(APPROVAL_REQUIRED_KEYS) - {"decision"}
 
 
 def create_artifact(root: Path, artifact: dict[str, Any]) -> Path:
@@ -76,10 +84,32 @@ def approve_artifact(
         "decision": decision,
         "notes": notes,
     }
+    _validate_approval(approval)
     payload = _serialize_json(approval)
     _require_within(root / "approvals", approval_path)
     _publish_json(approval_path, payload)
     return approval_id
+
+
+def read_approval(root: Path, approval_id: str) -> dict[str, Any]:
+    """Return a schema-shaped approval view without rewriting legacy history.
+
+    Approval records created before decision values existed are immutable legacy
+    artifacts. Their in-memory view therefore defaults to approved while the
+    source JSON remains unchanged.
+    """
+    root = Path(root)
+    _require_safe_component(approval_id, "approval_id")
+    path = root / "approvals" / f"{approval_id}.json"
+    _require_within(root / "approvals", path)
+    try:
+        approval = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise ValueError(f"invalid approval record: {approval_id}") from error
+    normalized = _normalize_approval(approval)
+    if normalized["approval_id"] != approval_id:
+        raise ValueError(f"approval record ID does not match path: {approval_id}")
+    return normalized
 
 
 def _artifact_paths_by_id(artifacts_root: Path) -> dict[str, Path]:
@@ -278,6 +308,38 @@ def _validate_artifact(artifact: dict[str, Any]) -> None:
         raise ValueError("artifact parents must be a list of non-empty IDs")
     if len(set(artifact["parents"])) != len(artifact["parents"]):
         raise ValueError("artifact parents must not contain duplicates")
+
+
+def _normalize_approval(approval: Any) -> dict[str, Any]:
+    if not isinstance(approval, dict):
+        raise ValueError("approval must be an object")
+    normalized = dict(approval)
+    if set(normalized) == LEGACY_APPROVAL_KEYS:
+        normalized["decision"] = "approved"
+    _validate_approval(normalized)
+    return normalized
+
+
+def _validate_approval(approval: dict[str, Any]) -> None:
+    if set(approval) != set(APPROVAL_REQUIRED_KEYS):
+        raise ValueError("approval has invalid fields")
+    for key in ("approval_id", "target_id", "scope"):
+        value = approval[key]
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"approval {key} must be a non-empty string")
+    _require_safe_component(approval["approval_id"], "approval_id")
+    if not isinstance(approval["notes"], str):
+        raise ValueError("approval notes must be a string")
+    if (
+        not isinstance(approval["decision"], str)
+        or approval["decision"] not in APPROVAL_DECISIONS
+    ):
+        raise ValueError("approval decision is not recognized")
+
+
+def _require_safe_component(value: Any, label: str) -> None:
+    if not isinstance(value, str) or not value or not _is_safe_component(value):
+        raise ValueError(f"{label} must be a safe single path component")
 
 
 def _is_safe_component(value: str) -> bool:

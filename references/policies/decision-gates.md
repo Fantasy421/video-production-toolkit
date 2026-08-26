@@ -4,6 +4,8 @@ An approval is a durable approval artifact. Before the dependent task becomes
 ready, record its target artifact IDs, scope, decision (`approved`, delegated,
 or skipped), and notes. A user may explicitly delegate or skip a gate; silence
 is not approval. A revision invalidates the superseded approval's scope.
+Legacy approval records without a decision are read as `approved` and are not
+rewritten.
 
 | Gate | Required decision | Allows |
 | --- | --- | --- |

@@ -1,5 +1,6 @@
 """Static contracts that keep skill orchestration bounded and recoverable."""
 
+import json
 import unittest
 from pathlib import Path
 
@@ -65,11 +66,16 @@ class SkillContractTests(unittest.TestCase):
 
     def test_approval_schema_has_the_durable_gate_decision_enum(self):
         """Catches policy decisions that cannot be persisted in approval artifacts."""
-        schema = (ROOT / "references/schemas/approval.schema.json").read_text(encoding="utf-8")
+        schema = json.loads(
+            (ROOT / "references/schemas/approval.schema.json").read_text(encoding="utf-8")
+        )
 
-        self.assertIn('"decision"', schema)
-        for decision in ('"approved"', '"delegated"', '"skipped"'):
-            self.assertIn(decision, schema)
+        self.assertEqual(
+            ["approved", "delegated", "skipped"],
+            schema["properties"]["decision"]["enum"],
+        )
+        self.assertEqual("approved", schema["properties"]["decision"]["default"])
+        self.assertNotIn("decision", schema["required"])
 
     def test_director_routes_one_ready_capability_and_stops_on_unsafe_state(self):
         """Catches a coordinator fan-out, media generation, or unreconciled dispatch."""

@@ -9,7 +9,10 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from scripts.toolkit import artifacts
-from scripts.toolkit.artifacts import approve_artifact, create_artifact
+from scripts.toolkit.artifacts import approve_artifact, create_artifact, read_approval
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class ArtifactTests(unittest.TestCase):
@@ -139,6 +142,57 @@ class ArtifactTests(unittest.TestCase):
                 "not a schema decision",
                 decision=["approved"],
             )
+
+    def test_resume_normalizes_legacy_approval_without_rewriting_history(self):
+        """Catches a new schema making an existing approval unreadable on resume."""
+        source = FIXTURES / "approvals" / "approval-legacy.json"
+        approval_path = self.root / "approvals" / "approval-legacy.json"
+        approval_path.parent.mkdir()
+        raw = source.read_text(encoding="utf-8")
+        approval_path.write_text(raw, encoding="utf-8")
+
+        normalized = read_approval(self.root, "approval-legacy")
+
+        self.assertEqual(
+            {
+                "approval_id": "approval-legacy",
+                "target_id": "style-v1",
+                "scope": "whole-project",
+                "decision": "approved",
+                "notes": "approved before decision values existed",
+            },
+            normalized,
+        )
+        self.assertEqual(set(artifacts.APPROVAL_REQUIRED_KEYS), set(normalized))
+        schema = json.loads(
+            (Path(__file__).parents[1] / "references/schemas/approval.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertTrue(set(schema["required"]).issubset(normalized))
+        self.assertTrue(set(normalized).issubset(schema["properties"]))
+        self.assertIn(normalized["decision"], schema["properties"]["decision"]["enum"])
+        self.assertEqual(raw, approval_path.read_text(encoding="utf-8"))
+
+    def test_resume_rejects_an_invalid_current_approval_decision(self):
+        """Catches read normalization accepting values outside the approval schema."""
+        approval_path = self.root / "approvals" / "approval-invalid.json"
+        approval_path.parent.mkdir()
+        approval_path.write_text(
+            json.dumps(
+                {
+                    "approval_id": "approval-invalid",
+                    "target_id": "style-v1",
+                    "scope": "whole-project",
+                    "decision": ["approved"],
+                    "notes": "malformed current record",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(ValueError):
+            read_approval(self.root, "approval-invalid")
 
     def test_approval_serialization_failure_leaves_no_partial_file(self):
         """Catches approval publication beginning before its JSON is complete."""

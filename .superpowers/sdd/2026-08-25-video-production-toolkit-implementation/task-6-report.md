@@ -49,3 +49,16 @@ routing or approval policy.
   drafting.
 - Added runtime and static regression tests. Fresh verification: 67 tests pass,
   Python compilation passes, and the package validator reports package valid.
+
+## Review fix round 2
+
+- Preserved resume compatibility for immutable approval records created before
+  decision values existed. The schema makes decision optional with an approved
+  default; new writes still always persist it.
+- Added a non-destructive approval reader that returns a normalized
+  decision=approved view for legacy JSON without rewriting that source file.
+- Added a checked-in legacy `approvals/*.json` fixture plus regressions for
+  resume normalization, schema-compatible normalized output, preserved source
+  bytes, and malformed current decision values.
+- Final verification: 69 tests pass; Python compilation and package validation
+  pass.
