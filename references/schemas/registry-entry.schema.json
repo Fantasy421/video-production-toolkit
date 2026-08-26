@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Video Production Toolkit Registry Entry",
+  "type": "object",
+  "required": ["id", "version", "job", "preview", "renderer", "implementation_ref", "license"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "version": {"type": "string", "minLength": 1},
+    "job": {"type": "string", "minLength": 1},
+    "preview": {"type": "string", "minLength": 1},
+    "renderer": {"type": "string", "minLength": 1},
+    "implementation_ref": {"type": "string", "minLength": 1},
+    "license": {"type": "string", "minLength": 1},
+    "mechanism": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
+    "participants": {"oneOf": [{"type": "array", "items": {"type": "string"}}, {"type": "object"}]},
+    "duration": {"oneOf": [{"type": "number"}, {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}, {"type": "object"}]},
+    "canvas": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
+    "carriers": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": true
+}

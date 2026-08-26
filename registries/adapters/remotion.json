@@ -1,0 +1,16 @@
+{
+  "id": "remotion",
+  "version": "v1",
+  "job": "programmatic full-frame motion and render",
+  "preview": "adapter:remotion",
+  "renderer": "remotion",
+  "implementation_ref": "external:remotion-best-practices",
+  "license": "external",
+  "capabilities": ["create", "studio-preview", "still", "render", "captions", "multimedia"],
+  "accepts": ["visual.preview", "motion.preview", "scene.produce"],
+  "outputs": ["remotion-composition", "snapshot", "rendered-video"],
+  "editable": true,
+  "installed_skill": "remotion-best-practices",
+  "fallback": "hyperframes",
+  "license_mode": "external-reference"
+}

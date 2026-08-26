@@ -1,0 +1,16 @@
+{
+  "id": "hyperframes",
+  "version": "v1",
+  "job": "fast style, layout, and motion preview",
+  "preview": "adapter:hyperframes",
+  "renderer": "hyperframes",
+  "implementation_ref": "external:hyperframes-motion-director",
+  "license": "external",
+  "capabilities": ["preview", "render", "snapshot", "validate"],
+  "accepts": ["visual.preview", "motion.preview"],
+  "outputs": ["h5-preview", "snapshot", "rendered-video"],
+  "editable": false,
+  "installed_skill": "hyperframes-motion-director",
+  "fallback": "remotion",
+  "license_mode": "external-reference"
+}

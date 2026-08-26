@@ -1,0 +1,5020 @@
+{
+  "schema_version": 1,
+  "source": "video-shotcraft:gallery/api/library.json",
+  "revision": "bdd94be16d60fa8f",
+  "recipes": [
+    {
+      "id": "video-shotcraft:ai-stream-response:ai-stream-response",
+      "version": "bdd94be16d60fa8f",
+      "job": "AI 助手/agent/search/copilot 的结果生成镜头；强调“结论先到、证据随后、任务完成”",
+      "preview": "./media/ai-stream-response.mp4?v=1784437314480",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/ai-stream-response.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction"
+      ]
+    },
+    {
+      "id": "video-shotcraft:assemble-then-type-flyin:assemble-then-type-flyin",
+      "version": "bdd94be16d60fa8f",
+      "job": "页面/海报\"自己长出来\"的开场；排版类产品的能力展示；从骨架到成稿的两段式叙事",
+      "preview": "./media/assemble-then-type-flyin.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/assemble-then-type-flyin.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:aurora-bloom-bg-flip:aurora-bloom-bg-flip",
+      "version": "bdd94be16d60fa8f",
+      "job": "叙事转折点（\"多年以来…→一切都变了\"）；品牌片从铺垫拉到重音的那一拍；深浅色系之间的段落切换",
+      "preview": "./media/aurora-bloom-bg-flip.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/aurora-bloom-bg-flip.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:autolayout-gap-dial:autolayout-gap-dial",
+      "version": "bdd94be16d60fa8f",
+      "job": "设计工具/低代码产品的\"改一个数、界面跟着动\"卖点镜头；\"用设计工具语义做包装\"的品类语言",
+      "preview": "./media/autolayout-gap-dial.mp4?v=1784437314483",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/autolayout-gap-dial.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction"
+      ]
+    },
+    {
+      "id": "video-shotcraft:avatar-bracket-carousel:avatar-bracket-carousel",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"一个位置，多种角色\"的能力枚举；团队/身份/预设/人格类产品的核心一句话镜头",
+      "preview": "./media/avatar-bracket-carousel.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/avatar-bracket-carousel.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:avatar-grid-radial-build-colorize:avatar-grid-radial-build-colorize",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"群体中浮现异常/重点\"的数据叙事：用户群健康度、监控面板、批量状态总览",
+      "preview": "./media/avatar-grid-radial-build-colorize.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/data/avatar-grid-radial-build-colorize.md",
+      "license": "Apache-2.0",
+      "mechanism": "data",
+      "participants": [
+        "data"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 1
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "data"
+      ]
+    },
+    {
+      "id": "video-shotcraft:basic-3d-scene:basic-3d-scene",
+      "version": "bdd94be16d60fa8f",
+      "job": "概念/路线图/三步法的空间化讲述；替代平面 slides 的\"每一步都换个空间视角\"",
+      "preview": "./media/basic-3d-scene.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/camera/basic-3d-scene.md",
+      "license": "Apache-2.0",
+      "mechanism": "camera",
+      "participants": [
+        "camera"
+      ],
+      "duration": {
+        "min": 6,
+        "max": 6
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:beat-cut-moves:beat-cut-accelerando",
+      "version": "bdd94be16d60fa8f",
+      "job": "高光/冲刺段落把\"切\"本身打成鼓点；A 式预告片式加速逼近，B 式颁奖连拍仪式感",
+      "preview": "./media/beat-cut-accelerando.mp4?v=1784437314486",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/beat-cut-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm",
+        "transition"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm",
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:beat-cut-moves:paparazzi-flash",
+      "version": "bdd94be16d60fa8f",
+      "job": "高光/冲刺段落把\"切\"本身打成鼓点；A 式预告片式加速逼近，B 式颁奖连拍仪式感",
+      "preview": "./media/paparazzi-flash.mp4?v=1784437314488",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/beat-cut-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm",
+        "transition"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm",
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:beat-step-list-theme-cycle:beat-step-list-theme-cycle",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"同一产品多种气质/多主题展示\"段落（modern/playful/expressive 式形容词连打）；全片节奏最密的一段；音乐段对拍",
+      "preview": "./media/beat-step-list-theme-cycle.mp4?v=1784437314492",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/beat-step-list-theme-cycle.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm",
+        "typography"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 3
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm",
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:before-after-slider-scrub:before-after-slider-scrub",
+      "version": "bdd94be16d60fa8f",
+      "job": "AI 增强/优化/重构类功能的效果对比段落（\"用前 vs 用后\"一镜讲清）",
+      "preview": "./media/before-after-slider-scrub.mp4?v=1784437314494",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/data/before-after-slider-scrub.md",
+      "license": "Apache-2.0",
+      "mechanism": "data",
+      "participants": [
+        "data",
+        "interaction"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "data",
+        "interaction"
+      ]
+    },
+    {
+      "id": "video-shotcraft:bezier-source-converge-merge:bezier-source-converge-merge",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"多源整合/统一接入/数据汇聚\"的核心机制镜头；集成、聚合、单一入口类产品的说明段落",
+      "preview": "./media/bezier-source-converge-merge.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/bezier-source-converge-merge.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:blur-slide:blur-slide",
+      "version": "bdd94be16d60fa8f",
+      "job": "几乎所有标题/副标题成对出现的场合；产品页首屏文案、章节小标题；需要\"专业但不抢戏\"的默认文字 reveal",
+      "preview": "./media/blur-slide.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/blur-slide.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 3
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:bottom-push-stack-wipe:bottom-push-stack-wipe",
+      "version": "bdd94be16d60fa8f",
+      "job": "多章节产品片的换章骨架（每章一个卖点一种底色）；需要\"翻页节奏感\"贯穿全片的段落切换",
+      "preview": "./media/bottom-push-stack-wipe.mp4?v=1784437314497",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/bottom-push-stack-wipe.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 1,
+        "max": 1
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:brace-expand:brace-expand",
+      "version": "bdd94be16d60fa8f",
+      "job": "开发者/技术产品的标题字卡；章节开场；需要\"一个符号完成揭示\"的极简一拍",
+      "preview": "./media/brace-expand.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/brace-expand.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 3
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:brand-frame-snap:brand-frame-snap",
+      "version": "bdd94be16d60fa8f",
+      "job": "双模式/双章节产品片的全片包装层（蓝=模式A、绿=模式B 颜色编码）；真实录屏素材的品牌化包裹",
+      "preview": "./media/brand-frame-snap.mp4?v=1784437314500",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/brand-frame-snap.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "transition"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:brand-ink-open:brand-ink-open",
+      "version": "bdd94be16d60fa8f",
+      "job": "品牌开场；任何\"先立名号再进产品\"的片头",
+      "preview": "./media/brand-ink-open.mp4?v=1784437314501",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/opening/brand-ink-open.md",
+      "license": "Apache-2.0",
+      "mechanism": "opening",
+      "participants": [
+        "opening",
+        "typography"
+      ],
+      "duration": {
+        "min": 2,
+        "max": 2
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "opening",
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:bubble-swarm-takeover:bubble-swarm-takeover",
+      "version": "bdd94be16d60fa8f",
+      "job": "章节级换景且品牌世界里有\"实体装饰物\"可当幕布（气泡/花瓣/图标皆可换皮）；转场即品牌露出的段落",
+      "preview": "./media/bubble-swarm-takeover.mp4?v=1784437314504",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/bubble-swarm-takeover.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:canvas-materialize-moves:diagram-cascade",
+      "version": "bdd94be16d60fa8f",
+      "job": "AI/协作工具\"生成结果落到画布上\"的叙事段落；A 式讲\"已有内容换了个存在形态\"，B 式讲\"从一句话长出一棵结构\"",
+      "preview": "./media/diagram-cascade.mp4?v=1784437314508",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/canvas-materialize-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction",
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction",
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:canvas-materialize-moves:panel-to-canvas",
+      "version": "bdd94be16d60fa8f",
+      "job": "AI/协作工具\"生成结果落到画布上\"的叙事段落；A 式讲\"已有内容换了个存在形态\"，B 式讲\"从一句话长出一棵结构\"",
+      "preview": "./media/panel-to-canvas.mp4?v=1784437314506",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/canvas-materialize-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction",
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction",
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:card-flip-reveal:card-flip-reveal",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"功能→成果\"的成对叙事：一排功能卡逐张翻出各自的指标/结论；元素级转场卡",
+      "preview": "./media/card-flip-reveal.mp4?v=1784437314510",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/card-flip-reveal.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition",
+        "data"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition",
+        "data"
+      ]
+    },
+    {
+      "id": "video-shotcraft:card-flock-tumble:card-flock-tumble",
+      "version": "bdd94be16d60fa8f",
+      "job": "能量高潮段（功能页群→品牌口号的爆点转场）；霓虹暗场调性；\"多页面能力\"收束成一句话的段落",
+      "preview": "./media/card-flock-tumble.mp4?v=1784437314514",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/card-flock-tumble.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 1,
+        "max": 1
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:card-stack:card-stack",
+      "version": "bdd94be16d60fa8f",
+      "job": "需要交代\"我们有一组东西\"的产品段落；卡片墙/模板库/方案列表的建立镜头，也能当 logo 前的一拍蓄势",
+      "preview": "./media/card-stack.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/card-stack.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:carousel-3d:carousel-3d",
+      "version": "bdd94be16d60fa8f",
+      "job": "作品集/模板库/集成清单的循环展示；需要无缝 loop 的背景拍或落地页 hero",
+      "preview": "./media/carousel-3d.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/carousel-3d.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:cel-flash-stomp:cel-flash-stomp",
+      "version": "bdd94be16d60fa8f",
+      "job": "口号/三连词的高能段落（\"SHIP / FASTER / TODAY\"式）；文字节奏卡，与 type-rhythm-sync 互补（那是字属性动，这是字砸+底闪）",
+      "preview": "./media/cel-flash-stomp.mp4?v=1784437314517",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/cel-flash-stomp.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography",
+        "rhythm"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography",
+        "rhythm"
+      ]
+    },
+    {
+      "id": "video-shotcraft:chart-live-moves:axis-rescale-shock",
+      "version": "bdd94be16d60fa8f",
+      "job": "数据叙事段落；分别讲\"实时性\"、\"每个数字是一个人\"、\"增长装不下\"",
+      "preview": "./media/axis-rescale-shock.mp4?v=1784437314524",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/data/chart-live-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "data",
+      "participants": [
+        "data"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 6
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "data"
+      ]
+    },
+    {
+      "id": "video-shotcraft:chart-live-moves:oscilloscope-stream",
+      "version": "bdd94be16d60fa8f",
+      "job": "数据叙事段落；分别讲\"实时性\"、\"每个数字是一个人\"、\"增长装不下\"",
+      "preview": "./media/oscilloscope-stream.mp4?v=1784437314519",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/data/chart-live-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "data",
+      "participants": [
+        "data"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 6
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "data"
+      ]
+    },
+    {
+      "id": "video-shotcraft:chart-live-moves:unit-dot-swarm-regroup",
+      "version": "bdd94be16d60fa8f",
+      "job": "数据叙事段落；分别讲\"实时性\"、\"每个数字是一个人\"、\"增长装不下\"",
+      "preview": "./media/unit-dot-swarm-regroup.mp4?v=1785050513841",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/data/chart-live-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "data",
+      "participants": [
+        "data"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 6
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "data"
+      ]
+    },
+    {
+      "id": "video-shotcraft:chip-grid-single-select-blackout:chip-grid-single-select-blackout",
+      "version": "bdd94be16d60fa8f",
+      "job": "单选/套餐/档位选择的交互演示；\"选了它之后会怎样\"的因果镜头；价格/参数结算类链路",
+      "preview": "./media/chip-grid-single-select-blackout.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/chip-grid-single-select-blackout.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction"
+      ]
+    },
+    {
+      "id": "video-shotcraft:chip-lift-to-user-pill:chip-lift-to-user-pill",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"从一堆候选里选中并展开这一个\"的交互链路；协作/通讯录/收件人类产品的功能演示；选中→详情的转场",
+      "preview": "./media/chip-lift-to-user-pill.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/chip-lift-to-user-pill.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction"
+      ]
+    },
+    {
+      "id": "video-shotcraft:circle-match-iris:circle-match-iris",
+      "version": "bdd94be16d60fa8f",
+      "job": "前景有圆形元素（头像/图标/圆钮）、后景有圆形主体（donut 图/圆环进度）的接缝；转场技法卡",
+      "preview": "./media/circle-match-iris.mp4?v=1784437314526",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/circle-match-iris.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:cloner-depth-echo:cloner-depth-echo",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"多副本/多租户/规模感/批量处理\"卖点；一镜讲完\"一个=很多\"",
+      "preview": "./media/cloner-depth-echo.mp4?v=1784437314528",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/cloner-depth-echo.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:collab-cursor-moves:cast-ensemble",
+      "version": "bdd94be16d60fa8f",
+      "job": "协作/多人/交接主题的叙事段；A 撑起无 UI 的纯叙事拍，B 给画布场景铺\"团队在场\"体温",
+      "preview": "./media/cast-ensemble.mp4?v=1784437314534",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/collab-cursor-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction"
+      ]
+    },
+    {
+      "id": "video-shotcraft:collab-cursor-moves:dialogue-duet",
+      "version": "bdd94be16d60fa8f",
+      "job": "协作/多人/交接主题的叙事段；A 撑起无 UI 的纯叙事拍，B 给画布场景铺\"团队在场\"体温",
+      "preview": "./media/dialogue-duet.mp4?v=1784437314531",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/collab-cursor-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction"
+      ]
+    },
+    {
+      "id": "video-shotcraft:color-block-step-wipe:color-block-step-wipe",
+      "version": "bdd94be16d60fa8f",
+      "job": "品牌色转场/章节交接；\"硬朗无缓动\"的像素游戏手感段落；接管后的纯色场当下一段的舞台",
+      "preview": "./media/color-block-step-wipe.mp4?v=1784437314536",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/color-block-step-wipe.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 1,
+        "max": 2
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:command-palette-summon:command-palette-summon",
+      "version": "bdd94be16d60fa8f",
+      "job": "效率型产品的\"全产品在一个输入框里\"叙事；命令面板/搜索/快捷键功能的标志性登场",
+      "preview": "./media/command-palette-summon.mp4?v=1784437314539",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/command-palette-summon.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction",
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction",
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:countdown-arc-scatter:countdown-arc-scatter",
+      "version": "bdd94be16d60fa8f",
+      "job": "倒计时/时长承诺类文案（\"5 min to install\"）；数据揭晓的一拍；需要\"仪表盘\"语汇的浅底短镜",
+      "preview": "./media/countdown-arc-scatter.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/countdown-arc-scatter.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 1,
+        "max": 1
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:counter-confetti:counter-confetti",
+      "version": "bdd94be16d60fa8f",
+      "job": "里程碑/成绩数字的庆祝拍：用户数、营收、下载量等\"值得开香槟\"的指标揭示",
+      "preview": "./media/counter-confetti.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/data/counter-confetti.md",
+      "license": "Apache-2.0",
+      "mechanism": "data",
+      "participants": [
+        "data"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 2
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "data"
+      ]
+    },
+    {
+      "id": "video-shotcraft:crane-rise-reveal:crane-rise-reveal",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"从细节到全局\"的开场定场；与 drone-dive-landing（全局→单点俯冲）互为反向",
+      "preview": "./media/crane-rise-reveal.mp4?v=1784437314541",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/opening/crane-rise-reveal.md",
+      "license": "Apache-2.0",
+      "mechanism": "opening",
+      "participants": [
+        "opening",
+        "camera",
+        "data"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "opening",
+        "camera",
+        "data"
+      ]
+    },
+    {
+      "id": "video-shotcraft:crash-zoom-punch:crash-zoom-punch",
+      "version": "bdd94be16d60fa8f",
+      "job": "功能段\"点名\"镜头——把观众视线一拍按到目标卡/模块上；强调级用撞停",
+      "preview": "./media/crash-zoom-punch.mp4?v=1784437314543",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/camera/crash-zoom-punch.md",
+      "license": "Apache-2.0",
+      "mechanism": "camera",
+      "participants": [
+        "camera",
+        "effects"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "camera",
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:cube-navigation:cube-navigation",
+      "version": "bdd94be16d60fa8f",
+      "job": "多模块产品的\"逐面导航\"陈列：Overview/Metrics/Timeline 等 3–6 个板块的空间化串讲",
+      "preview": "./media/cube-navigation.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/cube-navigation.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 6,
+        "max": 6
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:cursor-flyover:cursor-flyover",
+      "version": "bdd94be16d60fa8f",
+      "job": "单页产品的功能巡览：一镜带观众看完四个功能区，光标当\"导游手指\"",
+      "preview": "./media/cursor-flyover.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/camera/cursor-flyover.md",
+      "license": "Apache-2.0",
+      "mechanism": "camera",
+      "participants": [
+        "camera"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 1
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:dashboard-glow-highlight-pill:dashboard-glow-highlight-pill",
+      "version": "bdd94be16d60fa8f",
+      "job": "金融/数据类产品的重功能揭示；\"注意这里\"的高级指引；黑金调品牌片的核心一拍",
+      "preview": "./media/dashboard-glow-highlight-pill.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/dashboard-glow-highlight-pill.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects"
+      ],
+      "duration": {
+        "min": 2,
+        "max": 2
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:dataviz-landscape-open:dataviz-landscape-open",
+      "version": "bdd94be16d60fa8f",
+      "job": "品牌级抽象开场（\"数据宇宙\"隐喻），接亮场产品段或字标；与 glow-flyline-moves 分工：那卡是段落内卡片之间的连线叙事，本卡是开场专用的全画幅地景",
+      "preview": "./media/dataviz-landscape-open.mp4?v=1784437314547",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/opening/dataviz-landscape-open.md",
+      "license": "Apache-2.0",
+      "mechanism": "opening",
+      "participants": [
+        "opening",
+        "data",
+        "camera"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 8
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "opening",
+        "data",
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:deck-deal-flyin:deck-deal-flyin",
+      "version": "bdd94be16d60fa8f",
+      "job": "展示\"内容量大/源源不断汇入\"的列表页与卡片墙；建立信息密度的第一印象",
+      "preview": "./media/deck-deal-flyin.mp4?v=1784437314552",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/deck-deal-flyin.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 2,
+        "max": 2
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:depth-layer-moves:dolly-zoom",
+      "version": "bdd94be16d60fa8f",
+      "job": "平面截图要\"有厚度\"的段落；戏剧性蓄力时刻用 dolly-zoom（一支片 ≤1 次）",
+      "preview": "./media/dolly-zoom.mp4?v=1784437314559",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/camera/depth-layer-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "camera",
+      "participants": [
+        "camera"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:depth-layer-moves:multiplane",
+      "version": "bdd94be16d60fa8f",
+      "job": "平面截图要\"有厚度\"的段落；戏剧性蓄力时刻用 dolly-zoom（一支片 ≤1 次）",
+      "preview": "./media/multiplane.mp4?v=1784437314556",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/camera/depth-layer-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "camera",
+      "participants": [
+        "camera"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:doc-park-left-pill-deal:doc-park-left-pill-deal",
+      "version": "bdd94be16d60fa8f",
+      "job": "旁白驱动的\"分析结论逐条给出\"段落；文档理解、推荐理由、审阅意见类产品的核心说明镜头",
+      "preview": "./media/doc-park-left-pill-deal.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/doc-park-left-pill-deal.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:document-typewriter-reveal:document-typewriter-reveal",
+      "version": "bdd94be16d60fa8f",
+      "job": "文档/报告/笔记类功能镜头；信息密度最高的一拍",
+      "preview": "./media/document-typewriter-reveal.mp4?v=1784437314877",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/document-typewriter-reveal.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography",
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 3
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography",
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:draw-svg-trace:draw-svg-trace",
+      "version": "bdd94be16d60fa8f",
+      "job": "单个卡片/图表/标题的被点名入场；元素级手法（整页级蓝图描线归 wall-reveal-moves C 式）",
+      "preview": "./media/draw-svg-trace.mp4?v=1784437314561",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/draw-svg-trace.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance",
+        "typography"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance",
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:edit-hook-moves:logo-sting-button",
+      "version": "bdd94be16d60fa8f",
+      "job": "片尾收束（全片 ≤1 次）",
+      "preview": "./media/logo-sting-button.mp4?v=1784437314562",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/outro/edit-hook-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "outro",
+      "participants": [
+        "outro"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "outro"
+      ]
+    },
+    {
+      "id": "video-shotcraft:element-body-moves:axial-stretch",
+      "version": "bdd94be16d60fa8f",
+      "job": "给\"位置在变\"之外补\"身体在变\"：高速飞入给速度肉身（A）、卡片点名给悬浮证据（B）；A 配横冲入场，B 配 2.5D 运镜与逐张点名",
+      "preview": "./media/axial-stretch.mp4?v=1784437314564",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/element-body-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:element-body-moves:contact-shadow-lift",
+      "version": "bdd94be16d60fa8f",
+      "job": "给\"位置在变\"之外补\"身体在变\"：高速飞入给速度肉身（A）、卡片点名给悬浮证据（B）；A 配横冲入场，B 配 2.5D 运镜与逐张点名",
+      "preview": "./media/contact-shadow-lift.mp4?v=1784437314566",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/element-body-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:floating-glossy-label-pills:floating-glossy-label-pills",
+      "version": "bdd94be16d60fa8f",
+      "job": "多功能横向枚举（Feature A–D 各一屏）；产品概览、功能巡览类段落，也可作落地页 hero 的循环底",
+      "preview": "./media/floating-glossy-label-pills.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/floating-glossy-label-pills.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:flying-words:flying-words",
+      "version": "bdd94be16d60fa8f",
+      "job": "关键词云/能力清单的动态背景；片头片尾的\"信息量\"垫底层；需要纵深穿越感的转场",
+      "preview": "./media/flying-words.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/flying-words.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 6,
+        "max": 6
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:fracture:fracture",
+      "version": "bdd94be16d60fa8f",
+      "job": "开场第一镜\"从混沌到成形\"的品牌/海报揭示；倒放或只取后半可作硬转场",
+      "preview": "./media/fracture.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/opening/fracture.md",
+      "license": "Apache-2.0",
+      "mechanism": "opening",
+      "participants": [
+        "opening"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 2
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "opening"
+      ]
+    },
+    {
+      "id": "video-shotcraft:fui-hud-moves:line-unfold-panel",
+      "version": "bdd94be16d60fa8f",
+      "job": "暗场/科技感段落的面板入退场用 A；任何\"看这里\"的目标点名用 B（替代箭头圈红，画面不冻结）",
+      "preview": "./media/line-unfold-panel.mp4?v=1784437314568",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/fui-hud-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:fui-hud-moves:reticle-lock-on",
+      "version": "bdd94be16d60fa8f",
+      "job": "暗场/科技感段落的面板入退场用 A；任何\"看这里\"的目标点名用 B（替代箭头圈红，画面不冻结）",
+      "preview": "./media/reticle-lock-on.mp4?v=1784437314570",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/fui-hud-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:gauge-readout-moves:needle-sweep-selftest",
+      "version": "bdd94be16d60fa8f",
+      "job": "dashboard 开场仪式/性能指标揭晓；A 多表盘开机感，B 单指标大跳变",
+      "preview": "./media/needle-sweep-selftest.mp4?v=1784437314573",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/data/gauge-readout-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "data",
+      "participants": [
+        "data"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "data"
+      ]
+    },
+    {
+      "id": "video-shotcraft:gauge-readout-moves:tape-scroll-fixed-pointer",
+      "version": "bdd94be16d60fa8f",
+      "job": "dashboard 开场仪式/性能指标揭晓；A 多表盘开机感，B 单指标大跳变",
+      "preview": "./media/tape-scroll-fixed-pointer.mp4?v=1784437314575",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/data/gauge-readout-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "data",
+      "participants": [
+        "data"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "data"
+      ]
+    },
+    {
+      "id": "video-shotcraft:glass-pill-dictation-typing:glass-pill-dictation-typing",
+      "version": "bdd94be16d60fa8f",
+      "job": "语音/AI 输入框的登场；\"跟它说话\"的交互提示镜头；高能段之间的一个安静过渡拍",
+      "preview": "./media/glass-pill-dictation-typing.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/glass-pill-dictation-typing.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction"
+      ],
+      "duration": {
+        "min": 1,
+        "max": 1
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction"
+      ]
+    },
+    {
+      "id": "video-shotcraft:glitch-cycle:glitch-cycle",
+      "version": "bdd94be16d60fa8f",
+      "job": "加载/构建/部署过程的状态播报；技术型片头的\"系统自述\"；需要机器口吻推进时间的一段垫底",
+      "preview": "./media/glitch-cycle.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/glitch-cycle.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:glow-flyline-moves:flyline-arc",
+      "version": "bdd94be16d60fa8f",
+      "job": "全片唯一暗场段落的氛围与数据叙事：铺底噪用 A、讲数据流向用 B、要背景给前景搭腔用 C；Linear 官网味",
+      "preview": "./media/flyline-arc.mp4?v=1784437314581",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/glow-flyline-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "data"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "data"
+      ]
+    },
+    {
+      "id": "video-shotcraft:glow-flyline-moves:glow-orb-ambient",
+      "version": "bdd94be16d60fa8f",
+      "job": "全片唯一暗场段落的氛围与数据叙事：铺底噪用 A、讲数据流向用 B、要背景给前景搭腔用 C；Linear 官网味",
+      "preview": "./media/glow-orb-ambient.mp4?v=1784437314579",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/glow-flyline-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "data"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "data"
+      ]
+    },
+    {
+      "id": "video-shotcraft:glow-flyline-moves:orb-flyline-relay",
+      "version": "bdd94be16d60fa8f",
+      "job": "全片唯一暗场段落的氛围与数据叙事：铺底噪用 A、讲数据流向用 B、要背景给前景搭腔用 C；Linear 官网味",
+      "preview": "./media/orb-flyline-relay.mp4?v=1784437314584",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/glow-flyline-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "data"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "data"
+      ]
+    },
+    {
+      "id": "video-shotcraft:gradient-transition:gradient-transition",
+      "version": "bdd94be16d60fa8f",
+      "job": "氛围底/章节底色的连续变奏；给静态排版段落提供\"活着\"的背景层",
+      "preview": "./media/gradient-transition.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/gradient-transition.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 2
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:gradient-word-sweep:gradient-word-sweep",
+      "version": "bdd94be16d60fa8f",
+      "job": "标语里给单个动词/卖点词充能（Supercharged/faster/AI…）；能量高潮段的文字戏；黑场品牌片的口号帧",
+      "preview": "./media/gradient-word-sweep.mp4?v=1784437314587",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/gradient-word-sweep.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography",
+        "effects"
+      ],
+      "duration": {
+        "min": 1,
+        "max": 2
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography",
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:grain-dissolve:grain-dissolve",
+      "version": "bdd94be16d60fa8f",
+      "job": "收尾\"XX. Now Live\"式上线宣告；长句信息压缩成品牌短标的能量聚合拍",
+      "preview": "./media/grain-dissolve.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/outro/grain-dissolve.md",
+      "license": "Apache-2.0",
+      "mechanism": "outro",
+      "participants": [
+        "outro"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "outro"
+      ]
+    },
+    {
+      "id": "video-shotcraft:graze-face-tour:graze-face-tour",
+      "version": "bdd94be16d60fa8f",
+      "job": "功能区巡礼（把 UI 当地景飞掠）；配合暗场+霓虹缘光做产品\"内部世界\"段落；界面内容逐区登场",
+      "preview": "./media/graze-face-tour.mp4?v=1785050508191",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/camera/graze-face-tour.md",
+      "license": "Apache-2.0",
+      "mechanism": "camera",
+      "participants": [
+        "camera",
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "camera",
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:hashtag-to-pill-materialize:hashtag-to-pill-materialize",
+      "version": "bdd94be16d60fa8f",
+      "job": "标签/分类/关键词功能的演示段（笔记 app 打 tag、话题聚合）；\"输入 → 变成 UI 实体 → 归位到成品\"的三段式叙事",
+      "preview": "./media/hashtag-to-pill-materialize.mp4?v=1784437314594",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/hashtag-to-pill-materialize.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction",
+        "typography"
+      ],
+      "duration": {
+        "min": 18,
+        "max": 21
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction",
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:hatch-depth:hatch-depth",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"从草稿到真实数据\"的叙事拍；dashboard/报表功能引入，或强调数据实时性的段落",
+      "preview": "./media/hatch-depth.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/data/hatch-depth.md",
+      "license": "Apache-2.0",
+      "mechanism": "data",
+      "participants": [
+        "data"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 1
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "data"
+      ]
+    },
+    {
+      "id": "video-shotcraft:icon-field-colorize:icon-field-colorize",
+      "version": "bdd94be16d60fa8f",
+      "job": "开场铺陈产品能力面（图标=功能宇宙）再一举打上品牌色；功能集合页、生态/集成规模展示、片头 logo 前垫场",
+      "preview": "./media/icon-field-colorize.mp4?v=1784437314599",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/opening/icon-field-colorize.md",
+      "license": "Apache-2.0",
+      "mechanism": "opening",
+      "participants": [
+        "opening",
+        "ui-entrance",
+        "outro"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "opening",
+        "ui-entrance",
+        "outro"
+      ]
+    },
+    {
+      "id": "video-shotcraft:icon-performance-moves:attention-bounce",
+      "version": "bdd94be16d60fa8f",
+      "job": "半屏级 icon 特写段落；A \"完成/成功\"的标点符号，B 新功能引出",
+      "preview": "./media/attention-bounce.mp4?v=1784437314603",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/icon-performance-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "interaction"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "interaction"
+      ]
+    },
+    {
+      "id": "video-shotcraft:icon-performance-moves:pop-burst-confirm",
+      "version": "bdd94be16d60fa8f",
+      "job": "半屏级 icon 特写段落；A \"完成/成功\"的标点符号，B 新功能引出",
+      "preview": "./media/pop-burst-confirm.mp4?v=1784437314602",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/icon-performance-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "interaction"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "interaction"
+      ]
+    },
+    {
+      "id": "video-shotcraft:impact-feedback:anime-impact",
+      "version": "bdd94be16d60fa8f",
+      "job": "元素落位/撞击的\"命中一瞬\"——给砸入、撞停加游戏级手感；按强度阶梯选式",
+      "preview": "./media/anime-impact.mp4?v=1784437314607",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/impact-feedback.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:impact-feedback:hit-counter",
+      "version": "bdd94be16d60fa8f",
+      "job": "元素落位/撞击的\"命中一瞬\"——给砸入、撞停加游戏级手感；按强度阶梯选式",
+      "preview": "./media/hit-counter.mp4?v=1784437314606",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/impact-feedback.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:input-trigger-moves:cursor-performance",
+      "version": "bdd94be16d60fa8f",
+      "job": "发布片的第一人称段落：演示核心交互、开场即高潮；观众\"在用\"而不是\"在看\"产品",
+      "preview": "./media/cursor-performance.mp4?v=1784437314610",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/input-trigger-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction",
+        "opening"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction",
+        "opening"
+      ]
+    },
+    {
+      "id": "video-shotcraft:input-trigger-moves:keycap-smash-cut",
+      "version": "bdd94be16d60fa8f",
+      "job": "发布片的第一人称段落：演示核心交互、开场即高潮；观众\"在用\"而不是\"在看\"产品",
+      "preview": "./media/keycap-smash-cut.mp4?v=1784437314612",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/input-trigger-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction",
+        "opening"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction",
+        "opening"
+      ]
+    },
+    {
+      "id": "video-shotcraft:integration-hub-map:integration-hub-map",
+      "version": "bdd94be16d60fa8f",
+      "job": "集成/生态能力段（一个产品连一切）；版本翻新叙事（旧页翻成新页）；暗场霓虹调性的功能高潮",
+      "preview": "./media/integration-hub-map.mp4?v=1784437314616",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/integration-hub-map.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance",
+        "effects"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance",
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:letterspace-materialize:letterspace-materialize",
+      "version": "bdd94be16d60fa8f",
+      "job": "片尾/片头品牌字标登场（SUPERHUMAN 式大字距全大写）；章节题字；needs 静谧/高级感的收束帧",
+      "preview": "./media/letterspace-materialize.mp4?v=1784437314618",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/opening/letterspace-materialize.md",
+      "license": "Apache-2.0",
+      "mechanism": "opening",
+      "participants": [
+        "opening",
+        "typography",
+        "outro"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "opening",
+        "typography",
+        "outro"
+      ]
+    },
+    {
+      "id": "video-shotcraft:light-play-moves:halation-bloom",
+      "version": "bdd94be16d60fa8f",
+      "job": "把光当第四种笔触（扫/擦/晕）：暗场标题揭示（A）、主角卡加冕（B）、撞停帧冲击（D）",
+      "preview": "./media/halation-bloom.mp4?v=1784437314624",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/light-play-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "typography"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:light-play-moves:sheen-sweep",
+      "version": "bdd94be16d60fa8f",
+      "job": "把光当第四种笔触（扫/擦/晕）：暗场标题揭示（A）、主角卡加冕（B）、撞停帧冲击（D）",
+      "preview": "./media/sheen-sweep.mp4?v=1784437314622",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/light-play-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "typography"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:light-play-moves:spotlight-sweep",
+      "version": "bdd94be16d60fa8f",
+      "job": "把光当第四种笔触（扫/擦/晕）：暗场标题揭示（A）、主角卡加冕（B）、撞停帧冲击（D）",
+      "preview": "./media/spotlight-sweep.mp4?v=1784437314621",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/light-play-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "typography"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:line-boil:line-boil",
+      "version": "bdd94be16d60fa8f",
+      "job": "标题字卡/描边元素的长 hold 段（黑场字卡升级首选）；质感层手法，寄生在别的镜头上",
+      "preview": "./media/line-boil.mp4?v=1784437314626",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/line-boil.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "typography"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:line-carry-transition:line-carry-transition",
+      "version": "bdd94be16d60fa8f",
+      "job": "两个有图形亲缘的场景之间（进度条→卡框、下划线→图表轴）；一支片子的招牌转场位，Catch Me If You Can 片头的图形接力",
+      "preview": "./media/line-carry-transition.mp4?v=1784437314628",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/line-carry-transition.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition",
+        "camera"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition",
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:list-reveal:list-reveal",
+      "version": "bdd94be16d60fa8f",
+      "job": "导航/侧边栏/设置面板的入场；任何\"界面自己长出来\"的 UI 段落，也适合做旁白铺垫时的低能量底",
+      "preview": "./media/list-reveal.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/list-reveal.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 3
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:list-stack-press:list-stack-press",
+      "version": "bdd94be16d60fa8f",
+      "job": "feed/雷达/收件箱类\"每天有新东西\"的镜头；强调持续积累的资产列表",
+      "preview": "./media/list-stack-press.mp4?v=1784437314631",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/list-stack-press.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 3
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:logo-shrink-wordmark-lockup:logo-shrink-wordmark-lockup",
+      "version": "bdd94be16d60fa8f",
+      "job": "片尾品牌定妆：从满屏图形能量收束到\"图标+字标+标语\"的标准 lockup",
+      "preview": "./media/logo-shrink-wordmark-lockup.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/outro/logo-shrink-wordmark-lockup.md",
+      "license": "Apache-2.0",
+      "mechanism": "outro",
+      "participants": [
+        "outro"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 1
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "outro"
+      ]
+    },
+    {
+      "id": "video-shotcraft:magician-card-flourish:magician-card-flourish",
+      "version": "bdd94be16d60fa8f",
+      "job": "单张卡片/海报/封面的魔术性登场（片头主视觉、产品卡揭晓）；纯黑暗场；需要\"变出来\"仪式感的爆点",
+      "preview": "./media/magician-card-flourish.mp4?v=1784437314633",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/opening/magician-card-flourish.md",
+      "license": "Apache-2.0",
+      "mechanism": "opening",
+      "participants": [
+        "opening",
+        "ui-entrance",
+        "effects"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "opening",
+        "ui-entrance",
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:marker-underline-title:marker-underline-title",
+      "version": "bdd94be16d60fa8f",
+      "job": "标题里强调单个关键词（new/free/AI…）；手写感/人味的品牌调性；正文标注式强调",
+      "preview": "./media/marker-underline-title.mp4?v=1784437314635",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/marker-underline-title.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 1,
+        "max": 1
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:montage-rhythm-moves:domino-cascade",
+      "version": "bdd94be16d60fa8f",
+      "job": "段落级节奏设计：蓄力爆发（A）、流程速写（B）、开场连锁（C）；与 beat-cut-moves（切点排布）互补——这三式管\"段落的呼吸形状\"",
+      "preview": "./media/domino-cascade.mp4?v=1784437314640",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/montage-rhythm-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm"
+      ]
+    },
+    {
+      "id": "video-shotcraft:montage-rhythm-moves:drop-blackout-slam",
+      "version": "bdd94be16d60fa8f",
+      "job": "段落级节奏设计：蓄力爆发（A）、流程速写（B）、开场连锁（C）；与 beat-cut-moves（切点排布）互补——这三式管\"段落的呼吸形状\"",
+      "preview": "./media/drop-blackout-slam.mp4?v=1784437314637",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/montage-rhythm-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm"
+      ]
+    },
+    {
+      "id": "video-shotcraft:montage-rhythm-moves:wright-triple-cut",
+      "version": "bdd94be16d60fa8f",
+      "job": "段落级节奏设计：蓄力爆发（A）、流程速写（B）、开场连锁（C）；与 beat-cut-moves（切点排布）互补——这三式管\"段落的呼吸形状\"",
+      "preview": "./media/wright-triple-cut.mp4?v=1784437314638",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/montage-rhythm-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm"
+      ]
+    },
+    {
+      "id": "video-shotcraft:morph-from-primitive:morph-from-primitive",
+      "version": "bdd94be16d60fa8f",
+      "job": "图形/图标/卡轮廓类主体的入场；logo→UI 容器的经典原语",
+      "preview": "./media/morph-from-primitive.mp4?v=1784437314642",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/morph-from-primitive.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance",
+        "opening"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance",
+        "opening"
+      ]
+    },
+    {
+      "id": "video-shotcraft:mosaic-reframe:mosaic-reframe",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"同一批内容多种看法\"的陈列转场：作品集/模板库/相册产品的布局能力展示",
+      "preview": "./media/mosaic-reframe.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/mosaic-reframe.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:neon-frame-forerun:neon-frame-forerun",
+      "version": "bdd94be16d60fa8f",
+      "job": "暗场品牌片里给 UI 面板做\"登场仪式\"（框先到、内容后落）；功能区首次亮相；霓虹/赛博调性的段落开场",
+      "preview": "./media/neon-frame-forerun.mp4?v=1784437314646",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/neon-frame-forerun.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance",
+        "effects"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance",
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:neon-frame-orbit-drop:neon-frame-orbit-drop",
+      "version": "bdd94be16d60fa8f",
+      "job": "单页 UI 的一次性隆重登场（与巡礼/逐区亮相相对）；暗场霓虹调性段落的主视觉揭幕；neon-frame-forerun 的姊妹镜",
+      "preview": "./media/neon-frame-orbit-drop.mp4?v=1785050511487",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/neon-frame-orbit-drop.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance",
+        "effects",
+        "camera"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance",
+        "effects",
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:neon-triple-marquee:neon-triple-marquee",
+      "version": "bdd94be16d60fa8f",
+      "job": "片尾主题词复读机段落；三连词口号的\"余韵\"拍法（cel-flash-stomp 砸完之后的低一档收尾）；音乐段无旁白铺陈",
+      "preview": "./media/neon-triple-marquee.mp4?v=1784437314656",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/outro/neon-triple-marquee.md",
+      "license": "Apache-2.0",
+      "mechanism": "outro",
+      "participants": [
+        "outro",
+        "typography"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "outro",
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:odometer-digit-roll:odometer-digit-roll",
+      "version": "bdd94be16d60fa8f",
+      "job": "单个王牌指标的全屏亮相（\"10x\"/\"99.98%\"级）；与 impact-feedback B 式（伤害数字弹出）分工——那是元素级配菜，这是全屏级主菜",
+      "preview": "./media/odometer-digit-roll.mp4?v=1784437314659",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/data/odometer-digit-roll.md",
+      "license": "Apache-2.0",
+      "mechanism": "data",
+      "participants": [
+        "data",
+        "typography"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "data",
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:outline-word-fill:outline-word-fill",
+      "version": "bdd94be16d60fa8f",
+      "job": "单词式利益点/口号的重锤一拍；节奏卡点上的\"钉子\"镜；深底品牌片的强调帧",
+      "preview": "./media/outline-word-fill.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/outline-word-fill.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 2,
+        "max": 2
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:outro-group-photo-launch:outro-group-photo-launch",
+      "version": "bdd94be16d60fa8f",
+      "job": "outro/品牌收尾；多功能产品的\"全家福\"式终镜",
+      "preview": "./media/outro-group-photo-launch.mp4?v=1784437314661",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/outro/outro-group-photo-launch.md",
+      "license": "Apache-2.0",
+      "mechanism": "outro",
+      "participants": [
+        "outro"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "outro"
+      ]
+    },
+    {
+      "id": "video-shotcraft:overhead-camera-moves:overhead-tabletop-drop",
+      "version": "bdd94be16d60fa8f",
+      "job": "用\"俯仰角\"讲故事的开场/转场：单页 establishing 用 A，多页巡视择一扎入用 B",
+      "preview": "./media/overhead-tabletop-drop.mp4?v=1784437314666",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/camera/overhead-camera-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "camera",
+      "participants": [
+        "camera",
+        "opening",
+        "transition"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "camera",
+        "opening",
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:overhead-camera-moves:tilt-reveal",
+      "version": "bdd94be16d60fa8f",
+      "job": "用\"俯仰角\"讲故事的开场/转场：单页 establishing 用 A，多页巡视择一扎入用 B",
+      "preview": "./media/tilt-reveal.mp4?v=1784437314664",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/camera/overhead-camera-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "camera",
+      "participants": [
+        "camera",
+        "opening",
+        "transition"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "camera",
+        "opening",
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:page-turn-transitions:barn-door-split",
+      "version": "bdd94be16d60fa8f",
+      "job": "章节级换页：两个并列大段落之间的\"翻篇\"仪式；与 shot-transitions 系（镜头交棒）分工——那是\"航拍机移过去\"，这是\"页面自己是实体\"",
+      "preview": "./media/barn-door-split.mp4?v=1784437314671",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/page-turn-transitions.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:page-turn-transitions:cube-rotate",
+      "version": "bdd94be16d60fa8f",
+      "job": "章节级换页：两个并列大段落之间的\"翻篇\"仪式；与 shot-transitions 系（镜头交棒）分工——那是\"航拍机移过去\"，这是\"页面自己是实体\"",
+      "preview": "./media/cube-rotate.mp4?v=1784437314669",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/page-turn-transitions.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:page-waterfall-wall:page-waterfall-wall",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"多页面/多功能/多模板\"体量感段落；montage 中段铺陈或 intro 后的产品广度镜头",
+      "preview": "./media/page-waterfall-wall.mp4?v=1784437314678",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/page-waterfall-wall.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 6
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:panel-grid-moves:comic-panel-split",
+      "version": "bdd94be16d60fa8f",
+      "job": "把\"格子\"当节奏器：逐格踩拍亮相（A）、节拍点集体换位（B）、同主体多机位定格并列（C）；三式都吃拍点",
+      "preview": "./media/comic-panel-split.mp4?v=1784437314685",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/panel-grid-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm",
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm",
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:panel-grid-moves:flip-grid-reflow",
+      "version": "bdd94be16d60fa8f",
+      "job": "把\"格子\"当节奏器：逐格踩拍亮相（A）、节拍点集体换位（B）、同主体多机位定格并列（C）；三式都吃拍点",
+      "preview": "./media/flip-grid-reflow.mp4?v=1784437314684",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/panel-grid-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm",
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm",
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:panel-grid-moves:grid-flash-mosaic",
+      "version": "bdd94be16d60fa8f",
+      "job": "把\"格子\"当节奏器：逐格踩拍亮相（A）、节拍点集体换位（B）、同主体多机位定格并列（C）；三式都吃拍点",
+      "preview": "./media/grid-flash-mosaic.mp4?v=1784437314682",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/panel-grid-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm",
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm",
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:paper-craft-moves:masking-tape-slap",
+      "version": "bdd94be16d60fa8f",
+      "job": "纸墨主视觉片的实体材料语言：单卡定妆入场用 A、整版 dashboard 开场建立用 B；与纸墨+强调色的主视觉（模板片为纸/墨/琥珀）天然同源",
+      "preview": "./media/masking-tape-slap.mp4?v=1784437314688",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/paper-craft-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:paper-craft-moves:popup-book-rise",
+      "version": "bdd94be16d60fa8f",
+      "job": "纸墨主视觉片的实体材料语言：单卡定妆入场用 A、整版 dashboard 开场建立用 B；与纸墨+强调色的主视觉（模板片为纸/墨/琥珀）天然同源",
+      "preview": "./media/popup-book-rise.mp4?v=1784437314689",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/paper-craft-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:paper-plane-messenger:paper-plane-messenger",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"发送/邀请/分享\"动作连接两个人物/场景视角的叙事转场；抽象动作需要一个隐喻实体当转场载具时",
+      "preview": "./media/paper-plane-messenger.mp4?v=1784437314692",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/paper-plane-messenger.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition",
+        "camera"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition",
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:paper-title-card:paper-title-card",
+      "version": "bdd94be16d60fa8f",
+      "job": "章节转场/价值主张字卡；重要功能出场前的引导卡；全片呼吸位",
+      "preview": "./media/paper-title-card.mp4?v=1784437314694",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/paper-title-card.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography",
+        "transition",
+        "rhythm"
+      ],
+      "duration": {
+        "min": 1,
+        "max": 1
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography",
+        "transition",
+        "rhythm"
+      ]
+    },
+    {
+      "id": "video-shotcraft:particle-celebrate-hits:confetti-crossfire",
+      "version": "bdd94be16d60fa8f",
+      "job": "里程碑数字/KPI 揭晓/成就段落；A 一次性大庆祝，B 持续小打点",
+      "preview": "./media/confetti-crossfire.mp4?v=1784437314696",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/data/particle-celebrate-hits.md",
+      "license": "Apache-2.0",
+      "mechanism": "data",
+      "participants": [
+        "data",
+        "effects"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "data",
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:particle-celebrate-hits:counter-tick-sparks",
+      "version": "bdd94be16d60fa8f",
+      "job": "里程碑数字/KPI 揭晓/成就段落；A 一次性大庆祝，B 持续小打点",
+      "preview": "./media/counter-tick-sparks.mp4?v=1784437314697",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/data/particle-celebrate-hits.md",
+      "license": "Apache-2.0",
+      "mechanism": "data",
+      "participants": [
+        "data",
+        "effects"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "data",
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:particle-sand-fill:particle-sand-fill",
+      "version": "bdd94be16d60fa8f",
+      "job": "柱状图/量级对比入场；讲\"积累/汇聚\"语义的数据段落",
+      "preview": "./media/particle-sand-fill.mp4?v=1784437314700",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/data/particle-sand-fill.md",
+      "license": "Apache-2.0",
+      "mechanism": "data",
+      "participants": [
+        "data",
+        "effects"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "data",
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:picker-carousel-feature-cycle:picker-carousel-feature-cycle",
+      "version": "bdd94be16d60fa8f",
+      "job": "逐个念出功能名/场景名的列表镜头；\"选一个\"的交互演示；移动端产品的 picker 类控件展示",
+      "preview": "./media/picker-carousel-feature-cycle.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/picker-carousel-feature-cycle.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 3
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction"
+      ]
+    },
+    {
+      "id": "video-shotcraft:pill-chip-slot-cycle-handled:pill-chip-slot-cycle-handled",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"我们替你搞定 ___\" 这类句式卖点；SaaS 功能列举的一句话收口；浅底品牌片主视觉一拍",
+      "preview": "./media/pill-chip-slot-cycle-handled.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/pill-chip-slot-cycle-handled.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:pill-slot-cycle:pill-slot-cycle",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"功能列举\"类文案的最优雅解法（比逐条列表快、比乱码解码有语义）；一句话卖点 + 多个动词短语的段落",
+      "preview": "./media/pill-slot-cycle.mp4?v=1784437314703",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/pill-slot-cycle.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:print-texture-transitions:ink-bleed-reveal",
+      "version": "bdd94be16d60fa8f",
+      "job": "换景接缝的纸墨审美款；与交棒六式/穿越三式并列的第三族——\"介质显影\"型转场",
+      "preview": "./media/ink-bleed-reveal.mp4?v=1784437314705",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/print-texture-transitions.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:product-card-progressive-assemble:product-card-progressive-assemble",
+      "version": "bdd94be16d60fa8f",
+      "job": "商品/条目详情页的能力展示；\"结构化抽取\"\"自动填充\"\"数据自己长出来\"类叙事的主镜头",
+      "preview": "./media/product-card-progressive-assemble.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/product-card-progressive-assemble.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:quad-split-parallel-scenes:quad-split-parallel-scenes",
+      "version": "bdd94be16d60fa8f",
+      "job": "节奏段\"功能很多、同时发生\"的蒙太奇拍；预告片中段的密度峰值",
+      "preview": "./media/quad-split-parallel-scenes.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/quad-split-parallel-scenes.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm"
+      ],
+      "duration": {
+        "min": 2,
+        "max": 2
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm"
+      ]
+    },
+    {
+      "id": "video-shotcraft:radial-ripple-phone-chips:radial-ripple-phone-chips",
+      "version": "bdd94be16d60fa8f",
+      "job": "移动端产品的\"这就是它\"定格镜头；功能点分列两侧的介绍段；片头/片尾的产品全景",
+      "preview": "./media/radial-ripple-phone-chips.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/radial-ripple-phone-chips.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:radial-wave:radial-wave",
+      "version": "bdd94be16d60fa8f",
+      "job": "产品/品牌开场的\"系统上电\"一拍；也用作数据网格、节点地图、覆盖范围类叙事的建立镜头",
+      "preview": "./media/radial-wave.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/radial-wave.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 3
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:research-card-stack-scroll:research-card-stack-scroll",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"读了大量资料/处理了海量文档\"的量级交代；研究类、检索类、批处理类产品的能力镜头",
+      "preview": "./media/research-card-stack-scroll.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/research-card-stack-scroll.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:rhythm-interrupt-moves:jump-cut-punch-in",
+      "version": "bdd94be16d60fa8f",
+      "job": "用\"打断连续性\"本身当节奏器：顿挫推近（B）、窒息逼近（C）；与 beat-cut-moves（切点排布）、montage-rhythm（段落呼吸）互补",
+      "preview": "./media/jump-cut-punch-in.mp4?v=1784437314707",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/rhythm-interrupt-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm"
+      ]
+    },
+    {
+      "id": "video-shotcraft:rhythm-interrupt-moves:strobe-black-frames",
+      "version": "bdd94be16d60fa8f",
+      "job": "用\"打断连续性\"本身当节奏器：顿挫推近（B）、窒息逼近（C）；与 beat-cut-moves（切点排布）、montage-rhythm（段落呼吸）互补",
+      "preview": "./media/strobe-black-frames.mp4?v=1784437314708",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/rhythm-interrupt-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm"
+      ]
+    },
+    {
+      "id": "video-shotcraft:riso-print-hits:beat-pump",
+      "version": "bdd94be16d60fa8f",
+      "job": "标题/卡片的命中强调，纸墨审美版的\"故障闪\"；A 单发高潮、B 节奏段连打",
+      "preview": "./media/beat-pump.mp4?v=1784437314712",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/riso-print-hits.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "typography",
+        "rhythm"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "typography",
+        "rhythm"
+      ]
+    },
+    {
+      "id": "video-shotcraft:riso-print-hits:misregistration-hit",
+      "version": "bdd94be16d60fa8f",
+      "job": "标题/卡片的命中强调，纸墨审美版的\"故障闪\"；A 单发高潮、B 节奏段连打",
+      "preview": "./media/misregistration-hit.mp4?v=1784437314711",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/riso-print-hits.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "typography",
+        "rhythm"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "typography",
+        "rhythm"
+      ]
+    },
+    {
+      "id": "video-shotcraft:row-embed:row-embed",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"结构化数据长进页面\"的详情页/列表镜头；行级内容的批量入场",
+      "preview": "./media/row-embed.mp4?v=1784437314715",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/row-embed.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 2,
+        "max": 2
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:runway-ground-skim:runway-ground-skim",
+      "version": "bdd94be16d60fa8f",
+      "job": "仪表盘/卡片流界面的登场（内容\"从天而降完成自己\"）；低角度炫技段后的收正；clickup 系悬空贴落语言的\"齐落\"重型版",
+      "preview": "./media/runway-ground-skim.mp4?v=1784437314719",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/runway-ground-skim.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance",
+        "camera"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance",
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:sakuga-timing-shift:sakuga-timing-shift",
+      "version": "bdd94be16d60fa8f",
+      "job": "单元素的强调性位移（卡片入场、指标冲线）；需要\"手工感→高潮爆发\"反差的段落",
+      "preview": "./media/sakuga-timing-shift.mp4?v=1784437314722",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/sakuga-timing-shift.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm",
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm",
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:scan-bracket-sweep:scan-bracket-sweep",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"正在解析/校验这份内容\"的过程镜头；文档类产品的能力演示；上传→分析链路的中段",
+      "preview": "./media/scan-bracket-sweep.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/scan-bracket-sweep.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:scanline-annotate-focus:scanline-annotate-focus",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"AI 正在读你的页面/品牌\"的分析镜头；设计系统/品牌规范的拆解介绍；产品能力的自我说明段",
+      "preview": "./media/scanline-annotate-focus.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/scanline-annotate-focus.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:scanline-assemble-flyin:scanline-assemble-flyin",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"页面自己生成\"的开场；AI 建站/自动排版类产品的核心演示；从空白到成品的能力叙事",
+      "preview": "./media/scanline-assemble-flyin.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/scanline-assemble-flyin.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:scramble:scramble",
+      "version": "bdd94be16d60fa8f",
+      "job": "技术型开场标题；版本号/代号揭晓；\"系统就绪\"\"数据解锁\"这类带机器口吻的一拍",
+      "preview": "./media/scramble.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/scramble.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 3
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:scroll-brake-moves:brake-reticle-lock",
+      "version": "bdd94be16d60fa8f",
+      "job": "changelog/发布史/长列表段落：\"一直在发货，今天这条最大\"；要给停点更强打击感用 B",
+      "preview": "./media/brake-reticle-lock.mp4?v=1784437314729",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/data/scroll-brake-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "data",
+      "participants": [
+        "data",
+        "rhythm"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "data",
+        "rhythm"
+      ]
+    },
+    {
+      "id": "video-shotcraft:scroll-brake-moves:changelog-scroll-brake",
+      "version": "bdd94be16d60fa8f",
+      "job": "changelog/发布史/长列表段落：\"一直在发货，今天这条最大\"；要给停点更强打击感用 B",
+      "preview": "./media/changelog-scroll-brake.mp4?v=1784437314727",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/data/scroll-brake-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "data",
+      "participants": [
+        "data",
+        "rhythm"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "data",
+        "rhythm"
+      ]
+    },
+    {
+      "id": "video-shotcraft:segmented-thumb-hero:segmented-thumb-hero",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"模式切换/二选一\"功能的宣告镜头（Ask→Computer、Chat→Agent 式）；一个 UI 微交互撑一整镜的特写拍法",
+      "preview": "./media/segmented-thumb-hero.mp4?v=1784437314731",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/segmented-thumb-hero.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 3
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction"
+      ]
+    },
+    {
+      "id": "video-shotcraft:shot-transitions:flash-cut",
+      "version": "bdd94be16d60fa8f",
+      "job": "任何两镜衔接处（技法卡，分镜阶段排完镜头后逐个接缝选一式）",
+      "preview": "./media/flash-cut.mp4?v=1784437314733",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/shot-transitions.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:shot-transitions:mask-wipe",
+      "version": "bdd94be16d60fa8f",
+      "job": "任何两镜衔接处（技法卡，分镜阶段排完镜头后逐个接缝选一式）",
+      "preview": "./media/mask-wipe.mp4?v=1784437314742",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/shot-transitions.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:shot-transitions:shot-transitions-4",
+      "version": "bdd94be16d60fa8f",
+      "job": "任何两镜衔接处（技法卡，分镜阶段排完镜头后逐个接缝选一式）",
+      "preview": "./media/shot-transitions-4.mp4?v=1784437314735",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/shot-transitions.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:shot-transitions:shot-transitions-5",
+      "version": "bdd94be16d60fa8f",
+      "job": "任何两镜衔接处（技法卡，分镜阶段排完镜头后逐个接缝选一式）",
+      "preview": "./media/shot-transitions-5.mp4?v=1784437314737",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/shot-transitions.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:shot-transitions:shot-transitions-6",
+      "version": "bdd94be16d60fa8f",
+      "job": "任何两镜衔接处（技法卡，分镜阶段排完镜头后逐个接缝选一式）",
+      "preview": "./media/shot-transitions-6.mp4?v=1784437314739",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/shot-transitions.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:shot-transitions:whip-pan",
+      "version": "bdd94be16d60fa8f",
+      "job": "任何两镜衔接处（技法卡，分镜阶段排完镜头后逐个接缝选一式）",
+      "preview": "./media/whip-pan.mp4?v=1784437314741",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/shot-transitions.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:skeleton-reveal:skeleton-reveal",
+      "version": "bdd94be16d60fa8f",
+      "job": "产品 UI 的\"从无到有\"登场叙事；开场后第一次亮产品界面的段落",
+      "preview": "./media/skeleton-reveal.mp4?v=1784437314746",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/skeleton-reveal.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:slam-entrance-moves:impact-burst-kit",
+      "version": "bdd94be16d60fa8f",
+      "job": "主角卡/KPI 卡的重拳入场；impact-feedback 管落位后的反馈，本卡管入场本身就是冲击",
+      "preview": "./media/impact-burst-kit.mp4?v=1784437314753",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/slam-entrance-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:slam-entrance-moves:kanada-perspective-snap",
+      "version": "bdd94be16d60fa8f",
+      "job": "主角卡/KPI 卡的重拳入场；impact-feedback 管落位后的反馈，本卡管入场本身就是冲击",
+      "preview": "./media/kanada-perspective-snap.mp4?v=1784437314749",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/slam-entrance-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:slam-entrance-moves:score-slam",
+      "version": "bdd94be16d60fa8f",
+      "job": "主角卡/KPI 卡的重拳入场；impact-feedback 管落位后的反馈，本卡管入场本身就是冲击",
+      "preview": "./media/score-slam.mp4?v=1784437314751",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/slam-entrance-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:smear-multiples:smear-multiples",
+      "version": "bdd94be16d60fa8f",
+      "job": "元素高速位移段想要\"漫画式速度感\"而非\"摄影式模糊\"时；与 CameraMotionBlur 二选一",
+      "preview": "./media/smear-multiples.mp4?v=1784437314756",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/smear-multiples.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm",
+        "effects"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm",
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:space-camera-moves:drone-dive-landing",
+      "version": "bdd94be16d60fa8f",
+      "job": "把平面页面当 3D 实体拍的高光段落；两式都是\"大动作\"，一支片合计 ≤2 次",
+      "preview": "./media/drone-dive-landing.mp4?v=1784437314765",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/camera/space-camera-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "camera",
+      "participants": [
+        "camera"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:space-camera-moves:exploded-view",
+      "version": "bdd94be16d60fa8f",
+      "job": "把平面页面当 3D 实体拍的高光段落；两式都是\"大动作\"，一支片合计 ≤2 次",
+      "preview": "./media/exploded-view.mp4?v=1784437314760",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/camera/space-camera-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "camera",
+      "participants": [
+        "camera"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:spectrum-morph-ui:spectrum-morph-ui",
+      "version": "bdd94be16d60fa8f",
+      "job": "有音轨片子的声画同步高光段（BGM 副歌起/鼓点密集段）；标题字卡、章节页的下划线/分隔线构件",
+      "preview": "./media/spectrum-morph-ui.mp4?v=1784437314767",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/spectrum-morph-ui.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm",
+        "typography"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm",
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:speed-ramp-freeze:freeze-annotate",
+      "version": "bdd94be16d60fa8f",
+      "job": "卡片流/长横移中把一个重点\"放慢/停下给人看\"；教学解说语境用定格标注",
+      "preview": "./media/freeze-annotate.mp4?v=1784437314772",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/speed-ramp-freeze.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm"
+      ]
+    },
+    {
+      "id": "video-shotcraft:speed-ramp-freeze:speed-ramp",
+      "version": "bdd94be16d60fa8f",
+      "job": "卡片流/长横移中把一个重点\"放慢/停下给人看\"；教学解说语境用定格标注",
+      "preview": "./media/speed-ramp.mp4?v=1784437314770",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/speed-ramp-freeze.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm"
+      ]
+    },
+    {
+      "id": "video-shotcraft:split-flap-title:split-flap-title",
+      "version": "bdd94be16d60fa8f",
+      "job": "开场/章节大标题；倒计时、发布日期、数据播报类文案；需要\"机械宣告感\"的一拍",
+      "preview": "./media/split-flap-title.mp4?v=1784437314774",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/split-flap-title.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography",
+        "opening"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography",
+        "opening"
+      ]
+    },
+    {
+      "id": "video-shotcraft:spotlight-hero-card:spotlight-hero-card",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"单一主角\"式产品开场；把一个核心对象（卡片/条目/模块）立成全片主角",
+      "preview": "./media/spotlight-hero-card.mp4?v=1785050510059",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/opening/spotlight-hero-card.md",
+      "license": "Apache-2.0",
+      "mechanism": "opening",
+      "participants": [
+        "opening",
+        "effects",
+        "camera"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "opening",
+        "effects",
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:spotlight-sweep-moves:corner-spotlight-reveal",
+      "version": "bdd94be16d60fa8f",
+      "job": "暗色调品牌片里逐个介绍 UI 面板/功能区；黑场开场把界面\"点亮\"登场；段落间光转场",
+      "preview": "./media/corner-spotlight-reveal.mp4?v=1784784591965",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/spotlight-sweep-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "ui-entrance",
+        "transition"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "ui-entrance",
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:spotlight-sweep-moves:glow-wake-sleep-panel",
+      "version": "bdd94be16d60fa8f",
+      "job": "暗色调品牌片里逐个介绍 UI 面板/功能区；黑场开场把界面\"点亮\"登场；段落间光转场",
+      "preview": "./media/glow-wake-sleep-panel.mp4?v=1784785066792",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/spotlight-sweep-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "ui-entrance",
+        "transition"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "ui-entrance",
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:spotlight-sweep-moves:slide-spotlight-pan",
+      "version": "bdd94be16d60fa8f",
+      "job": "暗色调品牌片里逐个介绍 UI 面板/功能区；黑场开场把界面\"点亮\"登场；段落间光转场",
+      "preview": "./media/slide-spotlight-pan.mp4?v=1785050512851",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/effects/spotlight-sweep-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "effects",
+      "participants": [
+        "effects",
+        "ui-entrance",
+        "transition"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "effects",
+        "ui-entrance",
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:steep-tilt-glide:steep-tilt-glide",
+      "version": "bdd94be16d60fa8f",
+      "job": "长页面/多区块 UI 的炫技巡览（内容依次滑过固定机位）；暗场霓虹调性；与贴面运镜卡互补的\"侧掠\"机位",
+      "preview": "./media/steep-tilt-glide.mp4?v=1784437314787",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/camera/steep-tilt-glide.md",
+      "license": "Apache-2.0",
+      "mechanism": "camera",
+      "participants": [
+        "camera",
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "camera",
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:stroke-segment-build:stroke-segment-build",
+      "version": "bdd94be16d60fa8f",
+      "job": "开场吊悬念的产品名/大数字揭晓；一支片 ≤1 次；与 type-assembly/draw-svg-trace 分工：那些是\"看着字被组装/描画\"，本卡是\"意义延迟揭晓\"",
+      "preview": "./media/stroke-segment-build.mp4?v=1784437314790",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/opening/stroke-segment-build.md",
+      "license": "Apache-2.0",
+      "mechanism": "opening",
+      "participants": [
+        "opening",
+        "typography"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "opening",
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:svg-shape-morph:svg-shape-morph",
+      "version": "bdd94be16d60fa8f",
+      "job": "抽象概念的\"形态转换/自适应/有机生长\"表达；开场 logo 前的氛围一拍，或章节之间的过渡形",
+      "preview": "./media/svg-shape-morph.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/svg-shape-morph.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:tear-streak-transitions:glitch-displace",
+      "version": "bdd94be16d60fa8f",
+      "job": "高能换页：数字故障/断裂语义；页面完整性不破、能量拉满的条带级撕裂",
+      "preview": "./media/glitch-displace.mp4?v=1784437314792",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/tear-streak-transitions.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition",
+        "effects"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition",
+        "effects"
+      ]
+    },
+    {
+      "id": "video-shotcraft:tension-camera-moves:bullet-time-freeze-orbit",
+      "version": "bdd94be16d60fa8f",
+      "job": "情绪节点（震撼/纠偏/积压/收束）的运镜语言；与 space-camera-moves 的\"炫技大动作\"互补——这四式动作小、情绪重",
+      "preview": "./media/bullet-time-freeze-orbit.mp4?v=1784437314794",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/camera/tension-camera-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "camera",
+      "participants": [
+        "camera"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:tension-camera-moves:dutch-roll-to-level",
+      "version": "bdd94be16d60fa8f",
+      "job": "情绪节点（震撼/纠偏/积压/收束）的运镜语言；与 space-camera-moves 的\"炫技大动作\"互补——这四式动作小、情绪重",
+      "preview": "./media/dutch-roll-to-level.mp4?v=1784437314796",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/camera/tension-camera-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "camera",
+      "participants": [
+        "camera"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:tension-camera-moves:pull-back-isolation",
+      "version": "bdd94be16d60fa8f",
+      "job": "情绪节点（震撼/纠偏/积压/收束）的运镜语言；与 space-camera-moves 的\"炫技大动作\"互补——这四式动作小、情绪重",
+      "preview": "./media/pull-back-isolation.mp4?v=1784437314803",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/camera/tension-camera-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "camera",
+      "participants": [
+        "camera"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:tension-camera-moves:slow-push-in",
+      "version": "bdd94be16d60fa8f",
+      "job": "情绪节点（震撼/纠偏/积压/收束）的运镜语言；与 space-camera-moves 的\"炫技大动作\"互补——这四式动作小、情绪重",
+      "preview": "./media/slow-push-in.mp4?v=1784437314801",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/camera/tension-camera-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "camera",
+      "participants": [
+        "camera"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:terminal-3d:terminal-3d",
+      "version": "bdd94be16d60fa8f",
+      "job": "开发者产品的 CLI/工作流演示：把\"三步命令\"拍成三站空间旅程",
+      "preview": "./media/terminal-3d.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/camera/terminal-3d.md",
+      "license": "Apache-2.0",
+      "mechanism": "camera",
+      "participants": [
+        "camera"
+      ],
+      "duration": {
+        "min": 6,
+        "max": 6
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:text-as-mask:text-as-mask",
+      "version": "bdd94be16d60fa8f",
+      "job": "品牌词/口号与产品画面二合一的开场或章节卡；字是门、产品在门里",
+      "preview": "./media/text-as-mask.mp4?v=1784437314808",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/opening/text-as-mask.md",
+      "license": "Apache-2.0",
+      "mechanism": "opening",
+      "participants": [
+        "opening",
+        "typography"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "opening",
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:text-column-converge:text-column-converge",
+      "version": "bdd94be16d60fa8f",
+      "job": "特性清单收束到产品名/口号的段落（\"NEW × 一串特性 → NEW <产品名>\"式）；发布会式 recap、版本号揭晓",
+      "preview": "./media/text-column-converge.mp4?v=1784437314815",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/text-column-converge.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography",
+        "outro"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 6
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography",
+        "outro"
+      ]
+    },
+    {
+      "id": "video-shotcraft:theme-switch-moves:palette-theme-ripple",
+      "version": "bdd94be16d60fa8f",
+      "job": "深色模式/主题功能的叙事段落；同一 UI \"在你眼前变色\"而非切到新场景",
+      "preview": "./media/palette-theme-ripple.mp4?v=1784437314820",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/theme-switch-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction"
+      ]
+    },
+    {
+      "id": "video-shotcraft:theme-switch-moves:theme-sweep-toggle",
+      "version": "bdd94be16d60fa8f",
+      "job": "深色模式/主题功能的叙事段落；同一 UI \"在你眼前变色\"而非切到新场景",
+      "preview": "./media/theme-sweep-toggle.mp4?v=1784437314818",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/theme-switch-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction"
+      ]
+    },
+    {
+      "id": "video-shotcraft:timeline-travel:timeline-travel",
+      "version": "bdd94be16d60fa8f",
+      "job": "changelog/里程碑/发展史段落（\"我们一直在发货\"的另一种拍法）；与 scroll-brake-moves 分工：那卡是纵向列表急刹，本卡是横向时间旅行",
+      "preview": "./media/timeline-travel.mp4?v=1784437314823",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/data/timeline-travel.md",
+      "license": "Apache-2.0",
+      "mechanism": "data",
+      "participants": [
+        "data",
+        "camera"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "data",
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:title-demote-to-label:title-demote-to-label",
+      "version": "bdd94be16d60fa8f",
+      "job": "章节开场（标题先当主角再让位给内容）；教程/功能演示片的小节交接；B 式给\"文字/编辑\"类产品加身份暗示",
+      "preview": "./media/title-demote-to-label.mp4?v=1784437314825",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/title-demote-to-label.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography",
+        "transition"
+      ],
+      "duration": {
+        "min": 3,
+        "max": 3
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography",
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:trailer-grammar-moves:card-footage-cadence",
+      "version": "bdd94be16d60fa8f",
+      "job": "预告片的三个结构性时刻：开场怎么钩（A）、中段怎么对话（B）、高潮怎么收（C）；三式合用即一支预告片的骨架",
+      "preview": "./media/card-footage-cadence.mp4?v=1784437314829",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/trailer-grammar-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm",
+        "opening",
+        "transition"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm",
+        "opening",
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:trailer-grammar-moves:smash-cut",
+      "version": "bdd94be16d60fa8f",
+      "job": "预告片的三个结构性时刻：开场怎么钩（A）、中段怎么对话（B）、高潮怎么收（C）；三式合用即一支预告片的骨架",
+      "preview": "./media/smash-cut.mp4?v=1784437314831",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/trailer-grammar-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm",
+        "opening",
+        "transition"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm",
+        "opening",
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:trailer-grammar-moves:trailer-bumper",
+      "version": "bdd94be16d60fa8f",
+      "job": "预告片的三个结构性时刻：开场怎么钩（A）、中段怎么对话（B）、高潮怎么收（C）；三式合用即一支预告片的骨架",
+      "preview": "./media/trailer-bumper.mp4?v=1784437314827",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/rhythm/trailer-grammar-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "rhythm",
+      "participants": [
+        "rhythm",
+        "opening",
+        "transition"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "rhythm",
+        "opening",
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:transition-hidden-cut:invisible-cut",
+      "version": "bdd94be16d60fa8f",
+      "job": "两镜衔接处需要\"无痕换景\"或\"仪式感开屏\"时（技法卡，与 shot-transitions 六式同层选型）",
+      "preview": "./media/invisible-cut.mp4?v=1784437314833",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/transition-hidden-cut.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:transition-hidden-cut:light-leak-burn",
+      "version": "bdd94be16d60fa8f",
+      "job": "两镜衔接处需要\"无痕换景\"或\"仪式感开屏\"时（技法卡，与 shot-transitions 六式同层选型）",
+      "preview": "./media/light-leak-burn.mp4?v=1784437314836",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/transition-hidden-cut.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:transition-hidden-cut:versus-slam",
+      "version": "bdd94be16d60fa8f",
+      "job": "两镜衔接处需要\"无痕换景\"或\"仪式感开屏\"时（技法卡，与 shot-transitions 六式同层选型）",
+      "preview": "./media/versus-slam.mp4?v=1784437314835",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/transition-hidden-cut.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:transition-travel:letterform-zoom",
+      "version": "bdd94be16d60fa8f",
+      "job": "前后两镜存在\"元素/容器\"级空间关系的接缝（技法卡，与 shot-transitions 六式互补选用）",
+      "preview": "./media/letterform-zoom.mp4?v=1784437314839",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/transition-travel.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition",
+        "camera"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition",
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:transition-travel:shared-element-morph",
+      "version": "bdd94be16d60fa8f",
+      "job": "前后两镜存在\"元素/容器\"级空间关系的接缝（技法卡，与 shot-transitions 六式互补选用）",
+      "preview": "./media/shared-element-morph.mp4?v=1784437314838",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/transition-travel.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition",
+        "camera"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 0
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition",
+        "camera"
+      ]
+    },
+    {
+      "id": "video-shotcraft:type-and-filter:type-and-filter",
+      "version": "bdd94be16d60fa8f",
+      "job": "功能演示的\"操作叙事\"段；搜索/筛选/进入详情的任何交互链路",
+      "preview": "./media/type-and-filter.mp4?v=1784437314842",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/type-and-filter.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction"
+      ],
+      "duration": {
+        "min": 2,
+        "max": 2
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction"
+      ]
+    },
+    {
+      "id": "video-shotcraft:type-assembly-moves:drift-assembly",
+      "version": "bdd94be16d60fa8f",
+      "job": "大标题/标语的入场；与 type-entrance-moves 两式、split-flap-title、document-typewriter-reveal 同属标题入场大品类，全片 ≤2 种",
+      "preview": "./media/drift-assembly.mp4?v=1784437314846",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/type-assembly-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:type-assembly-moves:split-text-stagger",
+      "version": "bdd94be16d60fa8f",
+      "job": "大标题/标语的入场；与 type-entrance-moves 两式、split-flap-title、document-typewriter-reveal 同属标题入场大品类，全片 ≤2 种",
+      "preview": "./media/split-text-stagger.mp4?v=1784437314844",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/type-assembly-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:type-assembly-moves:text-on-path",
+      "version": "bdd94be16d60fa8f",
+      "job": "大标题/标语的入场；与 type-entrance-moves 两式、split-flap-title、document-typewriter-reveal 同属标题入场大品类，全片 ≤2 种",
+      "preview": "./media/text-on-path.mp4?v=1784437314851",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/type-assembly-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:type-assembly-moves:tracking-expand",
+      "version": "bdd94be16d60fa8f",
+      "job": "大标题/标语的入场；与 type-entrance-moves 两式、split-flap-title、document-typewriter-reveal 同属标题入场大品类，全片 ≤2 种",
+      "preview": "./media/tracking-expand.mp4?v=1784437314848",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/type-assembly-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:type-entrance-moves:letter-drop-physics",
+      "version": "bdd94be16d60fa8f",
+      "job": "大标题/章节字卡的入场；与 split-flap-title（机械翻牌）、document-typewriter-reveal（打字机）同品类互斥选用",
+      "preview": "./media/letter-drop-physics.mp4?v=1784437314856",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/type-entrance-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:type-entrance-moves:scramble-decode",
+      "version": "bdd94be16d60fa8f",
+      "job": "大标题/章节字卡的入场；与 split-flap-title（机械翻牌）、document-typewriter-reveal（打字机）同品类互斥选用",
+      "preview": "./media/scramble-decode.mp4?v=1784437314853",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/type-entrance-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:type-rhythm-sync:font-weight-pump",
+      "version": "bdd94be16d60fa8f",
+      "job": "标题/标语与音轨强绑定的段落；A 绑节拍（鼓点），B 绑语音（旁白逐词）",
+      "preview": "./media/font-weight-pump.mp4?v=1784437314859",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/type-rhythm-sync.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography",
+        "rhythm"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography",
+        "rhythm"
+      ]
+    },
+    {
+      "id": "video-shotcraft:type-rhythm-sync:karaoke-fill-sync",
+      "version": "bdd94be16d60fa8f",
+      "job": "标题/标语与音轨强绑定的段落；A 绑节拍（鼓点），B 绑语音（旁白逐词）",
+      "preview": "./media/karaoke-fill-sync.mp4?v=1784437314860",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/type-rhythm-sync.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography",
+        "rhythm"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography",
+        "rhythm"
+      ]
+    },
+    {
+      "id": "video-shotcraft:typewriter-moves:error-retype",
+      "version": "bdd94be16d60fa8f",
+      "job": "开发者产品开场（A）、slogan/卖点字卡（B）；文字自带时间性的入场",
+      "preview": "./media/error-retype.mp4?v=1784437314864",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/typewriter-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography",
+        "opening"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography",
+        "opening"
+      ]
+    },
+    {
+      "id": "video-shotcraft:typewriter-moves:terminal-typewriter",
+      "version": "bdd94be16d60fa8f",
+      "job": "开发者产品开场（A）、slogan/卖点字卡（B）；文字自带时间性的入场",
+      "preview": "./media/terminal-typewriter.mp4?v=1784437314862",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/typewriter-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography",
+        "opening"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography",
+        "opening"
+      ]
+    },
+    {
+      "id": "video-shotcraft:typing-code-block:typing-code-block",
+      "version": "bdd94be16d60fa8f",
+      "job": "代码/配置揭示镜头；开发者产品的\"就三行\"演示；需要对比两种揭示节奏时的选型参考镜",
+      "preview": "./media/typing-code-block.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/typing-code-block.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:ui-strip-away-outro:ui-strip-away-outro",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"发布/完成\"语义的 outro；想讲\"一键之后一切复杂性消失\"的产品收尾",
+      "preview": "./media/ui-strip-away-outro.mp4?v=1784437314866",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/outro/ui-strip-away-outro.md",
+      "license": "Apache-2.0",
+      "mechanism": "outro",
+      "participants": [
+        "outro"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "outro"
+      ]
+    },
+    {
+      "id": "video-shotcraft:ui-to-brand-morph:icon-flip-bloom",
+      "version": "bdd94be16d60fa8f",
+      "job": "品牌收尾/outro 前最后一拍；\"你每天用的那个 UI 就是这个品牌\"的视觉论证",
+      "preview": "./media/icon-flip-bloom.mp4?v=1784437314868",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/outro/ui-to-brand-morph.md",
+      "license": "Apache-2.0",
+      "mechanism": "outro",
+      "participants": [
+        "outro"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "outro"
+      ]
+    },
+    {
+      "id": "video-shotcraft:ui-to-brand-morph:input-morph-assemble",
+      "version": "bdd94be16d60fa8f",
+      "job": "品牌收尾/outro 前最后一拍；\"你每天用的那个 UI 就是这个品牌\"的视觉论证",
+      "preview": "./media/input-morph-assemble.mp4?v=1785045002395",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/outro/ui-to-brand-morph.md",
+      "license": "Apache-2.0",
+      "mechanism": "outro",
+      "participants": [
+        "outro"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 4
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "outro"
+      ]
+    },
+    {
+      "id": "video-shotcraft:value-stagger-gradient:value-stagger-gradient",
+      "version": "bdd94be16d60fa8f",
+      "job": "技法演示与参数化能力的展示镜头；也可直接当数据/频谱/均衡器类界面的入场",
+      "preview": "./media/value-stagger-gradient.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/value-stagger-gradient.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:vertical-word-roll-blur-cycle:vertical-word-roll-blur-cycle",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"Built for ___\" 这类句干 + 受众/对象列举的一句话卖点；浅底品牌片的干净一拍",
+      "preview": "./media/vertical-word-roll-blur-cycle.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/vertical-word-roll-blur-cycle.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    },
+    {
+      "id": "video-shotcraft:voice-waveform-live:voice-waveform-live",
+      "version": "bdd94be16d60fa8f",
+      "job": "语音输入/AI 助手\"正在听你说\"的功能镜头；无 UI 内容可展示但需要持续活性撑画面的段落",
+      "preview": "./media/voice-waveform-live.mp4?v=1784437314870",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/interaction/voice-waveform-live.md",
+      "license": "Apache-2.0",
+      "mechanism": "interaction",
+      "participants": [
+        "interaction"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "interaction"
+      ]
+    },
+    {
+      "id": "video-shotcraft:wall-reveal-moves:bento-light-up",
+      "version": "bdd94be16d60fa8f",
+      "job": "功能墙/卡片墙/整页界面的整体亮相；内容已在原位、要\"显形\"而非\"涌入\"的段落",
+      "preview": "./media/bento-light-up.mp4?v=1784437314872",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/wall-reveal-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:wall-reveal-moves:grid-wave-flip",
+      "version": "bdd94be16d60fa8f",
+      "job": "功能墙/卡片墙/整页界面的整体亮相；内容已在原位、要\"显形\"而非\"涌入\"的段落",
+      "preview": "./media/grid-wave-flip.mp4?v=1784437314873",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/wall-reveal-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:wall-reveal-moves:wireframe-draw-on",
+      "version": "bdd94be16d60fa8f",
+      "job": "功能墙/卡片墙/整页界面的整体亮相；内容已在原位、要\"显形\"而非\"涌入\"的段落",
+      "preview": "./media/wireframe-draw-on.mp4?v=1784437314874",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/ui-entrance/wall-reveal-moves.md",
+      "license": "Apache-2.0",
+      "mechanism": "ui-entrance",
+      "participants": [
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 4,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:white-flash-logo-simplify-cut:white-flash-logo-simplify-cut",
+      "version": "bdd94be16d60fa8f",
+      "job": "品牌段落收束（华丽演绎→干净定妆）；情绪从炫技切换到正式宣告的转场拍",
+      "preview": "./media/white-flash-logo-simplify-cut.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/white-flash-logo-simplify-cut.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 0,
+        "max": 1
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:wipe-transitions:blinds-slice",
+      "version": "bdd94be16d60fa8f",
+      "job": "新旧页都不动、一条几何边界扫过完成交接的通用转场；不依赖构图里有合适元素，哪儿都能用",
+      "preview": "./media/blinds-slice.mp4?v=1784437314880",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/wipe-transitions.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:wipe-transitions:clock-wipe",
+      "version": "bdd94be16d60fa8f",
+      "job": "新旧页都不动、一条几何边界扫过完成交接的通用转场；不依赖构图里有合适元素，哪儿都能用",
+      "preview": "./media/clock-wipe.mp4?v=1784437314879",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/transition/wipe-transitions.md",
+      "license": "Apache-2.0",
+      "mechanism": "transition",
+      "participants": [
+        "transition"
+      ],
+      "duration": {
+        "min": 5,
+        "max": 5
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "transition"
+      ]
+    },
+    {
+      "id": "video-shotcraft:word-relay-filmstrip:word-relay-filmstrip",
+      "version": "bdd94be16d60fa8f",
+      "job": "\"一个主体 × 多种能力\"的枚举段（Computer researches/builds/codes…）；作品集/案例流展示；产品多场景巡礼",
+      "preview": "./media/word-relay-filmstrip.mp4?v=1784437314883",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/word-relay-filmstrip.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography",
+        "ui-entrance"
+      ],
+      "duration": {
+        "min": 1,
+        "max": 2
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography",
+        "ui-entrance"
+      ]
+    },
+    {
+      "id": "video-shotcraft:word-relay-geometry:word-relay-geometry",
+      "version": "bdd94be16d60fa8f",
+      "job": "三点式利益陈述（更快/更好/更强）；品牌价值观段落；需要\"一词一世界\"的中段推进",
+      "preview": "./media/word-relay-geometry.mp4?v=1785600000000",
+      "renderer": "remotion",
+      "implementation_ref": "video-shotcraft:references/shots/typography/word-relay-geometry.md",
+      "license": "Apache-2.0",
+      "mechanism": "typography",
+      "participants": [
+        "typography"
+      ],
+      "duration": {
+        "min": 6,
+        "max": 6
+      },
+      "canvas": [
+        "16:9"
+      ],
+      "carriers": [
+        "typography"
+      ]
+    }
+  ]
+}

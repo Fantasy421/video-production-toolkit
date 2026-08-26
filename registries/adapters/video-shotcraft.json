@@ -1,0 +1,16 @@
+{
+  "id": "video-shotcraft",
+  "version": "v1",
+  "job": "indexed cinematic motion recipe selection",
+  "preview": "adapter:video-shotcraft",
+  "renderer": "remotion",
+  "implementation_ref": "external:video-shotcraft",
+  "license": "Apache-2.0",
+  "capabilities": ["recipe.search", "recipe.preview", "implementation.lookup"],
+  "accepts": ["motion.recipe", "scene.produce"],
+  "outputs": ["recipe-reference", "preview-reference", "implementation-reference"],
+  "editable": true,
+  "installed_skill": "video-shotcraft:video-shotcraft",
+  "fallback": "remotion",
+  "license_mode": "external-reference"
+}

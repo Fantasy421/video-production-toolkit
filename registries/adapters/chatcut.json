@@ -1,0 +1,16 @@
+{
+  "id": "chatcut",
+  "version": "v1",
+  "job": "editable motion graphics and final timeline assembly",
+  "preview": "adapter:chatcut",
+  "renderer": "chatcut",
+  "implementation_ref": "external:chatcut-plugin-basics",
+  "license": "external",
+  "capabilities": ["motion-graphics", "timeline.assemble", "timeline.verify", "export"],
+  "accepts": ["motion.graphics", "timeline.assemble", "timeline.export"],
+  "outputs": ["chatcut-project", "editable-motion-graphic", "rendered-video"],
+  "editable": true,
+  "installed_skill": "chatcut:chatcut-plugin-basics",
+  "fallback": null,
+  "license_mode": "external-reference"
+}

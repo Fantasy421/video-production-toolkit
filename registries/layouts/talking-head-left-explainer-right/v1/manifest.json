@@ -1,0 +1,12 @@
+{
+  "id": "talking-head-left-explainer-right",
+  "version": "v1",
+  "job": "talking head with a readable explainer panel",
+  "preview": "previews/layouts/talking-head-left-explainer-right-v1.html",
+  "renderer": "hyperframes",
+  "implementation_ref": "toolkit:layouts/talking-head-left-explainer-right/v1",
+  "license": "CC0-1.0",
+  "mechanism": "explainer-overlay",
+  "participants": ["host", "diagram"],
+  "canvas": ["16:9"]
+}

@@ -1,0 +1,12 @@
+{
+  "id": "editorial-clean",
+  "version": "v1",
+  "job": "clear Chinese knowledge-video visual system",
+  "preview": "previews/styles/editorial-clean-v1.html",
+  "renderer": "hyperframes",
+  "implementation_ref": "toolkit:styles/editorial-clean/v1",
+  "license": "CC0-1.0",
+  "mechanism": "editorial-clean",
+  "participants": ["host", "diagram"],
+  "canvas": ["16:9", "9:16"]
+}
