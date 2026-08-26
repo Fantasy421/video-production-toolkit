@@ -1,0 +1,25 @@
+[
+  {
+    "scene_id": "S01",
+    "start_ms": 0,
+    "end_ms": 5000,
+    "primary_carrier": "scene",
+    "purpose": "Show the concrete cause",
+    "scene_image_generation": true
+  },
+  {
+    "scene_id": "S02",
+    "start_ms": 5000,
+    "end_ms": 10000,
+    "primary_carrier": "motion-graphics",
+    "purpose": "Explain the abstract relationship",
+    "captions": true
+  },
+  {
+    "scene_id": "S03",
+    "start_ms": 10000,
+    "end_ms": 15000,
+    "primary_carrier": "a-roll",
+    "purpose": "Return to the speaker conclusion"
+  }
+]

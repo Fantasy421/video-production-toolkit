@@ -65,5 +65,6 @@ baseline, so a same-path content change blocks this auditable retirement gate.
 
 This audit only establishes disposition coverage. It does not authorize removal
 or modification of the installed legacy skill. Retirement remains blocked until
-the replacement plugin passes the recovery and representative-slice smoke tests
-and the user gives execution-time approval for the exact legacy directory.
+the replacement plugin is host-installed and enabled, that installed copy passes
+the recovery and representative-slice smoke tests, and the user gives execution-time
+approval for the exact legacy directory.

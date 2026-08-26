@@ -10,6 +10,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from scripts.toolkit.artifacts import _artifact_paths_by_id, _read_valid_artifact
+from scripts.toolkit.invalidation import invalidated_artifact_ids
 
 
 CLAIM_LEASE_SECONDS = 300.0
@@ -175,13 +176,34 @@ def retry_decision(root: Path, task_id: str, result: dict[str, Any]) -> dict[str
         os.close(descriptor)
 
 
+def active_claim_task_ids(root: Path) -> list[str]:
+    """Return live task claims after safely reclaiming dead-PID locks."""
+    locks_root = Path(root) / "tasks" / "locks"
+    if not locks_root.is_dir():
+        return []
+    active = []
+    for path in sorted(locks_root.glob("*.lock")):
+        task_id = path.name[: -len(".lock")]
+        _require_safe_id(task_id, "task_id")
+        while path.exists():
+            if not _reclaim_claim(path):
+                active.append(task_id)
+                break
+    return active
+
+
 def _is_current_result(root: Path, envelope: dict[str, Any], result: dict[str, Any]) -> bool:
     if result["inputs"] != envelope["inputs"]:
         return False
+    invalidated = invalidated_artifact_ids(root)
     artifacts = _artifacts_by_id(root / "artifacts")
     for artifact_id in envelope["inputs"]:
         artifact = artifacts.get(artifact_id)
-        if artifact is None or artifact["status"] != "approved":
+        if (
+            artifact is None
+            or artifact["status"] != "approved"
+            or artifact_id in invalidated
+        ):
             return False
         if _has_newer_approved_lineage(artifact, artifacts):
             return False

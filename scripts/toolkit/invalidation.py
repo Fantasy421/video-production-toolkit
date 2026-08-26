@@ -1,6 +1,8 @@
 """Deterministic invalidation over immutable artifact dependency graphs."""
 
+import json
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Any, Union
 
 
@@ -38,3 +40,25 @@ def invalidate_descendants(
 
     allowed_types = set(rules.get(by_id[changed_id]["type"], []))
     return {artifact_id for artifact_id in descendants if by_id[artifact_id]["type"] in allowed_types}
+
+
+def invalidated_artifact_ids(root: Path) -> set[str]:
+    """Project immutable metadata through append-only invalidation events."""
+    event_log = Path(root) / "events" / "events.jsonl"
+    if not event_log.is_file():
+        return set()
+    invalidated: set[str] = set()
+    for number, line in enumerate(event_log.read_text(encoding="utf-8").splitlines(), 1):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"invalid project event at line {number}") from error
+        if event.get("event") != "artifacts.invalidated":
+            continue
+        artifact_ids = event.get("artifact_ids")
+        if not isinstance(artifact_ids, list) or any(
+            not isinstance(item, str) or not item for item in artifact_ids
+        ):
+            raise ValueError(f"invalid artifact invalidation event at line {number}")
+        invalidated.update(artifact_ids)
+    return invalidated

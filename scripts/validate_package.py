@@ -16,6 +16,10 @@ def validate_package(root: Path) -> list[str]:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if manifest.get("id") != "video-production-toolkit":
             errors.append("invalid:plugin-id")
+        if manifest.get("name") != "video-production-toolkit":
+            errors.append("invalid:plugin-name")
+        if manifest.get("skills") != "./skills/":
+            errors.append("invalid:skills-path")
     return errors
 
 
