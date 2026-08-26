@@ -60,8 +60,8 @@ def claim_task(root: Path, task_id: str, worker_id: str) -> dict[str, str]:
     _require_nonempty_string(worker_id, "worker_id")
     if not _task_path(root, task_id).is_file():
         raise ValueError(f"task does not exist: {task_id}")
-    if _result_path(root, task_id).exists():
-        raise RuntimeError(f"task already completed: {task_id}")
+    if _result_path(root, task_id).exists() or _stale_result_path(root, task_id).exists():
+        raise RuntimeError(f"task already reached a terminal result: {task_id}")
 
     lock = _claim_path(root, task_id)
     while True:
@@ -81,9 +81,9 @@ def claim_task(root: Path, task_id: str, worker_id: str) -> dict[str, str]:
             if not _reclaim_claim(lock):
                 raise RuntimeError(f"task already claimed: {task_id}") from None
             continue
-        if _result_path(root, task_id).exists():
+        if _result_path(root, task_id).exists() or _stale_result_path(root, task_id).exists():
             _remove_claim_if_current(lock, token)
-            raise RuntimeError(f"task already completed: {task_id}")
+            raise RuntimeError(f"task already reached a terminal result: {task_id}")
         return {"worker_id": worker_id, "claim_token": token}
 
 
@@ -93,20 +93,25 @@ def complete_task(root: Path, result: dict[str, Any]) -> str:
     _validate_result(result)
     task_id = result["task_id"]
     handle = _hold_claim(_claim_path(root, task_id))
+    destination: Optional[Path] = None
     try:
         _require_current_claim(handle, result)
-        if _result_path(root, task_id).exists():
-            raise RuntimeError(f"task already completed: {task_id}")
         envelope = _read_envelope(root, task_id)
         if _is_current_result(root, envelope, result):
-            _publish_immutable_json(_result_path(root, task_id), _serialize_json(result))
+            destination = _result_path(root, task_id)
             status = "completed"
         else:
-            _publish_immutable_json(_stale_result_path(root, task_id), _serialize_json(result))
+            destination = _stale_result_path(root, task_id)
             status = "stale-result"
-        _release_claim(handle)
+        if destination.exists():
+            if status == "stale-result":
+                return status
+            raise RuntimeError(f"task already completed: {task_id}")
+        _publish_immutable_json(destination, _serialize_json(result))
         return status
     finally:
+        if destination is not None and destination.exists():
+            _release_claim(handle)
         os.close(handle[1])
 
 
@@ -138,6 +143,8 @@ def retry_decision(root: Path, task_id: str, result: dict[str, Any]) -> dict[str
             raise ValueError("retry adapter does not match the active retry adapter")
 
         attempts = ledger["attempts"]
+        if attempts.get(adapter, 0) >= 2:
+            return {"action": "block", "reason": "retry-budget-exhausted"}
         attempts[adapter] = attempts.get(adapter, 0) + 1
         ledger["history"].append(
             {"adapter": adapter, "attempt": attempts[adapter], "error": error}
@@ -296,14 +303,7 @@ def _reclaim_claim(path: Path) -> bool:
         if not _is_current_path(path, handle[1]):
             return True
         claim = _read_claim(handle[1])
-        if claim is None:
-            expired = path.stat().st_mtime + CLAIM_LEASE_SECONDS <= time.time()
-        else:
-            expired = (
-                claim["lease_expires_at"] <= time.time()
-                or not _pid_is_alive(claim["pid"])
-            )
-        if not expired:
+        if claim is None or _pid_is_alive(claim["pid"]):
             return False
         path.unlink(missing_ok=True)
         return True

@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from scripts.toolkit.artifacts import create_artifact
+from scripts.toolkit import tasks
 from scripts.toolkit.tasks import claim_task, complete_task, create_task, retry_decision
 
 
@@ -139,6 +140,17 @@ class TaskTests(unittest.TestCase):
             complete_task(self.root, self.result_for(old_claim))
         self.assertEqual("completed", complete_task(self.root, self.result_for(new_claim)))
 
+    def test_expired_lease_does_not_reclaim_a_live_worker_claim(self):
+        """Catches a long-running live worker losing exclusive completion authority at 300 seconds."""
+        self.dispatch_and_claim("worker-a")
+        lock_path = self.root / "tasks" / "locks" / "preview-S03-v2.lock"
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        lock["lease_expires_at"] = 0
+        lock_path.write_text(json.dumps(lock), encoding="utf-8")
+
+        with self.assertRaises(RuntimeError):
+            claim_task(self.root, "preview-S03-v2", "worker-b")
+
     def test_late_result_cannot_supersede_new_approved_input_lineage(self):
         """Catches an approved v5 lineage leaving a v4 task result eligible to publish."""
         claim = self.dispatch_and_claim()
@@ -161,6 +173,46 @@ class TaskTests(unittest.TestCase):
             ),
         )
         self.assertFalse((self.root / "tasks" / "results" / "preview-S03-v2.json").exists())
+
+    def test_stale_result_is_terminal_and_repeated_completion_leaves_no_claim(self):
+        """Catches a second stale publication colliding and trapping a reclaimed task lock."""
+        claim = self.dispatch_and_claim()
+        self.create_artifact(
+            "scene-contract-S03-v5",
+            "scene-contract",
+            5,
+            parents=["scene-contract-S03-v4"],
+        )
+        result = self.result_for(claim)
+
+        self.assertEqual("stale-result", complete_task(self.root, result))
+        with self.assertRaises(RuntimeError):
+            complete_task(self.root, result)
+        with self.assertRaises(RuntimeError):
+            claim_task(self.root, "preview-S03-v2", "worker-b")
+        self.assertFalse((self.root / "tasks" / "locks" / "preview-S03-v2.lock").exists())
+
+    def test_interrupted_stale_publication_releases_the_terminal_claim(self):
+        """Catches an interrupt after stale output publication leaving a reclaimable lock behind."""
+        claim = self.dispatch_and_claim()
+        self.create_artifact(
+            "scene-contract-S03-v5",
+            "scene-contract",
+            5,
+            parents=["scene-contract-S03-v4"],
+        )
+        publish = tasks._publish_immutable_json
+
+        def publish_then_interrupt(destination, payload):
+            publish(destination, payload)
+            raise KeyboardInterrupt
+
+        with patch("scripts.toolkit.tasks._publish_immutable_json", side_effect=publish_then_interrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                complete_task(self.root, self.result_for(claim))
+
+        self.assertTrue((self.root / "tasks" / "stale-results" / "preview-S03-v2.json").exists())
+        self.assertFalse((self.root / "tasks" / "locks" / "preview-S03-v2.lock").exists())
 
     def test_result_with_different_input_versions_is_stale(self):
         """Catches a worker returning results for inputs other than its immutable envelope."""
@@ -211,6 +263,27 @@ class TaskTests(unittest.TestCase):
                     encoding="utf-8"
                 )
             )["attempts"],
+        )
+
+    def test_terminal_retry_call_does_not_consume_a_third_attempt(self):
+        """Catches a duplicate terminal failure growing an adapter count beyond its cap."""
+        create_task(self.root, self.envelope)
+        for _ in range(2):
+            retry_decision(self.root, "preview-S03-v2", {"error": "adapter_error"})
+        for _ in range(2):
+            retry_decision(self.root, "preview-S03-v2", {"error": "adapter_error"})
+
+        self.assertEqual(
+            {"action": "block", "reason": "retry-budget-exhausted"},
+            retry_decision(self.root, "preview-S03-v2", {"error": "adapter_error"}),
+        )
+        self.assertEqual(
+            2,
+            json.loads(
+                (self.root / "tasks" / "retries" / "preview-S03-v2.json").read_text(
+                    encoding="utf-8"
+                )
+            )["attempts"]["remotion"],
         )
 
     def test_retry_uses_only_adapters_declared_by_immutable_envelope(self):

@@ -25,3 +25,17 @@ Regression evidence: deterministic tests cover concurrent claims, owner/token re
 Verification: `python3 -m unittest tests.test_tasks -v` — 14 passed. `PYTHONPYCACHEPREFIX=/private/tmp/video_toolkit_task4_fix1_full_pycache python3 -m unittest discover -s tests -v` — 42 passed. `PYTHONPYCACHEPREFIX=/private/tmp/video_toolkit_task4_fix1_pycache python3 -m py_compile scripts/toolkit/tasks.py tests/test_tasks.py` — passed. `git diff --check` — passed.
 
 Fix concerns: none.
+
+Fix round 2/5 status: complete
+
+Fix commit: this commit (`fix: preserve live task claims and retry caps`)
+
+Root cause: a valid claim could be reclaimed solely because its fixed lease elapsed even though its PID was still live. A stale result used one terminal pathname but did not classify that pathname as terminal at claim time, so a recovered worker could acquire a new claim and collide on the immutable stale result. Retry processing incremented the current adapter before checking whether it had already exhausted two attempts.
+
+Fix evidence: valid claims are now reclaimable only when their owner PID is proven dead; lease metadata remains diagnostic and cannot displace a live worker without an authenticated renewal protocol. Stale results are terminal: `claim_task` rejects them, while `complete_task` releases its claim in a `finally` block whenever either terminal output exists, including an interrupt after durable publication. Retry decisions block before mutation when the current adapter has already reached two attempts.
+
+Regression evidence: added live-PID/expired-lease refusal, terminal repeated-stale cleanup, `KeyboardInterrupt` after stale publication cleanup, and duplicate terminal retry-count tests. Existing concurrent claim/retry, ownership, stale-lineage, and dead-PID recovery tests remain green.
+
+Verification: `python3 -m unittest tests.test_tasks -v` — 18 passed. `PYTHONPYCACHEPREFIX=/private/tmp/video_toolkit_task4_fix2_full_pycache python3 -m unittest discover -s tests -v` — 46 passed. `PYTHONPYCACHEPREFIX=/private/tmp/video_toolkit_task4_fix2_pycache python3 -m py_compile scripts/toolkit/tasks.py tests/test_tasks.py` — passed. `git diff --check` — passed.
+
+Fix concerns: none.

@@ -16,8 +16,9 @@ fallback blocks instead of selecting another adapter.
 Workers persist a compact structured result together with the `worker_id` and
 opaque `claim_token` returned by `claim_task`. Claims contain PID, lease, and
 token metadata. Completion locks and verifies that active claim before publishing
-and releases only that same lock inode. Dead or expired claims can be safely
-reclaimed; displaced workers cannot complete a task with an old token.
+and releases only that same lock inode. Claims are reclaimed only after their PID
+is proven dead; lease expiry alone cannot displace a live worker. Displaced
+workers cannot complete a task with an old token.
 
 A result that no longer matches the envelope inputs, whose inputs are not
 approved, or whose input lineage has a newer approved version, is retained under
