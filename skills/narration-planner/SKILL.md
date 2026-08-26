@@ -1,0 +1,27 @@
+---
+name: narration-planner
+description: Plan confirmed narration, timing, semantic beats, and evidence needs.
+---
+
+# Narration Planner
+
+Purpose: turn confirmed content into narration, real voice timing, semantic
+beats, teaching goals, evidence needs, and content risks. Estimated timing may
+support drafts but cannot make production ready.
+
+Owned capability: `narration.plan`
+
+Allowed inputs: accept only one claimed task-envelope with capability
+`narration.plan` plus its declared content and voice artifact references.
+
+Required output: Return a task-result envelope containing only produced
+artifact IDs, objective checks, compact warnings, and a decision request if
+content confirmation is needed.
+
+Stopping conditions: do not rewrite approved content, infer missing voice
+timing as production timing, or consume undeclared artifacts. Stop at the
+Content gate without a scoped approval and return `waiting_user`.
+
+Follow `../../references/schemas/task-envelope.schema.json`,
+`../../references/schemas/task-result.schema.json`, and
+`../../references/policies/decision-gates.md`.
