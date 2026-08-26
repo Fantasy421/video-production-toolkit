@@ -17,13 +17,13 @@ class AdapterSelectionTests(unittest.TestCase):
         ]
 
     def test_h5_preview_prefers_hyperframes(self):
-        selected = select_adapter("motion.preview", {"format": "html"}, self.manifests)
+        selected = select_adapter("motion.preview", self.requirements(format="html"), self.manifests)
         self.assertEqual("hyperframes", selected["id"])
-        self.assertEqual("remotion", selected["fallback"]["id"])
+        self.assertIsNone(selected["fallback"])
 
     def test_editable_overlay_prefers_chatcut_motion_graphics(self):
         selected = select_adapter(
-            "motion.produce", {"editable": True, "overlay": True}, self.manifests
+            "motion.produce", self.requirements(editable=True, overlay=True), self.manifests
         )
         self.assertEqual("chatcut", selected["id"])
 
@@ -34,22 +34,25 @@ class AdapterSelectionTests(unittest.TestCase):
                 "contract": "scene-contract-v1",
                 "output": "rendered-video",
                 "adapter_preferences": ["remotion", "chatcut"],
+                "installed_skills": ["remotion-best-practices", "chatcut:chatcut-plugin-basics"],
             },
             self.manifests,
         )
         self.assertEqual("remotion", selected["id"])
-        self.assertEqual("chatcut", selected["fallback"]["id"])
+        self.assertIsNone(selected["fallback"])
 
     def test_rejects_missing_or_undeclared_installed_skill(self):
+        with self.assertRaises(ValueError):
+            select_adapter("motion.preview", {"adapter_preferences": ["remotion"]}, self.manifests)
         selected = select_adapter(
             "motion.preview",
-            {"installed_skills": ["remotion-best-practices"]},
+            {"adapter_preferences": ["remotion"], "installed_skills": ["remotion-best-practices"]},
             self.manifests,
         )
         self.assertEqual("remotion", selected["id"])
         with self.assertRaises(ValueError):
             select_adapter(
-                "motion.preview", {"adapter_preferences": ["untrusted"]}, self.manifests
+                "motion.preview", {"adapter_preferences": ["untrusted"], "installed_skills": []}, self.manifests
             )
 
     def test_manifest_cannot_supply_routing_or_gate_override(self):
@@ -58,7 +61,61 @@ class AdapterSelectionTests(unittest.TestCase):
             "routing_override": "video-director",
         }
         with self.assertRaises(ValueError):
-            select_adapter("motion.preview", {}, [unsafe])
+            select_adapter("motion.preview", self.requirements(), [unsafe])
+
+    def test_fallback_never_substitutes_an_adapter_absent_from_task_preferences(self):
+        selected = select_adapter(
+            "motion.produce",
+            {
+                "adapter_preferences": ["remotion"],
+                "installed_skills": ["remotion-best-practices"],
+            },
+            self.manifests,
+        )
+        self.assertEqual("remotion", selected["id"])
+        self.assertIsNone(selected["fallback"])
+
+    def test_fallback_must_satisfy_the_same_immutable_contract_and_output(self):
+        selected = select_adapter(
+            "motion.preview",
+            self.requirements(format="html"),
+            self.manifests,
+        )
+        self.assertEqual("hyperframes", selected["id"])
+        self.assertIsNone(selected["fallback"])
+
+    def test_explicit_primary_preference_retains_only_its_declared_authorized_fallback(self):
+        selected = select_adapter(
+            "motion.preview",
+            self.requirements(
+                adapter_preferences=["hyperframes", "remotion"],
+                installed_skills=["hyperframes-motion-director", "remotion-best-practices"],
+                preferred_adapter="hyperframes",
+            ),
+            self.manifests,
+        )
+        self.assertEqual("hyperframes", selected["id"])
+        self.assertEqual("remotion", selected["fallback"]["id"])
+
+    def test_rejects_unsafe_external_implementation_references(self):
+        for reference in ("external:unsafe\nname", "external:../escape", "external:folder/name", "external:bad\x7f"):
+            with self.subTest(reference=reference):
+                manifest = {**self.manifests[0], "implementation_ref": reference}
+                with self.assertRaises(ValueError):
+                    select_adapter("motion.preview", self.requirements(), [manifest])
+
+    @staticmethod
+    def requirements(**updates):
+        return {
+            "adapter_preferences": ["hyperframes", "remotion", "video-shotcraft", "chatcut"],
+            "installed_skills": [
+                "hyperframes-motion-director",
+                "remotion-best-practices",
+                "video-shotcraft:video-shotcraft",
+                "chatcut:chatcut-plugin-basics",
+            ],
+            **updates,
+        }
 
 
 if __name__ == "__main__":

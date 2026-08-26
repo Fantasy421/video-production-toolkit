@@ -1,6 +1,7 @@
 """Deterministic selection of one external capability provider and fallback."""
 
 from collections.abc import Iterable, Mapping
+import re
 from typing import Any, Union
 
 
@@ -13,7 +14,7 @@ _REQUIREMENT_KEYS = {
     "adapter_preferences", "preferred_adapter", "installed_skills", "contract",
     "accepted_contract", "output", "required_output", "editable", "overlay", "format",
 }
-_LOCAL_NO_CREDIT = {"remotion"}
+_LOCAL_NO_CREDIT = {"hyperframes", "remotion", "chatcut"}
 _PRIMARY_ORDER = {
     "motion.preview": ("hyperframes", "remotion"),
     "motion.produce": ("remotion", "video-shotcraft", "chatcut"),
@@ -37,23 +38,28 @@ def select_adapter(
     if unknown:
         raise ValueError(f"unknown adapter requirements: {', '.join(sorted(unknown))}")
     entries = _normalize_manifests(manifests)
-    preferences = _preferences(requirements)
+    preferences = _task_preferences(requirements)
+    explicit_preferences = _explicit_preferences(requirements)
     ids = {entry["id"] for entry in entries}
     if any(preference not in ids for preference in preferences):
         raise ValueError("adapter preference is not a declared manifest")
+    if any(preference not in preferences for preference in explicit_preferences):
+        raise ValueError("explicit adapter preference is not declared by the task envelope")
 
     compatible = [entry for entry in entries if _matches(entry, capability, requirements)]
-    if preferences:
-        preferred = [entry for entry in compatible if entry["id"] in preferences]
+    compatible = [entry for entry in compatible if entry["id"] in preferences]
+    fallback_candidates = compatible
+    if explicit_preferences:
+        preferred = [entry for entry in compatible if entry["id"] in explicit_preferences]
         if not preferred:
-            raise ValueError("declared adapter preferences do not satisfy requirements")
+            raise ValueError("explicit adapter preference does not satisfy requirements")
         compatible = preferred
     if not compatible:
         raise ValueError("no adapter satisfies capability requirements")
 
-    compatible.sort(key=lambda entry: _rank(entry, capability, requirements, preferences))
+    compatible.sort(key=lambda entry: _rank(entry, capability, requirements, explicit_preferences))
     primary = compatible[0]
-    fallback = _find_fallback(primary, compatible, entries, capability, requirements)
+    fallback = _find_fallback(primary, fallback_candidates, preferences, capability, requirements)
     return _compact(primary, fallback)
 
 
@@ -88,7 +94,7 @@ def _validate_manifest(manifest: Mapping[str, Any]) -> None:
     _string_list(manifest["outputs"], "outputs")
     _safe_token(manifest["installed_skill"], "installed_skill")
     reference = manifest["implementation_ref"]
-    if not isinstance(reference, str) or not reference.startswith("external:") or "/" in reference or "\\" in reference:
+    if not _is_safe_external_reference(reference):
         raise ValueError("adapter implementation_ref must be a safe external reference")
     if manifest["license_mode"] != "external-reference":
         raise ValueError("adapter must use external-reference license mode")
@@ -102,11 +108,9 @@ def _validate_manifest(manifest: Mapping[str, Any]) -> None:
 def _matches(entry: Mapping[str, Any], capability: str, requirements: Mapping[str, Any]) -> bool:
     if capability not in entry["capabilities"]:
         return False
-    installed = requirements.get("installed_skills")
-    if installed is not None:
-        skills = _string_list(installed, "installed_skills")
-        if entry["installed_skill"] not in skills:
-            return False
+    skills = _installed_skills(requirements)
+    if entry["installed_skill"] not in skills:
+        return False
     contract = requirements.get("contract", requirements.get("accepted_contract"))
     if contract is not None and contract not in entry["accepts"]:
         return False
@@ -127,31 +131,24 @@ def _rank(entry: Mapping[str, Any], capability: str, requirements: Mapping[str, 
     local_rank = 0 if adapter_id in _LOCAL_NO_CREDIT else 1
     order = _OVERLAY_ORDER if requirements.get("overlay") else _PRIMARY_ORDER.get(capability, ())
     declared_rank = order.index(adapter_id) if adapter_id in order else len(order)
-    return preference_rank, local_rank if not requirements.get("overlay") else 0, declared_rank, adapter_id
+    if requirements.get("overlay"):
+        return preference_rank, declared_rank, local_rank, adapter_id
+    return preference_rank, local_rank, declared_rank, adapter_id
 
 
 def _find_fallback(
     primary: Mapping[str, Any],
     compatible: list[dict[str, Any]],
-    entries: list[dict[str, Any]],
+    task_preferences: list[str],
     capability: str,
     requirements: Mapping[str, Any],
 ) -> Union[dict[str, Any], None]:
     wanted = primary["fallback"]
-    if wanted:
-        for candidate in entries:
-            if candidate["id"] == wanted and _fallback_matches(candidate, capability, requirements):
+    if wanted and wanted in task_preferences:
+        for candidate in compatible:
+            if candidate["id"] == wanted and _matches(candidate, capability, requirements):
                 return candidate
-    return next((candidate for candidate in compatible if candidate["id"] != primary["id"]), None)
-
-
-def _fallback_matches(entry: Mapping[str, Any], capability: str, requirements: Mapping[str, Any]) -> bool:
-    """Fallbacks preserve capability/contract safety but may change preview format."""
-    fallback_requirements = dict(requirements)
-    fallback_requirements.pop("output", None)
-    fallback_requirements.pop("required_output", None)
-    fallback_requirements.pop("format", None)
-    return _matches(entry, capability, fallback_requirements)
+    return None
 
 
 def _compact(primary: Mapping[str, Any], fallback: Union[Mapping[str, Any], None]) -> dict[str, Any]:
@@ -173,11 +170,24 @@ def _compact(primary: Mapping[str, Any], fallback: Union[Mapping[str, Any], None
     return result
 
 
-def _preferences(requirements: Mapping[str, Any]) -> list[str]:
-    values = requirements.get("adapter_preferences", requirements.get("preferred_adapter", []))
+def _task_preferences(requirements: Mapping[str, Any]) -> list[str]:
+    if "adapter_preferences" not in requirements:
+        raise ValueError("adapter_preferences must be supplied by the immutable task envelope")
+    values = requirements["adapter_preferences"]
+    return _string_list(values, "adapter_preferences")
+
+
+def _explicit_preferences(requirements: Mapping[str, Any]) -> list[str]:
+    values = requirements.get("preferred_adapter", [])
     if isinstance(values, str):
         values = [values]
-    return _string_list(values, "adapter_preferences") if values else []
+    return _string_list(values, "preferred_adapter") if values else []
+
+
+def _installed_skills(requirements: Mapping[str, Any]) -> list[str]:
+    if "installed_skills" not in requirements:
+        raise ValueError("installed_skills must be supplied for deterministic adapter selection")
+    return _string_list(requirements["installed_skills"], "installed_skills")
 
 
 def _string_list(value: Any, name: str) -> list[str]:
@@ -189,9 +199,19 @@ def _string_list(value: Any, name: str) -> list[str]:
 
 
 def _safe_token(value: Any, name: str) -> str:
-    if not isinstance(value, str) or not value or value in {".", ".."} or ".." in value or "/" in value or "\\" in value:
+    if not _is_safe_token(value):
         raise ValueError(f"{name} must be a safe token")
     return value
+
+
+def _is_safe_external_reference(value: Any) -> bool:
+    if not isinstance(value, str) or not value.startswith("external:"):
+        return False
+    return _is_safe_token(value[len("external:") :])
+
+
+def _is_safe_token(value: Any) -> bool:
+    return isinstance(value, str) and bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_:-]*(?:\.[A-Za-z0-9][A-Za-z0-9_:-]*)*", value))
 
 
 def _output_name(value: Any) -> str:
