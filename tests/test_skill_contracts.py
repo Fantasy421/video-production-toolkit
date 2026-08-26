@@ -61,6 +61,15 @@ class SkillContractTests(unittest.TestCase):
             self.assertIn(gate, text)
         self.assertIn("approval artifact", text)
         self.assertIn("explicitly delegate or skip", text)
+        self.assertIn("Motion-contract approval", text)
+
+    def test_approval_schema_has_the_durable_gate_decision_enum(self):
+        """Catches policy decisions that cannot be persisted in approval artifacts."""
+        schema = (ROOT / "references/schemas/approval.schema.json").read_text(encoding="utf-8")
+
+        self.assertIn('"decision"', schema)
+        for decision in ('"approved"', '"delegated"', '"skipped"'):
+            self.assertIn(decision, schema)
 
     def test_director_routes_one_ready_capability_and_stops_on_unsafe_state(self):
         """Catches a coordinator fan-out, media generation, or unreconciled dispatch."""
@@ -75,6 +84,23 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("does not match event replay", text)
         self.assertIn("cannot override routing or approval policy", text)
         self.assertIn("artifact IDs, paths, summaries, and contract results", text)
+
+    def test_storyboard_and_motion_skills_request_their_own_gates_without_circles(self):
+        """Catches a task requiring approval for the artifact it is meant to request."""
+        storyboard = (ROOT / "skills/storyboard-director/SKILL.md").read_text(encoding="utf-8")
+        motion = (ROOT / "skills/motion-director/SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("Visual direction approval", storyboard)
+        self.assertIn("produce the\nstoryboard and cost artifact", storyboard)
+        self.assertIn("return `waiting_user`", storyboard)
+        self.assertNotIn("missing Storyboard and cost approval", storyboard)
+
+        self.assertIn("claimed `motion.preview` task-envelope", motion)
+        self.assertIn("claimed `motion.produce` task-envelope", motion)
+        self.assertIn("Storyboard and cost approval", motion)
+        self.assertIn("Motion-contract approval", motion)
+        self.assertIn("motion-contract decision request", motion)
+        self.assertIn("Return a task-result envelope deterministically", motion)
 
 
 if __name__ == "__main__":

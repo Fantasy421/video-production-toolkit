@@ -12,6 +12,13 @@ is not approval. A revision invalidates the superseded approval's scope.
 | Storyboard and cost | complete storyboard, media plan, paid or batch scope | scene and motion production |
 | Representative slice and final draft | editable representative slice, then final draft | full expansion, handoff, or authorized export |
 
+Motion-contract approval is a scoped sub-decision within the approved storyboard
+and cost plan. It records the selected mechanism, backend, editable properties,
+and target shot before delegated `motion.produce` may start. A representative
+slice may be produced after its own motion-contract approval; the
+Representative slice and final draft approval is required before expanding that
+approved pattern across the full production or final draft.
+
 Workers stop and return `waiting_user` with a compact decision request whenever
 their prerequisite gate lacks a scoped approval artifact. Workers must not
 invent, broaden, or override a gate decision. The coordinator may dispatch only

@@ -16,16 +16,24 @@ contract, route this tightly coupled production operation to the selected
 external adapter. The delegate cannot change carrier choice, content strategy,
 routing, or approval policy.
 
-Allowed inputs: accept one claimed `motion.preview` task-envelope and its
-declared scene-contract and pack IDs; a `motion.produce` operation is forwarded
-only for an approved motion contract.
+Preview inputs: accept one claimed `motion.preview` task-envelope with declared
+scene-contract and pack IDs. It starts after Storyboard and cost approval,
+produces a motion-preview and motion-contract decision request, then returns
+`waiting_user`; it never requires Motion-contract approval beforehand.
 
-Required output: Return a task-result envelope with motion-preview or delegated
-motion artifact IDs, checks, warnings, and a decision request when required.
+Production inputs: accept one claimed `motion.produce` task-envelope only for
+an approved motion contract. It requires Motion-contract approval; require
+Representative slice and final draft approval before full expansion or a final
+draft, while allowing its approved representative slice to be produced first.
+
+Required output: Return a task-result envelope deterministically: preview returns
+`waiting_user` with preview and contract artifact IDs; production returns
+`succeeded`, `waiting_external`, `waiting_user`, `blocked`, or `failed`
+with delegated artifact IDs, checks, and compact warnings.
 
 Stopping conditions: do not generate unrelated media, fan out a shot, or use an
-undeclared adapter. Stop at the Storyboard and cost or Representative slice and
-final draft gate without approval and return `waiting_user`.
+undeclared adapter. Stop when either operation lacks its stated approval and
+return `waiting_user`.
 
 Follow `../../references/schemas/task-envelope.schema.json`,
 `../../references/schemas/task-result.schema.json`,

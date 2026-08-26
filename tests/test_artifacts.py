@@ -93,10 +93,52 @@ class ArtifactTests(unittest.TestCase):
                 "approval_id": approval_id,
                 "target_id": "style-v1",
                 "scope": "whole-project",
+                "decision": "approved",
                 "notes": "approved",
             },
             json.loads(approval_path.read_text(encoding="utf-8")),
         )
+
+    def test_approval_persists_the_explicit_gate_decision(self):
+        """Catches delegated or skipped gates being indistinguishable from approval."""
+        create_artifact(self.root, self.artifact)
+
+        for decision in ("delegated", "skipped"):
+            with self.subTest(decision=decision):
+                approval_id = approve_artifact(
+                    self.root,
+                    "style-v1",
+                    "whole-project",
+                    f"user {decision} the gate",
+                    decision=decision,
+                )
+
+                approval = json.loads(
+                    (self.root / "approvals" / f"{approval_id}.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(decision, approval["decision"])
+
+    def test_approval_rejects_an_unknown_gate_decision(self):
+        """Catches records that violate the persisted approval decision enum."""
+        create_artifact(self.root, self.artifact)
+
+        with self.assertRaises(ValueError):
+            approve_artifact(
+                self.root,
+                "style-v1",
+                "whole-project",
+                "not a durable gate outcome",
+                decision="pending",
+            )
+
+        with self.assertRaises(ValueError):
+            approve_artifact(
+                self.root,
+                "style-v1",
+                "whole-project",
+                "not a schema decision",
+                decision=["approved"],
+            )
 
     def test_approval_serialization_failure_leaves_no_partial_file(self):
         """Catches approval publication beginning before its JSON is complete."""

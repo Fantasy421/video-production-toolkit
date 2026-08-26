@@ -19,6 +19,7 @@ ARTIFACT_REQUIRED_KEYS = (
     "path",
 )
 ARTIFACT_STATUSES = {"draft", "approved", "stale", "superseded", "invalid"}
+APPROVAL_DECISIONS = {"approved", "delegated", "skipped"}
 
 
 def create_artifact(root: Path, artifact: dict[str, Any]) -> Path:
@@ -48,7 +49,13 @@ def create_artifact(root: Path, artifact: dict[str, Any]) -> Path:
     return destination
 
 
-def approve_artifact(root: Path, target_id: str, scope: str, notes: str) -> str:
+def approve_artifact(
+    root: Path,
+    target_id: str,
+    scope: str,
+    notes: str,
+    decision: str = "approved",
+) -> str:
     """Create a durable approval record for an existing artifact."""
     root = Path(root)
     if target_id not in _artifact_paths_by_id(root / "artifacts"):
@@ -57,6 +64,8 @@ def approve_artifact(root: Path, target_id: str, scope: str, notes: str) -> str:
         raise ValueError("approval scope must be a non-empty string")
     if not isinstance(notes, str):
         raise ValueError("approval notes must be a string")
+    if not isinstance(decision, str) or decision not in APPROVAL_DECISIONS:
+        raise ValueError("approval decision is not recognized")
 
     approval_id = f"approval-{uuid4().hex}"
     approval_path = root / "approvals" / f"{approval_id}.json"
@@ -64,6 +73,7 @@ def approve_artifact(root: Path, target_id: str, scope: str, notes: str) -> str:
         "approval_id": approval_id,
         "target_id": target_id,
         "scope": scope,
+        "decision": decision,
         "notes": notes,
     }
     payload = _serialize_json(approval)

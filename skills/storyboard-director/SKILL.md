@@ -14,12 +14,15 @@ Owned capability: `storyboard.plan`
 Allowed inputs: accept only one claimed task-envelope with capability
 `storyboard.plan` and its declared beat, style, layout, and registry references.
 
-Required output: Return a task-result envelope with storyboard and scene
-contract IDs, checks, warnings, and the Storyboard and cost decision request.
+Required output: Return a task-result envelope with storyboard, scene-contract,
+and cost artifact IDs, checks, warnings, and the Storyboard and cost decision
+request.
 
 Stopping conditions: stop when a beat lacks exactly one primary carrier or has
 more than one secondary layer; request a revised contract. Stop for a missing
-Visual direction or Storyboard and cost approval and return `waiting_user`.
+Visual direction approval and return `waiting_user`. It must produce the
+storyboard and cost artifact, then return `waiting_user` to request Storyboard and
+cost approval; do not require that approval before producing its request.
 
 Follow `../../references/schemas/task-envelope.schema.json`,
 `../../references/schemas/task-result.schema.json`,

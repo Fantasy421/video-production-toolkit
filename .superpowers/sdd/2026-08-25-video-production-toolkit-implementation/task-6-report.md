@@ -30,6 +30,22 @@ skill-contract and package tests passed.
 ## Self-review
 
 All child entrypoints are below 250 English words (the longest is
-`motion-director` at 174 words). The coordinator contains no media-generation
+`motion-director` at 230 words). The coordinator contains no media-generation
 instruction and external providers are explicitly barred from overriding
 routing or approval policy.
+
+## Review fix round 1
+
+- Added the persisted approval decision enum (approved, delegated, skipped) to
+  the schema and approval writer. Existing callers retain the prior
+  four-argument API and now durably receive decision: approved.
+- Made storyboard planning require the prior Visual direction approval, then
+  return waiting_user with its newly created storyboard-and-cost decision; it
+  no longer requires its own yet-to-be-created approval.
+- Split motion preview and production contracts. Preview starts after Storyboard
+  and cost approval, creates the preview plus motion-contract request, and
+  waits. Production requires the scoped Motion-contract approval and applies
+  the representative-slice/final-draft gate only before expansion or final
+  drafting.
+- Added runtime and static regression tests. Fresh verification: 67 tests pass,
+  Python compilation passes, and the package validator reports package valid.
