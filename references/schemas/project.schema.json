@@ -7,6 +7,7 @@
     "schema_version": {"const": 1},
     "project_id": {"type": "string", "minLength": 1},
     "workflow": {"type": "string", "minLength": 1},
+    "active_timeline_id": {"type": "string", "minLength": 1},
     "phase": {
       "enum": [
         "initialized",

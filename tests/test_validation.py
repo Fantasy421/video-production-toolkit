@@ -12,8 +12,10 @@ class ValidationTests(unittest.TestCase):
         self.root = Path(self.folder.name)
         (self.root / "artifacts" / "timeline").mkdir(parents=True)
         (self.root / "artifacts" / "scene-media").mkdir(parents=True)
+        (self.root / "artifacts" / "scene-contract").mkdir(parents=True)
         (self.root / "timeline").mkdir()
         (self.root / "media").mkdir()
+        (self.root / "contracts").mkdir()
         (self.root / "approvals").mkdir()
         (self.root / "media" / "scene-S01.mp4").write_bytes(b"preview")
         (self.root / "timeline" / "editable.project").write_text("saved", encoding="utf-8")
@@ -30,6 +32,7 @@ class ValidationTests(unittest.TestCase):
                                 {
                                     "scene_id": "S01",
                                     "artifact_id": "scene-S01-v1",
+                                    "contract_id": "scene-contract-S01-v1",
                                     "start_ms": 0,
                                     "end_ms": 10_000,
                                 }
@@ -50,13 +53,29 @@ class ValidationTests(unittest.TestCase):
         self.write_artifact(
             "scene-S01-v1", "scene-media", 1, "approved", "media/scene-S01.mp4"
         )
+        (self.root / "contracts" / "S01.json").write_text(
+            json.dumps(
+                {
+                    "scene_id": "S01",
+                    "semantic_beats": [{"beat_id": "B01", "primary_carrier": "Scene"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.write_artifact(
+            "scene-contract-S01-v1",
+            "scene-contract",
+            1,
+            "approved",
+            "contracts/S01.json",
+        )
         self.write_artifact(
             "timeline-v1",
             "timeline",
             1,
             "approved",
             "timeline/timeline-v1.json",
-            parents=["scene-S01-v1"],
+            parents=["scene-S01-v1", "scene-contract-S01-v1"],
         )
         (self.root / "approvals" / "approval-final.json").write_text(
             json.dumps(
@@ -145,6 +164,70 @@ class ValidationTests(unittest.TestCase):
         result = validate_project(self.root)
 
         self.assertIn("unsafe-artifact-path", {item["code"] for item in result["errors"]})
+
+    def test_malformed_mixed_timing_emits_an_issue_without_crashing(self):
+        timeline_path = self.root / "timeline" / "timeline-v1.json"
+        timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
+        timeline["tracks"][0]["clips"].append(
+            {"scene_id": "S02", "start_ms": "bad", "end_ms": 10_000}
+        )
+        timeline_path.write_text(json.dumps(timeline), encoding="utf-8")
+
+        result = validate_project(self.root)
+
+        self.assertIn("invalid-timeline-clip", {item["code"] for item in result["errors"]})
+
+    def test_artifact_parent_cycle_is_an_error(self):
+        scene_path = self.root / "artifacts" / "scene-media" / "scene-S01-v1.json"
+        scene = json.loads(scene_path.read_text(encoding="utf-8"))
+        scene["parents"] = ["timeline-v1"]
+        scene_path.write_text(json.dumps(scene), encoding="utf-8")
+
+        result = validate_project(self.root)
+
+        self.assertIn("artifact-parent-cycle", {item["code"] for item in result["errors"]})
+
+    def test_tracks_require_one_primary_and_zero_primary_tracks_still_check_gaps(self):
+        timeline_path = self.root / "timeline" / "timeline-v1.json"
+        timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
+        timeline["tracks"][0]["primary"] = False
+        timeline["tracks"][0]["clips"][0]["end_ms"] = 9_000
+        timeline_path.write_text(json.dumps(timeline), encoding="utf-8")
+
+        result = validate_project(self.root)
+
+        codes = {item["code"] for item in result["errors"]}
+        self.assertIn("invalid-primary-track-count", codes)
+        self.assertIn("timeline-gap", codes)
+
+    def test_tracks_reject_multiple_primary_definitions(self):
+        timeline_path = self.root / "timeline" / "timeline-v1.json"
+        timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
+        timeline["tracks"].append(
+            {"id": "second-primary", "primary": True, "clips": []}
+        )
+        timeline_path.write_text(json.dumps(timeline), encoding="utf-8")
+
+        result = validate_project(self.root)
+
+        self.assertIn("invalid-primary-track-count", {item["code"] for item in result["errors"]})
+
+    def test_active_clips_require_a_contract_and_its_beat_coverage(self):
+        timeline_path = self.root / "timeline" / "timeline-v1.json"
+        timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
+        timeline["tracks"][0]["clips"][0].pop("contract_id")
+        timeline_path.write_text(json.dumps(timeline), encoding="utf-8")
+
+        missing_result = validate_project(self.root)
+        self.assertIn("missing-contract-reference", {item["code"] for item in missing_result["errors"]})
+
+        timeline["tracks"][0]["clips"][0]["contract_id"] = "scene-contract-S01-v1"
+        timeline_path.write_text(json.dumps(timeline), encoding="utf-8")
+        contract_path = self.root / "contracts" / "S01.json"
+        contract_path.write_text(json.dumps({"scene_id": "S01", "semantic_beats": []}), encoding="utf-8")
+
+        coverage_result = validate_project(self.root)
+        self.assertIn("missing-contract-coverage", {item["code"] for item in coverage_result["errors"]})
 
 
 if __name__ == "__main__":

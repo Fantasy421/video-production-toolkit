@@ -5,14 +5,16 @@ import argparse
 import html
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Optional
+from uuid import uuid4
 
 try:
-    from scripts.toolkit.validation import validate_project
+    from scripts.toolkit.validation import resolve_active_timeline, validate_project
 except ModuleNotFoundError:
-    from toolkit.validation import validate_project
+    from toolkit.validation import resolve_active_timeline, validate_project
 
 
 PREVIEW_SUFFIXES = {".html", ".htm", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".webm", ".wav", ".mp3"}
@@ -33,10 +35,14 @@ def build_review_pack(root: Path, output: Path) -> Path:
         output.relative_to(root)
     except ValueError:
         raise ValueError("review pack output must remain inside the project") from None
-    validation = validate_project(root)
     output.mkdir(parents=True, exist_ok=True)
-    previews = _preview_links(root, output)
-    scenes = _scene_rows(root)
+    current = output / "current"
+    if current.exists() and not current.is_symlink():
+        raise ValueError("review pack current pointer must be a symlink")
+    validation = validate_project(root)
+    previews = _preview_links(root, current)
+    active_timeline = resolve_active_timeline(root)
+    scenes = _scene_rows(active_timeline[1]) if active_timeline is not None else []
     decision_requests = [{
         "gate": DECISION_GATE,
         "request": "Confirm the representative editable slice and final draft, or record a scoped revision.",
@@ -49,11 +55,7 @@ def build_review_pack(root: Path, output: Path) -> Path:
         "structural_errors": validation["errors"],
         "decision_requests": decision_requests,
     }
-    review_path = output / "review.json"
-    index_path = output / "index.html"
-    _write_text_atomically(review_path, json.dumps(review, ensure_ascii=False, indent=2) + "\n")
-    _write_text_atomically(index_path, _render_html(previews, scenes, validation, decision_requests))
-    return index_path
+    return _publish_bundle(output, review, _render_html(previews, scenes, validation, decision_requests))
 
 
 def _preview_links(root: Path, output: Path) -> list[dict[str, str]]:
@@ -72,23 +74,42 @@ def _preview_links(root: Path, output: Path) -> list[dict[str, str]]:
     return links
 
 
-def _scene_rows(root: Path) -> list[dict[str, Any]]:
+def _scene_rows(timeline: dict[str, Any]) -> list[dict[str, Any]]:
     rows: dict[str, dict[str, Any]] = {}
-    timeline_root = root / "timeline"
-    if not timeline_root.is_dir():
-        return []
-    for path in sorted(timeline_root.glob("*.json")):
-        timeline = _read_json(path)
-        if not isinstance(timeline, dict):
+    tracks = timeline.get("tracks", [])
+    clips = timeline.get("clips", []) if isinstance(timeline.get("clips"), list) else [clip for track in tracks if isinstance(track, dict) for clip in track.get("clips", []) if isinstance(clip, dict)]
+    for clip in clips:
+        if not isinstance(clip, dict) or not isinstance(clip.get("scene_id"), str) or not clip["scene_id"]:
             continue
-        tracks = timeline.get("tracks", [])
-        clips = timeline.get("clips", []) if isinstance(timeline.get("clips"), list) else [clip for track in tracks if isinstance(track, dict) for clip in track.get("clips", []) if isinstance(clip, dict)]
-        for clip in clips:
-            if not isinstance(clip, dict) or not isinstance(clip.get("scene_id"), str) or not clip["scene_id"]:
-                continue
-            scene_id = clip["scene_id"]
-            rows[scene_id] = {"scene_id": scene_id, "start_ms": clip.get("start_ms"), "end_ms": clip.get("end_ms")}
+        scene_id = clip["scene_id"]
+        rows[scene_id] = {"scene_id": scene_id, "start_ms": clip.get("start_ms"), "end_ms": clip.get("end_ms")}
     return [rows[scene_id] for scene_id in sorted(rows)]
+
+
+def _publish_bundle(output: Path, review: dict[str, Any], rendered_html: str) -> Path:
+    """Publish an all-or-nothing bundle through an atomic ``current`` pointer."""
+    bundles = output / ".bundles"
+    bundles.mkdir(exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix=".stage-", dir=bundles))
+    generation = bundles / uuid4().hex
+    pointer = output / "current"
+    next_pointer = output / f".current-{uuid4().hex}"
+    published = False
+    try:
+        _write_text_atomically(stage / "review.json", json.dumps(review, ensure_ascii=False, indent=2) + "\n")
+        _write_text_atomically(stage / "index.html", rendered_html)
+        stage.replace(generation)
+        next_pointer.symlink_to(generation.relative_to(output))
+        os.replace(next_pointer, pointer)
+        published = True
+        return pointer / "index.html"
+    finally:
+        next_pointer.unlink(missing_ok=True)
+        if not published:
+            if generation.exists():
+                shutil.rmtree(generation)
+            elif stage.exists():
+                shutil.rmtree(stage)
 
 
 def _render_html(previews: list[dict[str, str]], scenes: list[dict[str, Any]], validation: dict[str, list[dict[str, Any]]], decision_requests: list[dict[str, str]]) -> str:

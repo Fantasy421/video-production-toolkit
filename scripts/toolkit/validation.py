@@ -35,8 +35,9 @@ def validate_project(root: Path) -> dict[str, list[dict[str, Any]]]:
     approvals = _read_approvals(root, errors)
     _check_artifact_graph(root, artifacts, errors)
     _check_tasks(root, artifacts, errors)
-    timelines = _read_timelines(root, artifacts, errors)
-    for timeline_id, timeline in timelines:
+    active_timeline = _resolve_active_timeline(root, project, artifacts, errors)
+    if active_timeline is not None:
+        timeline_id, timeline = active_timeline
         _check_timeline(root, timeline_id, timeline, artifacts, errors, warnings)
     _check_required_approvals(project, artifacts, approvals, errors)
     return {"errors": _sorted_issues(errors), "warnings": _sorted_issues(warnings)}
@@ -49,10 +50,14 @@ def _read_project(root: Path, errors: list[dict[str, Any]]) -> dict[str, Any]:
         errors.append(_issue("missing-project-state", path="project.json"))
         return {}
     required = {"schema_version", "project_id", "workflow", "phase"}
-    if set(project) != required or project.get("schema_version") != 1:
+    allowed = required | {"active_timeline_id"}
+    if not required.issubset(project) or not set(project).issubset(allowed) or project.get("schema_version") != 1:
         errors.append(_issue("invalid-project-state", path="project.json"))
         return {}
     if not all(isinstance(project.get(key), str) and project[key] for key in ("project_id", "workflow", "phase")):
+        errors.append(_issue("invalid-project-state", path="project.json"))
+        return {}
+    if "active_timeline_id" in project and not _safe_component(project["active_timeline_id"]):
         errors.append(_issue("invalid-project-state", path="project.json"))
         return {}
     return project
@@ -132,6 +137,31 @@ def _check_artifact_graph(root: Path, artifacts: dict[str, dict[str, Any]], erro
             errors.append(_issue("unsafe-artifact-path", artifact_id=artifact_id))
         elif not source.is_file():
             errors.append(_issue("missing-artifact-file", artifact_id=artifact_id, path=artifact["path"]))
+    _check_artifact_parent_cycles(artifacts, errors)
+
+
+def _check_artifact_parent_cycles(artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]]) -> None:
+    visited: set[str] = set()
+    visiting: list[str] = []
+    cycle_members: set[str] = set()
+
+    def visit(artifact_id: str) -> None:
+        if artifact_id in visited:
+            return
+        if artifact_id in visiting:
+            cycle_members.update(visiting[visiting.index(artifact_id):])
+            return
+        visiting.append(artifact_id)
+        for parent_id in artifacts[artifact_id]["parents"]:
+            if parent_id in artifacts:
+                visit(parent_id)
+        visiting.pop()
+        visited.add(artifact_id)
+
+    for artifact_id in sorted(artifacts):
+        visit(artifact_id)
+    for artifact_id in sorted(cycle_members):
+        errors.append(_issue("artifact-parent-cycle", artifact_id=artifact_id))
 
 
 def _check_tasks(root: Path, artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]]) -> None:
@@ -164,30 +194,42 @@ def _valid_task_envelope(envelope: dict[str, Any]) -> bool:
     return isinstance(envelope.get("constraints"), dict)
 
 
-def _read_timelines(root: Path, artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
-    records: list[tuple[str, dict[str, Any]]] = []
-    seen_paths: set[Path] = set()
+def resolve_active_timeline(root: Path) -> Optional[tuple[str, dict[str, Any]]]:
+    """Resolve the one approved, fresh timeline referenced by persisted state."""
+    root = Path(root).resolve()
+    ignored: list[dict[str, Any]] = []
+    project = _read_project(root, ignored)
+    artifacts = _read_artifacts(root, ignored)
+    return _resolve_active_timeline(root, project, artifacts, ignored)
+
+
+def _resolve_active_timeline(root: Path, project: dict[str, Any], artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]]) -> Optional[tuple[str, dict[str, Any]]]:
+    preferred_id = project.get("active_timeline_id")
+    candidates = []
     for artifact in artifacts.values():
         if artifact["type"] != "timeline" or artifact["status"] != "approved":
             continue
-        source = _safe_project_path(root, artifact["path"])
-        if source is None or source in seen_paths:
+        if _has_newer_approved_lineage(artifact, artifacts):
             continue
-        seen_paths.add(source)
-        timeline = _read_json_object(source)
+        source = _safe_project_path(root, artifact["path"])
+        timeline = _read_json_object(source) if source is not None else None
         if timeline is None:
             errors.append(_issue("invalid-timeline", artifact_id=artifact["artifact_id"]))
-        else:
-            records.append((artifact["artifact_id"], timeline))
-    if records:
-        return records
-    timeline_root = root / "timeline"
-    if timeline_root.is_dir():
-        for source in sorted(timeline_root.glob("*.json")):
-            timeline = _read_json_object(source)
-            if timeline is not None:
-                records.append((source.stem, timeline))
-    return records
+            continue
+        candidates.append((artifact["artifact_id"], timeline))
+    if isinstance(preferred_id, str) and preferred_id:
+        selected = [candidate for candidate in candidates if candidate[0] == preferred_id]
+        if len(selected) == 1:
+            return selected[0]
+        errors.append(_issue("invalid-active-timeline-reference", artifact_id=preferred_id))
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        errors.append(_issue("missing-active-timeline"))
+    else:
+        errors.append(_issue("ambiguous-active-timeline", artifact_ids=sorted(candidate[0] for candidate in candidates)))
+    return None
 
 
 def _check_timeline(root: Path, timeline_id: str, timeline: dict[str, Any], artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]], warnings: list[dict[str, Any]]) -> None:
@@ -202,8 +244,11 @@ def _check_timeline(root: Path, timeline_id: str, timeline: dict[str, Any], arti
     tracks = _timeline_tracks(timeline)
     if not tracks:
         errors.append(_issue("missing-timeline-tracks", timeline_id=timeline_id))
+    primary_count = sum(1 for _, primary, _ in tracks if primary)
+    if primary_count != 1:
+        errors.append(_issue("invalid-primary-track-count", count=primary_count, timeline_id=timeline_id))
     for track_id, primary, clips in tracks:
-        _check_track(timeline_id, track_id, primary, clips, duration, artifacts, errors, warnings)
+        _check_track(timeline_id, track_id, primary or primary_count != 1, clips, duration, artifacts, errors, warnings)
     _check_captions(timeline_id, timeline.get("captions", []), duration, errors)
     _check_contracts(root, timeline_id, timeline, artifacts, errors)
     _check_demo_lifecycle(timeline_id, timeline, errors)
@@ -227,13 +272,17 @@ def _timeline_tracks(timeline: dict[str, Any]) -> list[tuple[str, bool, list[dic
 
 
 def _check_track(timeline_id: str, track_id: str, primary: bool, clips: list[dict[str, Any]], duration: Union[int, float], artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]], warnings: list[dict[str, Any]]) -> None:
-    ordered = sorted(clips, key=lambda clip: (clip.get("start_ms", -1), clip.get("end_ms", -1)))
-    previous_end = 0
-    for clip in ordered:
+    valid_clips = []
+    for clip in clips:
         start, end = clip.get("start_ms"), clip.get("end_ms")
         if not _duration(start) or not _duration(end) or start < 0 or end <= start or end > duration:
             errors.append(_issue("invalid-timeline-clip", timeline_id=timeline_id, track_id=track_id))
             continue
+        valid_clips.append(clip)
+    ordered = sorted(valid_clips, key=lambda clip: (clip["start_ms"], clip["end_ms"]))
+    previous_end = 0
+    for clip in ordered:
+        start, end = clip.get("start_ms"), clip.get("end_ms")
         artifact_id = clip.get("artifact_id")
         if isinstance(artifact_id, str) and artifact_id:
             artifact = artifacts.get(artifact_id)
@@ -272,12 +321,14 @@ def _check_captions(timeline_id: str, captions: Any, duration: Union[int, float]
 
 
 def _check_contracts(root: Path, timeline_id: str, timeline: dict[str, Any], artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]]) -> None:
-    referenced = {
-        clip["contract_id"]
-        for _, _, clips in _timeline_tracks(timeline)
-        for clip in clips
-        if isinstance(clip.get("contract_id"), str) and clip["contract_id"]
-    }
+    referenced: dict[str, list[dict[str, Any]]] = {}
+    for _, _, clips in _timeline_tracks(timeline):
+        for clip in clips:
+            contract_id = clip.get("contract_id")
+            if not isinstance(contract_id, str) or not contract_id:
+                errors.append(_issue("missing-contract-reference", scene_id=clip.get("scene_id", "unknown"), timeline_id=timeline_id))
+                continue
+            referenced.setdefault(contract_id, []).append(clip)
     for contract_id in sorted(referenced):
         contract = artifacts.get(contract_id)
         if contract is None or contract["type"] != "scene-contract" or contract["status"] != "approved":
@@ -286,8 +337,17 @@ def _check_contracts(root: Path, timeline_id: str, timeline: dict[str, Any], art
         source = _safe_project_path(root, contract["path"])
         payload = _read_json_object(source) if source is not None else None
         if payload is None:
+            errors.append(_issue("invalid-contract-coverage", contract_id=contract_id, timeline_id=timeline_id))
             continue
-        for beat in _object_list(payload.get("semantic_beats", [])):
+        beats = _object_list(payload.get("semantic_beats", []))
+        if not beats:
+            errors.append(_issue("missing-contract-coverage", contract_id=contract_id, timeline_id=timeline_id))
+            continue
+        for clip in referenced[contract_id]:
+            scene_id = clip.get("scene_id")
+            if isinstance(scene_id, str) and scene_id and payload.get("scene_id") != scene_id:
+                errors.append(_issue("contract-scene-mismatch", contract_id=contract_id, scene_id=scene_id, timeline_id=timeline_id))
+        for beat in beats:
             carrier = beat.get("primary_carrier")
             secondary = beat.get("secondary_layer", beat.get("secondary_layers", []))
             layers = secondary if isinstance(secondary, list) else [secondary] if secondary else []
