@@ -21,6 +21,7 @@ from .invalidation import invalidated_artifact_ids
 from .image_context import validate_declared_image_inputs, validate_image_task_constraints
 from .packs import validate_layout_pack, validate_style_pack
 from .runtime_paths import project_path, project_root
+from .tasks import TASK_CAPABILITIES
 from .voice import validate_authoritative_voice_bundle
 
 
@@ -725,6 +726,8 @@ def _valid_task_envelope(envelope: dict[str, Any]) -> bool:
         return False
     if not all(isinstance(envelope.get(key), str) and envelope[key] for key in ("capability", "output_contract")):
         return False
+    if envelope["capability"] not in TASK_CAPABILITIES:
+        return False
     for field, nonempty in (("inputs", False), ("adapter_preferences", True)):
         value = envelope.get(field)
         if not isinstance(value, list) or (nonempty and not value) or len(value) != len(set(value)):
@@ -735,7 +738,9 @@ def _valid_task_envelope(envelope: dict[str, Any]) -> bool:
     if not isinstance(constraints, dict):
         return False
     try:
-        validate_image_task_constraints(constraints)
+        validate_image_task_constraints(
+            constraints, capability=envelope.get("capability")
+        )
     except ValueError:
         return False
     return True

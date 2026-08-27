@@ -982,6 +982,7 @@ class CoordinatorTests(unittest.TestCase):
                     "scene-S02-v1",
                     "media",
                     parents=["contract-S02-v1"],
+                    path="media/scene-S02-v1.mp4",
                     scene_id="S02",
                 ),
             )

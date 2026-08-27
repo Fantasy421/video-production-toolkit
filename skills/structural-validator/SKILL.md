@@ -13,6 +13,11 @@ Owned capability: `structure.validate`
 
 Allowed inputs: accept only one claimed task-envelope with capability
 `structure.validate` and declared timeline, contract, and project references.
+Every envelope declares exactly one mode: `image_operation: structure-only`
+for metadata-only validation, or `image_operation: image-inspect` for bounded
+inspection. `image_operation: image-inspect` requires the closed `image_context`;
+`structure-only` must not include image context. The discriminator is never
+omitted or inferred from input paths or output contracts.
 
 All image inspection and image QA are isolated child operations. Each one handles exactly one Scene Contract or one character-asset batch with a closed
 `image_context`. Enforce `allowed_image_artifact_ids`,

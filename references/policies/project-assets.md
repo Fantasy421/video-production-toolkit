@@ -77,8 +77,11 @@ Image generation, editing, and inspection run only in an isolated child task
 handling exactly one Scene Contract or one character-asset batch. The closed
 task context declares exact image Artifact IDs, exact Character Pack IDs, a
 hard historical-scene ban, a zero-or-one review-preview limit, and a positive
-serialized-result byte budget. Workers must not discover neighboring or undeclared image
-paths.
+serialized-result byte budget. That budget covers the entire persisted
+task-result envelope, including checks, warnings, errors, decision requests,
+and the compact image handoff. Every field is recursively scrubbed for image
+URLs, data URLs, base64 or binary payloads, and prompt history. Workers must not
+discover neighboring or undeclared image paths.
 
 Historical access requires an exact declaration, approved status, and one
 independent character class: model sheet, turnaround, clothing reference,

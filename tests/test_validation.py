@@ -821,7 +821,7 @@ class ValidationTests(unittest.TestCase):
                     "adapter_preferences": ["chatcut"],
                     "output_contract": "task-result-v1",
                     "constraints": {
-                        "image_operation": "inspect",
+                        "image_operation": "image-inspect",
                         "image_context": None,
                     },
                 }
@@ -832,6 +832,88 @@ class ValidationTests(unittest.TestCase):
         result = validate_project(self.root)
 
         self.assertIn("invalid-task-envelope", {item["code"] for item in result["errors"]})
+
+    def test_validator_requires_exact_structure_validation_image_operation(self):
+        """Catches persisted structure validators bypassing the inspection discriminator."""
+        tasks = self.root / "tasks"
+        tasks.mkdir()
+        records = (
+            ("structure-mode-missing", {}),
+            ("structure-mode-legacy", {"image_operation": "inspect"}),
+            (
+                "structure-only-with-context",
+                {
+                    "image_operation": "structure-only",
+                    "image_context": {
+                        "allowed_image_artifact_ids": [],
+                        "allowed_character_pack_ids": [],
+                        "forbidden_scene_image_access": True,
+                        "max_review_previews": 0,
+                        "context_budget": 1024,
+                    },
+                },
+            ),
+        )
+        for task_id, constraints in records:
+            (tasks / f"{task_id}.json").write_text(
+                json.dumps(
+                    {
+                        "task_id": task_id,
+                        "capability": "structure.validate",
+                        "inputs": [],
+                        "adapter_preferences": ["chatcut"],
+                        "output_contract": "task-result-v1",
+                        "constraints": constraints,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        result = validate_project(self.root)
+
+        invalid_paths = {
+            item["path"]
+            for item in result["errors"]
+            if item["code"] == "invalid-task-envelope"
+        }
+        self.assertEqual(
+            {
+                "tasks/structure-mode-missing.json",
+                "tasks/structure-mode-legacy.json",
+                "tasks/structure-only-with-context.json",
+            },
+            invalid_paths,
+        )
+
+    def test_validator_rejects_unknown_task_capability(self):
+        """Catches structural validation accepting a route no child skill owns."""
+        tasks = self.root / "tasks"
+        tasks.mkdir()
+        task_id = "unknown-capability"
+        (tasks / f"{task_id}.json").write_text(
+            json.dumps(
+                {
+                    "task_id": task_id,
+                    "capability": "unknown.route",
+                    "inputs": [],
+                    "adapter_preferences": ["chatcut"],
+                    "output_contract": "task-result-v1",
+                    "constraints": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = validate_project(self.root)
+
+        self.assertIn(
+            "tasks/unknown-capability.json",
+            {
+                item["path"]
+                for item in result["errors"]
+                if item["code"] == "invalid-task-envelope"
+            },
+        )
 
     def test_malformed_mixed_timing_emits_an_issue_without_crashing(self):
         timeline_path = self.root / "timeline" / "timeline-v1.json"

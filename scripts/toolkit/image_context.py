@@ -64,6 +64,7 @@ IMAGE_FILE_SUFFIXES = frozenset(
         ".ico",
         ".jpeg",
         ".jpg",
+        ".jxl",
         ".png",
         ".svg",
         ".tif",
@@ -72,8 +73,57 @@ IMAGE_FILE_SUFFIXES = frozenset(
     }
 )
 MEDIA_KINDS = frozenset({"audio", "data", "document", "image", "video"})
+MEDIA_SUFFIX_RULES = {
+    ".aac": ("audio", frozenset({"audio/aac"})),
+    ".avif": ("image", frozenset({"image/avif"})),
+    ".bmp": ("image", frozenset({"image/bmp"})),
+    ".flac": ("audio", frozenset({"audio/flac"})),
+    ".gif": ("image", frozenset({"image/gif"})),
+    ".heic": ("image", frozenset({"image/heic"})),
+    ".heif": ("image", frozenset({"image/heif"})),
+    ".ico": (
+        "image",
+        frozenset({"image/vnd.microsoft.icon", "image/x-icon"}),
+    ),
+    ".jpeg": ("image", frozenset({"image/jpeg"})),
+    ".jpg": ("image", frozenset({"image/jpeg"})),
+    ".jxl": ("image", frozenset({"image/jxl"})),
+    ".m4a": ("audio", frozenset({"audio/mp4", "audio/x-m4a"})),
+    ".mov": ("video", frozenset({"video/quicktime"})),
+    ".mp3": ("audio", frozenset({"audio/mpeg"})),
+    ".mp4": ("video", frozenset({"video/mp4"})),
+    ".png": ("image", frozenset({"image/png"})),
+    ".svg": ("image", frozenset({"image/svg+xml"})),
+    ".tif": ("image", frozenset({"image/tiff"})),
+    ".tiff": ("image", frozenset({"image/tiff"})),
+    ".wav": (
+        "audio",
+        frozenset({"audio/wav", "audio/wave", "audio/x-wav"}),
+    ),
+    ".webm": ("video", frozenset({"video/webm"})),
+    ".webp": ("image", frozenset({"image/webp"})),
+}
+KNOWN_MIME_SUFFIXES = {
+    mime_type: frozenset(
+        suffix
+        for suffix, (_, mime_types) in MEDIA_SUFFIX_RULES.items()
+        if mime_type in mime_types
+    )
+    for _, mime_types in MEDIA_SUFFIX_RULES.values()
+    for mime_type in mime_types
+}
 MIME_TYPE_RE = re.compile(
     r"[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*"
+)
+URI_SCHEME_RE = re.compile(r"[a-z][a-z0-9+.-]*://", re.IGNORECASE)
+DATA_IMAGE_URL_RE = re.compile(r"data\s*:\s*image\s*/", re.IGNORECASE)
+BASE64_LABEL_RE = re.compile(
+    r"(?:^|[^a-z0-9])base64\s*(?::|=|,)", re.IGNORECASE
+)
+BASE64_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9+/=])"
+    r"([A-Za-z0-9+/]{4,}(?:[ \t\r\n]+[A-Za-z0-9+/]{4,})*={0,2})"
+    r"(?![A-Za-z0-9+/=])"
 )
 PROMOTED_CHARACTER_ASSET_KINDS = frozenset(
     {
@@ -249,20 +299,59 @@ def compact_image_result(
     return compact
 
 
+def validate_image_result_envelope(
+    context: Mapping[str, Any], result: Mapping[str, Any]
+) -> None:
+    """Reject leaks or budget overflow anywhere in a persisted image-task result."""
+    normalized_context = validate_image_context(context)
+    if not isinstance(result, Mapping):
+        raise ValueError("image task result must be an object")
+    _reject_leaking_content(result)
+    try:
+        serialized = json.dumps(
+            result,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise ValueError("image task result must be compact JSON metadata") from error
+    if len(serialized) > normalized_context["context_budget"]:
+        raise ValueError("image task result exceeds the declared context budget")
+
+
 def validate_image_task_constraints(
     constraints: Mapping[str, Any],
+    *,
+    capability: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     """Validate conditional image authority without changing non-image tasks."""
     if not isinstance(constraints, Mapping):
         raise ValueError("constraints must be an object")
     has_operation = "image_operation" in constraints
     has_context = "image_context" in constraints
+    if capability == "structure.validate" and not has_operation:
+        raise ValueError("structure.validate requires image_operation")
     if not has_operation and not has_context:
         return None
     if not has_operation:
         raise ValueError("image_context requires image_operation")
-    if constraints["image_operation"] not in {"generate", "inspect"}:
-        raise ValueError("image_operation must declare generate or inspect")
+    operation = constraints["image_operation"]
+    if operation not in {"generate", "structure-only", "image-inspect"}:
+        raise ValueError(
+            "image_operation must declare generate, structure-only, or image-inspect"
+        )
+    if capability == "structure.validate" and operation not in {
+        "structure-only",
+        "image-inspect",
+    }:
+        raise ValueError(
+            "structure.validate image_operation must be structure-only or image-inspect"
+        )
+    if operation == "structure-only":
+        if has_context:
+            raise ValueError("structure-only must not include image_context")
+        return None
     if not has_context or constraints["image_context"] is None:
         raise ValueError("declared image_operation requires image_context")
     return validate_image_context(constraints["image_context"])
@@ -274,7 +363,9 @@ def validate_declared_image_inputs(
     """Enforce exact image authority for every image-bearing task input."""
     if not isinstance(envelope, Mapping) or not isinstance(artifacts, Mapping):
         raise ValueError("image task authorization requires envelope and artifact maps")
-    context = validate_image_task_constraints(envelope.get("constraints"))
+    context = validate_image_task_constraints(
+        envelope.get("constraints"), capability=envelope.get("capability")
+    )
     inputs = envelope.get("inputs")
     if not isinstance(inputs, list) or not all(_safe_id(item) for item in inputs):
         raise ValueError("image task inputs must contain safe artifact IDs")
@@ -282,7 +373,7 @@ def validate_declared_image_inputs(
     for artifact_id in inputs:
         artifact = artifacts.get(artifact_id)
         if artifact is not None:
-            _validate_canonical_media_kind(artifact)
+            validate_media_artifact_metadata(artifact)
     visible_image_ids = {
         artifact_id
         for artifact_id in inputs
@@ -385,7 +476,8 @@ def artifact_is_image_bearing(artifact: Mapping[str, Any]) -> bool:
     return isinstance(path, str) and PurePosixPath(path).suffix.lower() in IMAGE_FILE_SUFFIXES
 
 
-def _validate_canonical_media_kind(artifact: Mapping[str, Any]) -> None:
+def validate_media_artifact_metadata(artifact: Mapping[str, Any]) -> None:
+    """Require declared media kind, MIME, and known suffix metadata to agree."""
     if artifact.get("type") != "media":
         return
     media_kind = artifact.get("media_kind")
@@ -409,12 +501,18 @@ def _validate_canonical_media_kind(artifact: Mapping[str, Any]) -> None:
     if mime_kind is not None and mime_kind != media_kind:
         raise ValueError("media_kind does not match mime_type")
     path = artifact.get("path")
-    if (
-        isinstance(path, str)
-        and PurePosixPath(path).suffix.lower() in IMAGE_FILE_SUFFIXES
-        and media_kind != "image"
-    ):
-        raise ValueError("media_kind conflicts with image suffix")
+    suffix = PurePosixPath(path).suffix.lower() if isinstance(path, str) else ""
+    suffix_rule = MEDIA_SUFFIX_RULES.get(suffix)
+    if suffix_rule is not None:
+        suffix_kind, suffix_mime_types = suffix_rule
+        if media_kind != suffix_kind:
+            raise ValueError("media_kind conflicts with media suffix")
+        if mime_type is not None and mime_type not in suffix_mime_types:
+            raise ValueError("mime_type conflicts with media suffix")
+    elif media_kind == "image" or mime_kind == "image":
+        raise ValueError("image media requires a recognized image extension")
+    if mime_type in KNOWN_MIME_SUFFIXES and suffix not in KNOWN_MIME_SUFFIXES[mime_type]:
+        raise ValueError("mime_type conflicts with media suffix")
 
 
 def validate_image_context(context: Mapping[str, Any]) -> dict[str, Any]:
@@ -577,7 +675,9 @@ def _reject_leaking_content(value: Any, *, key: str = "") -> None:
         compact_text = value.strip().lower()
         if (
             compact_text.startswith(("base64:", "binary:", "data:"))
-            or re.search(r"(?:^|\s)[a-z][a-z0-9+.-]*://", compact_text)
+            or URI_SCHEME_RE.search(compact_text)
+            or DATA_IMAGE_URL_RE.search(compact_text)
+            or BASE64_LABEL_RE.search(compact_text)
         ):
             raise ValueError("image result must not contain an image payload")
         if any(
@@ -585,11 +685,7 @@ def _reject_leaking_content(value: Any, *, key: str = "") -> None:
             for marker in ("prompt history", "prompt_history", "prompt iteration")
         ):
             raise ValueError("image result must not contain prompt history")
-        if (
-            len(value) >= 128
-            and len(value) % 4 == 0
-            and re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", value) is not None
-        ):
+        if _contains_base64_token(value):
             raise ValueError("image result must not contain an image payload")
     if normalized_key and (
         normalized_key == "path"
@@ -605,6 +701,32 @@ def _reject_leaking_content(value: Any, *, key: str = "") -> None:
     elif isinstance(value, (list, tuple)):
         for child in value:
             _reject_leaking_content(child)
+
+
+def _contains_base64_token(value: str) -> bool:
+    for match in BASE64_TOKEN_RE.finditer(value):
+        candidate = match.group(1)
+        chunks = re.split(r"\s+", candidate.strip())
+        payload_text = "".join(chunks)
+        if (
+            len(payload_text) >= 128
+            and len(payload_text) % 4 == 0
+            and len(set(payload_text.rstrip("="))) >= 4
+            and (
+                len(chunks) == 1
+                or (
+                    len(chunks) > 1
+                    and all(
+                        len(chunk) >= 32 and len(chunk) % 4 == 0
+                        for chunk in chunks[:-1]
+                    )
+                    and 4 <= len(chunks[-1]) <= len(chunks[-2])
+                    and len(chunks[-1]) % 4 == 0
+                )
+            )
+        ):
+            return True
+    return False
 
 
 def _project_path(value: Any) -> bool:

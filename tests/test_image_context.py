@@ -208,6 +208,49 @@ class ImageContextTests(unittest.TestCase):
             with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
                 compact_image_result(self.context(), result)
 
+    def test_compact_result_normalizes_urls_data_urls_and_wrapped_base64(self):
+        """Catches payload scanners that depend on leading text or uninterrupted base64."""
+        cases = (
+            {"summary": "preview=(https://example.invalid/review.png)"},
+            {"summary": "preview=https://example.invalid/review.png"},
+            {"summary": "note[payload=data:image/png;base64,\nAAEC]"},
+            {
+                "metadata": {
+                    "digest": (
+                        "QUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJD\n"
+                        "QUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJD"
+                    )
+                }
+            },
+            {
+                "summary": (
+                    'image_bytes="'
+                    "QUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJD"
+                    "QUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJD"
+                    '"'
+                )
+            },
+            {
+                "summary": (
+                    "```\n"
+                    "QUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJD"
+                    "QUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJD"
+                    "\n```"
+                )
+            },
+        )
+        for result in cases:
+            with self.subTest(result=result), self.assertRaisesRegex(
+                ValueError, "image payload"
+            ):
+                compact_image_result(self.context(), result)
+
+    def test_compact_result_does_not_treat_repeated_prose_as_base64(self):
+        """Catches an equal-length prose heuristic rejecting an ordinary summary."""
+        raw = {"summary": "normal " * 22}
+
+        self.assertEqual(raw, compact_image_result(self.context(), raw))
+
     def test_compact_result_rejects_unsafe_undeclared_paths_and_preview_overflow(self):
         """Catches path smuggling and multiple review renders in a compact handoff."""
         with self.assertRaisesRegex(ValueError, "undeclared path"):
@@ -291,6 +334,23 @@ class ImageSchemaTests(unittest.TestCase):
             )
         )
 
+        self.assertEqual(
+            {
+                "project.manage",
+                "narration.plan",
+                "visual.preview",
+                "voice.prepare",
+                "storyboard.plan",
+                "scene.produce",
+                "motion.preview",
+                "motion.produce",
+                "timeline.assemble",
+                "structure.validate",
+                "review.package",
+            },
+            set(envelope["properties"]["capability"]["enum"]),
+        )
+
         self.assertFalse(context["additionalProperties"])
         self.assertEqual(
             {
@@ -309,6 +369,32 @@ class ImageSchemaTests(unittest.TestCase):
         )
         self.assertNotIn("image_context", constraints.get("required", []))
         self.assertIn("allOf", constraints)
+        self.assertEqual(
+            {"generate", "structure-only", "image-inspect"},
+            set(constraints["properties"]["image_operation"]["enum"]),
+        )
+        structure_rule = next(
+            rule
+            for rule in envelope["allOf"]
+            if rule["if"]["properties"]["capability"].get("const")
+            == "structure.validate"
+        )
+        self.assertEqual(
+            ["image_operation"],
+            structure_rule["then"]["properties"]["constraints"]["required"],
+        )
+        structure_only_rule = next(
+            rule
+            for rule in constraints["allOf"]
+            if rule["if"].get("properties", {})
+            .get("image_operation", {})
+            .get("const")
+            == "structure-only"
+        )
+        self.assertEqual(
+            ["image_context"],
+            structure_only_rule["then"]["not"]["required"],
+        )
 
     def test_image_result_contract_is_optional_for_non_image_results(self):
         """Catches the compact image handoff breaking existing task-result records."""

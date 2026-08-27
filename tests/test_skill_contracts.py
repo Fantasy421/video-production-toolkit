@@ -108,6 +108,9 @@ class SkillContractTests(unittest.TestCase):
             self.assertIn("call `authorize_image_access`", text)
         self.assertIn("image generation", scene)
         self.assertIn("image inspection", validator)
+        self.assertIn("`image_operation: structure-only`", validator)
+        self.assertIn("`image_operation: image-inspect`", validator)
+        self.assertIn("image-inspect` requires the closed `image_context`", validator)
         self.assertIn("Aesthetic acceptance remains a user decision", validator)
 
     def test_visual_carrier_policy_has_all_carriers_and_density_limit(self):

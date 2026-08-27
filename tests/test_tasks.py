@@ -294,6 +294,18 @@ class TaskTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             complete_task(self.root, self.result_for(claim, unexpected=True))
 
+    def test_task_capability_is_a_closed_runtime_enum(self):
+        """Catches unknown worker routes being persisted as ordinary tasks."""
+        with self.assertRaisesRegex(ValueError, "capability"):
+            create_task(
+                self.root,
+                {
+                    **self.envelope,
+                    "task_id": "unknown-capability",
+                    "capability": "unknown.route",
+                },
+            )
+
     def test_image_operation_conditionally_requires_closed_context(self):
         """Catches image work starting without bounded immutable authority."""
         missing_context = {
@@ -301,7 +313,7 @@ class TaskTests(unittest.TestCase):
             "task_id": "image-inspect-without-context",
             "constraints": {
                 **self.envelope["constraints"],
-                "image_operation": "inspect",
+                "image_operation": "image-inspect",
             },
         }
         with self.assertRaisesRegex(ValueError, "image_context"):
@@ -323,12 +335,75 @@ class TaskTests(unittest.TestCase):
             "task_id": "null-image-context",
             "constraints": {
                 **self.envelope["constraints"],
-                "image_operation": "inspect",
+                "image_operation": "image-inspect",
                 "image_context": None,
             },
         }
         with self.assertRaisesRegex(ValueError, "image_context"):
             create_task(self.root, null_context)
+
+    def test_structure_validation_requires_an_exact_image_operation(self):
+        """Catches structural validation silently acquiring image-inspection authority."""
+        base = {
+            **self.envelope,
+            "capability": "structure.validate",
+        }
+        with self.assertRaisesRegex(ValueError, "image_operation"):
+            create_task(self.root, {**base, "task_id": "structure-mode-missing"})
+
+        legacy_inspect = {
+            **base,
+            "task_id": "structure-mode-legacy",
+            "constraints": {**base["constraints"], "image_operation": "inspect"},
+        }
+        with self.assertRaisesRegex(ValueError, "image_operation"):
+            create_task(self.root, legacy_inspect)
+
+        image_without_context = {
+            **base,
+            "task_id": "structure-image-without-context",
+            "constraints": {**base["constraints"], "image_operation": "image-inspect"},
+        }
+        with self.assertRaisesRegex(ValueError, "image_context"):
+            create_task(self.root, image_without_context)
+
+        structure_with_context = {
+            **base,
+            "task_id": "structure-only-with-context",
+            "constraints": {
+                **base["constraints"],
+                "image_operation": "structure-only",
+                "image_context": self.image_context(),
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "structure-only"):
+            create_task(self.root, structure_with_context)
+
+        structure_only = {
+            **base,
+            "task_id": "structure-only-valid",
+            "constraints": {**base["constraints"], "image_operation": "structure-only"},
+        }
+        self.assertEqual(
+            self.root / "tasks" / "structure-only-valid.json",
+            create_task(self.root, structure_only),
+        )
+
+        self.create_image_context_artifacts()
+        image_inspect = {
+            **base,
+            "task_id": "structure-image-valid",
+            "inputs": [*base["inputs"], "scene-S03-v1", "host-pack-v1"],
+            "constraints": {
+                **base["constraints"],
+                "image_operation": "image-inspect",
+                "image_context": self.image_context(),
+            },
+        }
+        self.assertEqual(
+            self.root / "tasks" / "structure-image-valid.json",
+            create_task(self.root, image_inspect),
+        )
 
     def test_create_and_claim_enforce_every_declared_image_access(self):
         """Catches metadata authorization existing only as an unused helper."""
@@ -339,7 +414,7 @@ class TaskTests(unittest.TestCase):
             "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
             "constraints": {
                 **self.envelope["constraints"],
-                "image_operation": "inspect",
+                "image_operation": "image-inspect",
                 "image_context": self.image_context(),
             },
         }
@@ -380,7 +455,7 @@ class TaskTests(unittest.TestCase):
             "inputs": inputs,
             "constraints": {
                 **self.envelope["constraints"],
-                "image_operation": "inspect",
+                "image_operation": "image-inspect",
                 "image_context": {
                     **self.image_context(),
                     "allowed_image_artifact_ids": [],
@@ -452,6 +527,58 @@ class TaskTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "canonical mime_type|image suffix"):
             create_task(self.root, conflicting)
 
+    def test_media_kind_mime_and_suffix_are_bidirectionally_consistent(self):
+        """Catches same-family MIME or unknown-image suffix relabeling."""
+        conflicts = (
+            ("png-as-mp4", "media/png-as-mp4.mp4", "image", "image/png"),
+            ("jpeg-as-png", "media/jpeg-as-png.png", "image", "image/jpeg"),
+            ("video-as-wav", "media/video-as-wav.wav", "video", "video/mp4"),
+            ("jxl-as-video", "media/jxl-as-video.jxl", "video", "video/mp4"),
+        )
+        for artifact_id, path, media_kind, mime_type in conflicts:
+            self.create_artifact(
+                artifact_id,
+                "media",
+                1,
+                path=path,
+                media_kind=media_kind,
+                mime_type=mime_type,
+                historical=False,
+            )
+            envelope = {
+                **self.envelope,
+                "task_id": f"task-{artifact_id}",
+                "inputs": [*self.envelope["inputs"], artifact_id],
+            }
+            with self.subTest(artifact_id=artifact_id), self.assertRaisesRegex(
+                ValueError, "suffix|extension"
+            ):
+                create_task(self.root, envelope)
+
+        valid = (
+            ("valid-video", "media/valid-video.mp4", "video", "video/mp4"),
+            ("valid-audio", "media/valid-audio.wav", "audio", "audio/wav"),
+        )
+        for artifact_id, path, media_kind, mime_type in valid:
+            self.create_artifact(
+                artifact_id,
+                "media",
+                1,
+                path=path,
+                media_kind=media_kind,
+                mime_type=mime_type,
+            )
+            envelope = {
+                **self.envelope,
+                "task_id": f"task-{artifact_id}",
+                "inputs": [*self.envelope["inputs"], artifact_id],
+            }
+            with self.subTest(artifact_id=artifact_id):
+                self.assertEqual(
+                    self.root / "tasks" / f"task-{artifact_id}.json",
+                    create_task(self.root, envelope),
+                )
+
     def test_image_result_requires_one_validated_compact_handoff(self):
         """Catches image payloads or absent handoffs crossing the task boundary."""
         self.create_image_context_artifacts()
@@ -461,7 +588,7 @@ class TaskTests(unittest.TestCase):
             "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
             "constraints": {
                 **self.envelope["constraints"],
-                "image_operation": "inspect",
+                "image_operation": "image-inspect",
                 "image_context": self.image_context(),
             },
         }
@@ -499,6 +626,168 @@ class TaskTests(unittest.TestCase):
             "completed",
             complete_task(self.root, {**result, "image_handoff": handoff}),
         )
+
+    def test_image_result_scrubs_the_entire_persisted_envelope(self):
+        """Catches coordinator-visible result fields bypassing image leak checks."""
+        self.create_image_context_artifacts()
+        leaks = (
+            ("checks", ["verified", "preview=(https://example.invalid/review.png)"]),
+            ("warnings", ["payload=data:image/png;base64,AAEC"]),
+            ("error", "prompt history: first, second"),
+            ("user_decision_request", "preview=https://example.invalid/review.png"),
+        )
+        for index, (field, value) in enumerate(leaks, 1):
+            task_id = f"image-result-leak-{index}"
+            envelope = {
+                **self.envelope,
+                "task_id": task_id,
+                "capability": "structure.validate",
+                "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
+                "constraints": {
+                    **self.envelope["constraints"],
+                    "image_operation": "image-inspect",
+                    "image_context": self.image_context(),
+                },
+            }
+            create_task(self.root, envelope)
+            claim = claim_task(self.root, task_id, "worker-a")
+            result = {
+                **self.result_for(claim),
+                "task_id": task_id,
+                "inputs": envelope["inputs"],
+                field: value,
+                "image_handoff": {
+                    "artifact_ids": ["motion-preview-S03-v2"],
+                    "paths": ["media/motion-preview-S03-v2.json"],
+                    "summary": "Structural image inspection complete.",
+                    "status": "succeeded",
+                },
+            }
+            with self.subTest(field=field), self.assertRaisesRegex(
+                ValueError, "image payload|prompt history"
+            ):
+                complete_task(self.root, result)
+
+    def test_image_result_budgets_the_full_persisted_envelope(self):
+        """Catches compact handoffs hiding an oversized coordinator result envelope."""
+        self.create_image_context_artifacts()
+        task_id = "image-result-full-budget"
+        envelope = {
+            **self.envelope,
+            "task_id": task_id,
+            "capability": "structure.validate",
+            "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
+            "constraints": {
+                **self.envelope["constraints"],
+                "image_operation": "image-inspect",
+                "image_context": {**self.image_context(), "context_budget": 512},
+            },
+        }
+        create_task(self.root, envelope)
+        claim = claim_task(self.root, task_id, "worker-a")
+        result = {
+            **self.result_for(claim),
+            "task_id": task_id,
+            "inputs": envelope["inputs"],
+            "checks": ["structural-check-" + "x" * 400],
+            "image_handoff": {
+                "artifact_ids": ["motion-preview-S03-v2"],
+                "paths": ["media/motion-preview-S03-v2.json"],
+                "summary": "Structural image inspection complete.",
+                "status": "succeeded",
+            },
+        }
+
+        with self.assertRaisesRegex(ValueError, "context budget"):
+            complete_task(self.root, result)
+
+    def test_completion_classifies_every_produced_artifact_against_the_operation(self):
+        """Catches image outputs or malformed media emerging from incompatible tasks."""
+        self.create_artifact(
+            "scene-image-output-v1",
+            "scene-image",
+            1,
+            path="media/scene-image-output-v1.png",
+            historical=False,
+            output_contract="motion-preview-v1",
+        )
+        non_image_scene = {
+            **self.envelope,
+            "task_id": "non-image-scene-output",
+            "capability": "scene.produce",
+            "constraints": {
+                **self.envelope["constraints"],
+                "visual_operation": "non-image",
+            },
+        }
+        create_task(self.root, non_image_scene)
+        non_image_claim = claim_task(self.root, non_image_scene["task_id"], "worker-a")
+        with self.assertRaisesRegex(ValueError, "image artifact|image operation|non-image"):
+            complete_task(
+                self.root,
+                {
+                    **self.result_for(non_image_claim),
+                    "task_id": non_image_scene["task_id"],
+                    "artifacts": ["scene-image-output-v1"],
+                },
+            )
+
+        self.create_artifact(
+            "malformed-media-output-v1",
+            "media",
+            1,
+            path="media/malformed-media-output-v1.wav",
+            media_kind="video",
+            mime_type="video/mp4",
+            output_contract="motion-preview-v1",
+        )
+        malformed_task = {**self.envelope, "task_id": "malformed-media-output"}
+        create_task(self.root, malformed_task)
+        malformed_claim = claim_task(self.root, malformed_task["task_id"], "worker-a")
+        with self.assertRaisesRegex(ValueError, "suffix"):
+            complete_task(
+                self.root,
+                {
+                    **self.result_for(malformed_claim),
+                    "task_id": malformed_task["task_id"],
+                    "artifacts": ["malformed-media-output-v1"],
+                },
+            )
+
+        generation_context = {
+            "allowed_image_artifact_ids": [],
+            "allowed_character_pack_ids": [],
+            "forbidden_scene_image_access": True,
+            "max_review_previews": 0,
+            "context_budget": 4096,
+        }
+        generation_task = {
+            **self.envelope,
+            "task_id": "image-generation-without-image-output",
+            "capability": "scene.produce",
+            "constraints": {
+                **self.envelope["constraints"],
+                "visual_operation": "image-generation",
+                "image_operation": "generate",
+                "image_context": generation_context,
+            },
+        }
+        create_task(self.root, generation_task)
+        generation_claim = claim_task(self.root, generation_task["task_id"], "worker-a")
+        with self.assertRaisesRegex(ValueError, "generate.*image|image.*generate"):
+            complete_task(
+                self.root,
+                {
+                    **self.result_for(generation_claim),
+                    "task_id": generation_task["task_id"],
+                    "image_handoff": {
+                        "artifact_ids": ["motion-preview-S03-v2"],
+                        "paths": ["media/motion-preview-S03-v2.json"],
+                        "summary": "Generation returned metadata only.",
+                        "status": "succeeded",
+                    },
+                },
+            )
 
     def test_non_image_result_cannot_attach_an_image_handoff(self):
         """Catches generic workers smuggling image metadata through an optional field."""

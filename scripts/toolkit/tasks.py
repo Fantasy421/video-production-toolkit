@@ -14,9 +14,12 @@ from scripts.toolkit.artifacts import _artifact_paths_by_id, _read_valid_artifac
 from scripts.toolkit.adapters import select_adapter
 from scripts.toolkit.invalidation import invalidated_artifact_ids
 from scripts.toolkit.image_context import (
+    artifact_is_image_bearing,
     compact_image_result,
     validate_declared_image_inputs,
+    validate_image_result_envelope,
     validate_image_task_constraints,
+    validate_media_artifact_metadata,
 )
 from scripts.toolkit.project_state import _state_lock
 from scripts.toolkit.runtime_paths import project_path, project_root, storage_directory
@@ -55,6 +58,21 @@ RESULT_KEYS = {
     "user_decision_request",
     "image_handoff",
 }
+TASK_CAPABILITIES = frozenset(
+    {
+        "project.manage",
+        "narration.plan",
+        "visual.preview",
+        "voice.prepare",
+        "storyboard.plan",
+        "scene.produce",
+        "motion.preview",
+        "motion.produce",
+        "timeline.assemble",
+        "structure.validate",
+        "review.package",
+    }
+)
 VOICE_TIMING_CAPABILITIES = frozenset(
     {
         "storyboard.plan",
@@ -186,8 +204,10 @@ def complete_task(root: Path, result: dict[str, Any]) -> str:
     try:
         _require_current_claim(handle, result)
         envelope = _read_envelope(root, task_id)
-        _validate_result_artifacts(root, envelope, result)
-        _validate_conditional_image_result(root, envelope, result)
+        produced_artifacts = _validate_result_artifacts(root, envelope, result)
+        _validate_conditional_image_result(
+            root, envelope, result, produced_artifacts
+        )
         if not _is_current_result(root, envelope, result):
             destination = _stale_result_path(root, task_id)
             status = "stale-result"
@@ -339,11 +359,12 @@ def _effective_artifacts_by_id(root: Path) -> dict[str, dict[str, Any]]:
 
 def _validate_result_artifacts(
     root: Path, envelope: dict[str, Any], result: dict[str, Any]
-) -> None:
+) -> list[dict[str, Any]]:
     """Require every claimed output to be a persisted artifact of the declared contract."""
     if result["status"] == "succeeded" and not result["artifacts"]:
         raise ValueError("a succeeded task must return at least one artifact")
     artifacts = _artifacts_by_id(root / "artifacts")
+    returned: list[dict[str, Any]] = []
     for artifact_id in result["artifacts"]:
         artifact = artifacts.get(artifact_id)
         if artifact is None:
@@ -353,6 +374,9 @@ def _validate_result_artifacts(
                 f"task result artifact {artifact_id} does not satisfy "
                 f"{envelope['output_contract']}"
             )
+        validate_media_artifact_metadata(artifact)
+        returned.append(artifact)
+    return returned
 
 
 def _compatible_retry_fallback(
@@ -657,11 +681,15 @@ def _validate_envelope(envelope: dict[str, Any]) -> None:
     _require_safe_id(envelope["task_id"], "task_id")
     for key in ("capability", "output_contract"):
         _require_nonempty_string(envelope[key], key)
+    if envelope["capability"] not in TASK_CAPABILITIES:
+        raise ValueError("task envelope capability is not recognized")
     _validate_id_list(envelope["inputs"], "inputs")
     _validate_adapters(envelope["adapter_preferences"])
     if not isinstance(envelope["constraints"], dict):
         raise ValueError("constraints must be an object")
-    validate_image_task_constraints(envelope["constraints"])
+    validate_image_task_constraints(
+        envelope["constraints"], capability=envelope["capability"]
+    )
 
 
 def _validate_result(result: dict[str, Any]) -> None:
@@ -686,9 +714,30 @@ def _validate_result(result: dict[str, Any]) -> None:
 
 
 def _validate_conditional_image_result(
-    root: Path, envelope: dict[str, Any], result: dict[str, Any]
+    root: Path,
+    envelope: dict[str, Any],
+    result: dict[str, Any],
+    produced_artifacts: list[dict[str, Any]],
 ) -> None:
-    image_context = validate_image_task_constraints(envelope["constraints"])
+    image_context = validate_image_task_constraints(
+        envelope["constraints"], capability=envelope["capability"]
+    )
+    operation = envelope["constraints"].get("image_operation")
+    image_artifact_ids = [
+        artifact["artifact_id"]
+        for artifact in produced_artifacts
+        if artifact_is_image_bearing(artifact)
+    ]
+    if image_artifact_ids and operation not in {"generate", "image-inspect"}:
+        raise ValueError(
+            "image artifacts require a declared image operation and image_context"
+        )
+    if (
+        result["status"] == "succeeded"
+        and operation == "generate"
+        and not image_artifact_ids
+    ):
+        raise ValueError("generate must return at least one image artifact")
     handoff = result.get("image_handoff")
     if image_context is None:
         if handoff is not None:
@@ -696,6 +745,7 @@ def _validate_conditional_image_result(
         return
     if handoff is None:
         raise ValueError("image task result requires image_handoff")
+    validate_image_result_envelope(image_context, result)
     compact = compact_image_result(image_context, handoff)
     if compact.get("artifact_ids", []) != result["artifacts"]:
         raise ValueError("image_handoff artifact_ids must match result artifacts")
