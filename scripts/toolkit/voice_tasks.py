@@ -59,7 +59,11 @@ def prepare_voice_task(
 
     mode = source["mode"]
     if mode == "uploaded-voice":
-        upload = _declared_upload(root, declared_records, inputs)
+        upload = _declared_upload(
+            root,
+            declared_records,
+            task["constraints"].get("uploaded_audio_id"),
+        )
         if upload is None:
             return _result(
                 task,
@@ -76,7 +80,12 @@ def prepare_voice_task(
                 error="external-provider-pending",
             )
         complete, warning = _completed_outputs(
-            root, declared_records, narration_id, output_ids
+            root,
+            declared_records,
+            narration_id,
+            task["constraints"]["voice_source_id"],
+            task["constraints"]["voice_profile_id"],
+            output_ids,
         )
         if complete is not None:
             return _result(task, "succeeded", artifacts=complete, checks=["voice-artifacts-valid"])
@@ -122,7 +131,12 @@ def prepare_voice_task(
             error="external-provider-pending",
         )
     complete, warning = _completed_outputs(
-        root, declared_records, narration_id, output_ids
+        root,
+        declared_records,
+        narration_id,
+        task["constraints"]["voice_source_id"],
+        task["constraints"]["voice_profile_id"],
+        output_ids,
     )
     if complete is not None:
         return _result(task, "succeeded", artifacts=complete, checks=["voice-artifacts-valid"])
@@ -185,6 +199,13 @@ def _task_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
         or set(output_ids) & set(task["inputs"])
     ):
         raise ValueError("voice task constraints must include three distinct output_artifact_ids")
+    uploaded_audio_id = task["constraints"].get("uploaded_audio_id")
+    if uploaded_audio_id is not None and (
+        not isinstance(uploaded_audio_id, str)
+        or not uploaded_audio_id
+        or uploaded_audio_id not in task["inputs"]
+    ):
+        raise ValueError("voice task uploaded_audio_id must be a declared input")
     return task
 
 
@@ -285,18 +306,17 @@ def _approved_tts_profile(profile: Optional[dict[str, Any]]) -> bool:
 
 
 def _declared_upload(
-    root: Path, records: list[dict[str, Any]], inputs: list[str]
+    root: Path, records: list[dict[str, Any]], uploaded_audio_id: Any
 ) -> Optional[dict[str, Any]]:
-    candidates = [
-        record
-        for record in records
-        if record.get("artifact_id") in inputs
-        and record.get("type") in _UPLOAD_TYPES
-        and record.get("status") == "approved"
-    ]
-    if len(candidates) != 1:
+    if not isinstance(uploaded_audio_id, str) or not uploaded_audio_id:
         return None
-    upload = candidates[0]
+    upload = _record_by_id(records, uploaded_audio_id)
+    if (
+        upload is None
+        or upload.get("type") not in _UPLOAD_TYPES
+        or upload.get("status") != "approved"
+    ):
+        return None
     media_path = upload.get("media_path")
     if not isinstance(media_path, str) or not media_path:
         return None
@@ -311,18 +331,23 @@ def _completed_outputs(
     root: Path,
     records: list[dict[str, Any]],
     narration_id: Any,
+    source_id: str,
+    profile_id: str,
     output_ids: list[str],
 ) -> tuple[Optional[list[str]], str]:
     if not isinstance(narration_id, str) or not narration_id:
         return None, "voice-artifacts-pending"
-    voiceover = _record_by_id(records, output_ids[0])
+    completion_records = _declared_records(
+        records, [source_id, profile_id, *output_ids]
+    )
+    voiceover = _record_by_id(completion_records, output_ids[0])
     if voiceover is not None and not _safe_readable_voiceover(root, voiceover):
         return None, "voiceover-media-unavailable"
-    bundle = validate_voice_bundle(records, narration_id)
+    bundle = validate_voice_bundle(completion_records, narration_id)
     if not bundle["ok"]:
         return None, "voice-artifacts-pending"
     timing_id = bundle["voice_timing_id"]
-    beats = _record_by_id(records, output_ids[2])
+    beats = _record_by_id(completion_records, output_ids[2])
     if (
         bundle["voiceover_id"] != output_ids[0]
         or timing_id != output_ids[1]

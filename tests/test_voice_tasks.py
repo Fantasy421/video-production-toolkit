@@ -102,6 +102,7 @@ class PrepareVoiceTaskTests(unittest.TestCase):
         """Catches external timing work starting before its immutable upload input exists."""
         envelope = self.envelope()
         envelope["inputs"].append("upload-v2")
+        envelope["constraints"]["uploaded_audio_id"] = "upload-v2"
         result = prepare_voice_task(
             self.root,
             envelope,
@@ -113,6 +114,24 @@ class PrepareVoiceTaskTests(unittest.TestCase):
         self.assertEqual(["adapter-selected:chatcut", "voice-timing-job-prepared"], result["checks"])
         self.assertEqual([], result["artifacts"])
         tasks._validate_result(result)
+
+    def test_uploaded_mode_uses_the_exact_declared_audio_id_among_declared_inputs(self):
+        """Catches upload timing choosing by discovery rather than the immutable audio identity."""
+        envelope = self.envelope()
+        envelope["inputs"].extend(["upload-v2", "upload-v3"])
+        envelope["constraints"]["uploaded_audio_id"] = "upload-v2"
+        artifacts = self.artifacts(mode="uploaded-voice", include_upload=True)
+        self.write_audio("media/upload-v3.wav")
+        artifacts.append(
+            self.artifact(
+                "upload-v3", "uploaded-audio", version=3, media_path="media/upload-v3.wav"
+            )
+        )
+
+        result = prepare_voice_task(self.root, envelope, artifacts, ["chatcut:voice"])
+
+        self.assertEqual("waiting_external", result["status"])
+        self.assertEqual(["adapter-selected:chatcut", "voice-timing-job-prepared"], result["checks"])
 
     def test_tts_mode_requires_an_approved_profile(self):
         """Catches synthesis with an unapproved profile despite a declared source decision."""
@@ -310,6 +329,46 @@ class PrepareVoiceTaskTests(unittest.TestCase):
         self.write_audio("media/voiceover-v3.wav")
 
         result = prepare_voice_task(self.root, self.envelope(), artifacts, ["chatcut:voice"])
+
+        self.assertEqual("waiting_external", result["status"])
+        self.assertEqual(["voice-artifacts-pending"], result["warnings"])
+
+    def test_declared_newer_source_and_profile_cannot_repoint_expected_outputs(self):
+        """Catches completion picking a newer declared input instead of the envelope-bound identities."""
+        envelope = self.envelope()
+        envelope["inputs"].extend(["source-v3", "profile-v3"])
+        artifacts = self.published_bundle()
+        artifacts.extend(
+            [
+                self.artifact(
+                    "source-v3",
+                    "voice-source-decision",
+                    version=3,
+                    narration_id="narration-v2",
+                    mode="tts",
+                    decision="approved",
+                ),
+                self.artifact(
+                    "profile-v3",
+                    "voice-profile",
+                    version=3,
+                    mode="tts",
+                    language="zh-CN",
+                    provider="chatcut",
+                    voice_id="narrator-2",
+                    speaking_rate=1.0,
+                    emotion="calm",
+                    pronunciations=[],
+                    approved=True,
+                ),
+            ]
+        )
+        artifacts[-5].update(
+            parents=["narration-v2", "profile-v3"], profile_id="profile-v3"
+        )
+        self.write_audio("media/voiceover-v2.wav")
+
+        result = prepare_voice_task(self.root, envelope, artifacts, ["chatcut:voice"])
 
         self.assertEqual("waiting_external", result["status"])
         self.assertEqual(["voice-artifacts-pending"], result["warnings"])
