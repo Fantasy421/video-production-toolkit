@@ -150,6 +150,52 @@ class ProjectStateTests(unittest.TestCase):
         self.assertEqual("voice-artifacts-required", view["migration_requirement"]["code"])
         self.assertEqual(self.original_events, self.event_log.read_bytes())
 
+    def test_legacy_direction_project_upgrades_by_appending_before_voice_ready(self):
+        """Catches an old log producing a v2 snapshot without a replayable upgrade."""
+        self.write_pre_voice_event_log(final_phase="direction_ready")
+
+        append_event(
+            self.root,
+            {"event": "project.phase_changed", "phase": "voice_ready"},
+        )
+
+        self.assertTrue(self.event_log.read_bytes().startswith(self.original_events))
+        self.assertEqual(
+            [
+                {"event": "project.schema_upgraded", "schema_version": 2},
+                {"event": "project.phase_changed", "phase": "voice_ready"},
+            ],
+            [
+                json.loads(line)
+                for line in self.event_log.read_text(encoding="utf-8").splitlines()[-2:]
+            ],
+        )
+        self.assertEqual(
+            {
+                "schema_version": 2,
+                "project_id": "kv-legacy",
+                "workflow": "knowledge-video",
+                "phase": "voice_ready",
+            },
+            replay_events(self.root),
+        )
+
+    def test_rejected_legacy_voice_event_does_not_append_an_upgrade(self):
+        """Catches a malformed requested event partially upgrading a legacy log."""
+        self.write_pre_voice_event_log(final_phase="direction_ready")
+
+        with self.assertRaisesRegex(ValueError, "event does not match"):
+            append_event(
+                self.root,
+                {
+                    "event": "project.phase_changed",
+                    "phase": "voice_ready",
+                    "untrusted": True,
+                },
+            )
+
+        self.assertEqual(self.original_events, self.event_log.read_bytes())
+
     def test_legacy_replay_does_not_relax_the_phase_event_contract(self):
         """Catches compatibility accepting a tampered old phase event."""
         event_log = self.root / "events" / "events.jsonl"
@@ -344,6 +390,7 @@ class ProjectStateTests(unittest.TestCase):
         self.assertEqual(
             {
                 "project.initialized",
+                "project.schema_upgraded",
                 "project.phase_changed",
                 "project.active_timeline_changed",
                 "artifacts.invalidated",

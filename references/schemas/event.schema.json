@@ -28,6 +28,16 @@
       "additionalProperties": false
     },
     {
+      "description": "Append-only upgrade from a version-one direction_ready project to the version-two phase contract.",
+      "type": "object",
+      "required": ["event", "schema_version"],
+      "properties": {
+        "event": {"const": "project.schema_upgraded"},
+        "schema_version": {"const": 2}
+      },
+      "additionalProperties": false
+    },
+    {
       "type": "object",
       "required": ["event", "phase"],
       "properties": {

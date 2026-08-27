@@ -9,7 +9,12 @@ from typing import Any, Iterable, Optional, Union
 import zlib
 
 from .contracts import validate_scene_contract
-from .project_state import PHASES, PROJECT_SCHEMA_VERSIONS
+from .project_state import (
+    LEGACY_PHASES,
+    LEGACY_PROJECT_SCHEMA_VERSION,
+    PHASES,
+    PROJECT_SCHEMA_VERSIONS,
+)
 from .invalidation import invalidated_artifact_ids
 from .packs import validate_layout_pack, validate_style_pack
 from .runtime_paths import project_path, project_root
@@ -119,7 +124,10 @@ def _read_project(root: Path, errors: list[dict[str, Any]]) -> dict[str, Any]:
     if not all(isinstance(project.get(key), str) and project[key] for key in ("project_id", "workflow", "phase")):
         errors.append(_issue("invalid-project-state", path="project.json"))
         return {}
-    if project["phase"] not in PHASES:
+    if project["phase"] not in PHASES or (
+        project["schema_version"] == LEGACY_PROJECT_SCHEMA_VERSION
+        and project["phase"] not in LEGACY_PHASES
+    ):
         errors.append(_issue("invalid-project-state", path="project.json"))
         return {}
     if "active_timeline_id" in project and not _safe_component(project["active_timeline_id"]):

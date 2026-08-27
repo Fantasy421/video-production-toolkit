@@ -55,6 +55,22 @@ class PackageTests(unittest.TestCase):
 
                 self.assertIn(f"missing:{relative}", validate_package(package))
 
+    def test_project_template_uses_the_current_project_schema_version(self):
+        """Catches new projects starting from the legacy pre-voice contract."""
+        template = json.loads(
+            (ROOT / "assets/project-template/project.json").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(
+            {
+                "schema_version": 2,
+                "project_id": "<project-id>",
+                "workflow": "knowledge-video",
+                "phase": "initialized",
+            },
+            template,
+        )
+
     def test_style_and_layout_pack_assets_are_required(self):
         """Catches installation omitting schemas, manifests, or human previews."""
         required_pack_assets = (

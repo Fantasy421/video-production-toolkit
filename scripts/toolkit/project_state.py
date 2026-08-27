@@ -32,7 +32,7 @@ PROJECT_SCHEMA_VERSIONS = frozenset(
 
 # Version-one event logs predate ``voice_ready``.  They remain replayable only
 # through the replay compatibility path below; append_event always uses PHASES.
-_LEGACY_PHASES = (
+LEGACY_PHASES = (
     "initialized",
     "content_ready",
     "direction_ready",
@@ -65,6 +65,7 @@ RUNTIME_DIRECTORIES = (
 
 _EVENT_FIELDS = {
     "project.initialized": {"event", "schema_version", "project_id", "workflow"},
+    "project.schema_upgraded": {"event", "schema_version"},
     "project.phase_changed": {"event", "phase"},
     "project.active_timeline_changed": {"event", "active_timeline_id"},
     "artifacts.invalidated": {"event", "changed_id", "artifact_ids"},
@@ -108,6 +109,12 @@ def append_event(root: Path, event: dict[str, Any]) -> None:
     root = project_root(root)
     with _state_lock(root, exclusive=True):
         state = _replay_events_unlocked(root)
+        _validate_event_contract(event)
+        upgrade = _schema_upgrade_for(event, state)
+        if upgrade is not None:
+            _validate_event(upgrade, state)
+            _append_event_durably(project_path(root, "events/events.jsonl"), upgrade)
+            state = _replay_events_unlocked(root)
         _validate_event(event, state)
         _append_event_durably(project_path(root, "events/events.jsonl"), event)
         _write_project_atomically(root, _replay_events_unlocked(root))
@@ -194,6 +201,8 @@ def _replay_events_unlocked(root: Path) -> dict[str, Any]:
                 "workflow": event["workflow"],
                 "phase": "initialized",
             }
+        elif event["event"] == "project.schema_upgraded":
+            state["schema_version"] = event["schema_version"]
         elif event["event"] == "project.phase_changed":
             state["phase"] = event["phase"]
         elif event["event"] == "project.active_timeline_changed":
@@ -202,11 +211,8 @@ def _replay_events_unlocked(root: Path) -> dict[str, Any]:
 
 
 def _validate_event(event: Any, state: dict[str, Any]) -> None:
-    if not isinstance(event, dict):
-        raise ValueError("event must be an object")
-    event_name = event.get("event")
-    if event_name not in _EVENT_FIELDS or set(event) != _EVENT_FIELDS[event_name]:
-        raise ValueError("event does not match a supported event contract")
+    _validate_event_contract(event)
+    event_name = event["event"]
     if event_name == "project.initialized":
         if state:
             raise ValueError("project.initialized must be the first event")
@@ -218,11 +224,24 @@ def _validate_event(event: Any, state: dict[str, Any]) -> None:
         return
     if not state:
         raise ValueError("project event log must begin with project.initialized")
-    if event_name == "project.phase_changed":
+    if event_name == "project.schema_upgraded":
+        if event["schema_version"] != CURRENT_PROJECT_SCHEMA_VERSION:
+            raise ValueError("unsupported project schema upgrade version")
+        if (
+            state.get("schema_version") != LEGACY_PROJECT_SCHEMA_VERSION
+            or state.get("phase") != "direction_ready"
+        ):
+            raise ValueError("project schema upgrade requires legacy direction_ready")
+    elif event_name == "project.phase_changed":
         phase = event["phase"]
         current = state.get("phase")
         if phase not in PHASES:
             raise ValueError("project phase is not recognized")
+        if (
+            state.get("schema_version") == LEGACY_PROJECT_SCHEMA_VERSION
+            and phase not in LEGACY_PHASES
+        ):
+            raise ValueError("project phase requires a schema upgrade")
         if current not in PHASES or PHASES.index(phase) != PHASES.index(current) + 1:
             raise ValueError(f"illegal project phase transition: {current!r} -> {phase!r}")
     elif event_name == "project.active_timeline_changed":
@@ -238,6 +257,14 @@ def _validate_event(event: Any, state: dict[str, Any]) -> None:
             or any(not _safe_component(item) for item in artifact_ids)
         ):
             raise ValueError("artifact_ids must be unique safe components")
+
+
+def _validate_event_contract(event: Any) -> None:
+    if not isinstance(event, dict):
+        raise ValueError("event must be an object")
+    event_name = event.get("event")
+    if event_name not in _EVENT_FIELDS or set(event) != _EVENT_FIELDS[event_name]:
+        raise ValueError("event does not match a supported event contract")
 
 
 def _validate_replayed_event(event: Any, state: dict[str, Any]) -> None:
@@ -262,10 +289,24 @@ def _is_legacy_phase_transition(event: Any, state: Mapping[str, Any]) -> bool:
     current = state.get("phase")
     phase = event.get("phase")
     return (
-        current in _LEGACY_PHASES
-        and phase in _LEGACY_PHASES
-        and _LEGACY_PHASES.index(phase) == _LEGACY_PHASES.index(current) + 1
+        current in LEGACY_PHASES
+        and phase in LEGACY_PHASES
+        and LEGACY_PHASES.index(phase) == LEGACY_PHASES.index(current) + 1
     )
+
+
+def _schema_upgrade_for(event: Mapping[str, Any], state: Mapping[str, Any]) -> Optional[dict[str, Any]]:
+    """Return the appended upgrade required before a legacy project enters voice work."""
+    if (
+        state.get("schema_version") == LEGACY_PROJECT_SCHEMA_VERSION
+        and event.get("event") == "project.phase_changed"
+        and event.get("phase") == "voice_ready"
+    ):
+        return {
+            "event": "project.schema_upgraded",
+            "schema_version": CURRENT_PROJECT_SCHEMA_VERSION,
+        }
+    return None
 
 
 @contextmanager
