@@ -44,6 +44,28 @@ class AdapterSelectionTests(unittest.TestCase):
 
         self.assertEqual("chatcut", selected["id"])
         self.assertIsNone(selected["fallback"])
+        self.assertEqual("external:chatcut-plugin-basics", selected["implementation_ref"])
+
+    def test_chatcut_adds_voice_capabilities_without_losing_editable_capabilities(self):
+        """Catches a voice manifest replacement that drops established ChatCut routes."""
+        selected = select_adapter(
+            "voice.synthesize",
+            {
+                "contract": "voice-profile",
+                "output": "voiceover",
+                "adapter_preferences": ["chatcut"],
+                "installed_skills": ["chatcut:voice"],
+            },
+            self.manifests,
+        )
+
+        self.assertEqual("chatcut", selected["id"])
+        self.assertEqual("chatcut:voice", selected["installed_skill"])
+        self.assertEqual("external:chatcut-voice", selected["implementation_ref"])
+        self.assertIn("voice.time", selected["capabilities"])
+        self.assertIn("timeline.assemble", selected["capabilities"])
+        self.assertIn("motion.produce", selected["capabilities"])
+        self.assertIn("voice-timing", selected["outputs"])
 
     def test_editable_overlay_prefers_chatcut_motion_graphics(self):
         selected = select_adapter(

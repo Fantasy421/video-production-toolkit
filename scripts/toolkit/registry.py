@@ -33,6 +33,8 @@ OPTIONAL_ENTRY_FIELDS = {
     "outputs",
     "editable",
     "installed_skill",
+    "capability_skills",
+    "capability_implementation_refs",
     "fallback",
     "license_mode",
     "tokens",
@@ -165,6 +167,10 @@ def _validate_entry(entry: Any, path: Path, kind: str) -> None:
         raise ValueError(f"registry editable must be a boolean: {path}")
     if "installed_skill" in entry:
         _validate_string(entry["installed_skill"], "installed_skill", path)
+    if "capability_skills" in entry:
+        _validate_capability_skills(entry, path)
+    if "capability_implementation_refs" in entry:
+        _validate_capability_implementation_refs(entry, path)
     if "fallback" in entry and entry["fallback"] is not None:
         _validate_string(entry["fallback"], "fallback", path)
     if "license_mode" in entry and entry["license_mode"] != "external-reference":
@@ -188,6 +194,49 @@ def _validate_string_list(value: Any, field: str, path: Path) -> None:
         raise ValueError(f"registry {field} must be a non-empty string array: {path}")
     if len(value) != len(set(value)):
         raise ValueError(f"registry {field} must not repeat values: {path}")
+
+
+def _validate_capability_skills(entry: Mapping[str, Any], path: Path) -> None:
+    """Allow a capability to name its installed Skill without widening routing."""
+    value = entry["capability_skills"]
+    capabilities = entry.get("capabilities")
+    if not isinstance(value, Mapping) or not value:
+        raise ValueError(f"registry capability_skills must be a non-empty object: {path}")
+    if not isinstance(capabilities, list) or any(
+        not isinstance(capability, str) or not capability for capability in capabilities
+    ) or any(
+        not isinstance(capability, str)
+        or capability not in capabilities
+        or not isinstance(skill, str)
+        or not skill
+        for capability, skill in value.items()
+    ):
+        raise ValueError(
+            f"registry capability_skills must map declared capabilities to skills: {path}"
+        )
+
+
+def _validate_capability_implementation_refs(entry: Mapping[str, Any], path: Path) -> None:
+    value = entry["capability_implementation_refs"]
+    capabilities = entry.get("capabilities")
+    if not isinstance(value, Mapping) or not value:
+        raise ValueError(
+            f"registry capability_implementation_refs must be a non-empty object: {path}"
+        )
+    if not isinstance(capabilities, list) or any(
+        not isinstance(capability, str) or not capability for capability in capabilities
+    ) or any(
+        not isinstance(capability, str)
+        or capability not in capabilities
+        or not isinstance(reference, str)
+        or not reference.startswith("external:")
+        or not reference[len("external:") :]
+        for capability, reference in value.items()
+    ):
+        raise ValueError(
+            "registry capability_implementation_refs must map declared capabilities "
+            f"to external references: {path}"
+        )
 
 
 def _validate_duration(value: Any, path: Path) -> None:

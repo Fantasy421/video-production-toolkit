@@ -1,16 +1,24 @@
 {
   "id": "chatcut",
   "version": "v1",
-  "job": "editable motion graphics and final timeline assembly",
+  "job": "editable motion graphics, voice synthesis and timing, and final timeline assembly",
   "preview": "adapter:chatcut",
   "renderer": "chatcut",
   "implementation_ref": "external:chatcut-plugin-basics",
   "license": "external",
-  "capabilities": ["motion.produce", "timeline.assemble"],
-  "accepts": ["motion-contract-v1", "scene-contract-v1", "timeline-contract-v1"],
-  "outputs": ["chatcut-project", "editable-motion-graphic", "rendered-video"],
+  "capabilities": ["motion.produce", "timeline.assemble", "voice.synthesize", "voice.time"],
+  "accepts": ["motion-contract-v1", "scene-contract-v1", "timeline-contract-v1", "voice-profile", "narration"],
+  "outputs": ["chatcut-project", "editable-motion-graphic", "rendered-video", "voiceover", "voice-timing"],
   "editable": true,
   "installed_skill": "chatcut:chatcut-plugin-basics",
+  "capability_skills": {
+    "voice.synthesize": "chatcut:voice",
+    "voice.time": "chatcut:voice"
+  },
+  "capability_implementation_refs": {
+    "voice.synthesize": "external:chatcut-voice",
+    "voice.time": "external:chatcut-voice"
+  },
   "fallback": null,
   "license_mode": "external-reference"
 }

@@ -8,7 +8,7 @@ from typing import Any, Union
 _MANIFEST_KEYS = {
     "id", "version", "job", "preview", "renderer", "implementation_ref", "license",
     "capabilities", "accepts", "outputs", "editable", "installed_skill", "fallback",
-    "license_mode",
+    "license_mode", "capability_skills", "capability_implementation_refs",
 }
 _REQUIREMENT_KEYS = {
     "adapter_preferences", "preferred_adapter", "installed_skills", "contract",
@@ -62,7 +62,7 @@ def select_adapter(
     compatible.sort(key=lambda entry: _rank(entry, capability, requirements, explicit_preferences))
     primary = compatible[0]
     fallback = _find_fallback(primary, fallback_candidates, preferences, capability, requirements)
-    return _compact(primary, fallback)
+    return _compact(primary, fallback, capability)
 
 
 def _normalize_manifests(
@@ -95,6 +95,24 @@ def _validate_manifest(manifest: Mapping[str, Any]) -> None:
     _string_list(manifest["accepts"], "accepts")
     _string_list(manifest["outputs"], "outputs")
     _safe_token(manifest["installed_skill"], "installed_skill")
+    capability_skills = manifest.get("capability_skills", {})
+    if not isinstance(capability_skills, Mapping) or any(
+        not isinstance(capability, str)
+        or capability not in manifest["capabilities"]
+        or not _is_safe_token(skill)
+        for capability, skill in capability_skills.items()
+    ):
+        raise ValueError("adapter capability_skills must map declared capabilities to safe skills")
+    capability_references = manifest.get("capability_implementation_refs", {})
+    if not isinstance(capability_references, Mapping) or any(
+        not isinstance(capability, str)
+        or capability not in manifest["capabilities"]
+        or not _is_safe_external_reference(reference)
+        for capability, reference in capability_references.items()
+    ):
+        raise ValueError(
+            "adapter capability_implementation_refs must map declared capabilities to safe external references"
+        )
     reference = manifest["implementation_ref"]
     if not _is_safe_external_reference(reference):
         raise ValueError("adapter implementation_ref must be a safe external reference")
@@ -111,7 +129,7 @@ def _matches(entry: Mapping[str, Any], capability: str, requirements: Mapping[st
     if capability not in entry["capabilities"]:
         return False
     skills = _installed_skills(requirements)
-    if entry["installed_skill"] not in skills:
+    if _skill_for_capability(entry, capability) not in skills:
         return False
     contract = requirements.get("contract", requirements.get("accepted_contract"))
     if contract is not None and contract not in entry["accepts"]:
@@ -153,7 +171,9 @@ def _find_fallback(
     return None
 
 
-def _compact(primary: Mapping[str, Any], fallback: Union[Mapping[str, Any], None]) -> dict[str, Any]:
+def _compact(
+    primary: Mapping[str, Any], fallback: Union[Mapping[str, Any], None], capability: str
+) -> dict[str, Any]:
     result = {
         "id": primary["id"],
         "version": primary.get("version"),
@@ -161,15 +181,25 @@ def _compact(primary: Mapping[str, Any], fallback: Union[Mapping[str, Any], None
         "accepts": list(primary["accepts"]),
         "outputs": list(primary["outputs"]),
         "editable": primary["editable"],
-        "installed_skill": primary["installed_skill"],
-        "implementation_ref": primary["implementation_ref"],
+        "installed_skill": _skill_for_capability(primary, capability),
+        "implementation_ref": _implementation_for_capability(primary, capability),
     }
     result["fallback"] = None if fallback is None else {
         "id": fallback["id"],
-        "implementation_ref": fallback["implementation_ref"],
-        "installed_skill": fallback["installed_skill"],
+        "implementation_ref": _implementation_for_capability(fallback, capability),
+        "installed_skill": _skill_for_capability(fallback, capability),
     }
     return result
+
+
+def _skill_for_capability(entry: Mapping[str, Any], capability: str) -> str:
+    skills = entry.get("capability_skills", {})
+    return skills.get(capability, entry["installed_skill"])
+
+
+def _implementation_for_capability(entry: Mapping[str, Any], capability: str) -> str:
+    references = entry.get("capability_implementation_refs", {})
+    return references.get(capability, entry["implementation_ref"])
 
 
 def _task_preferences(requirements: Mapping[str, Any]) -> list[str]:

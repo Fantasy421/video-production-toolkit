@@ -34,6 +34,20 @@
     "outputs": {"$ref": "#/$defs/stringArray"},
     "editable": {"type": "boolean"},
     "installed_skill": {"$ref": "#/$defs/nonEmptyString"},
+    "capability_skills": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/nonEmptyString"}
+    },
+    "capability_implementation_refs": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 10,
+        "pattern": "^external:.+"
+      }
+    },
     "fallback": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/nonEmptyString"}]},
     "license_mode": {"const": "external-reference"},
     "tokens": {"type": "object", "minProperties": 1},
