@@ -18,6 +18,7 @@ REQUIRED = (
     "registries/styles/editorial-clean/v1/manifest.json",
     "registries/layouts/talking-head-left-explainer-right/v1/manifest.json",
     "skills/video-director/SKILL.md",
+    "skills/voiceover-producer/SKILL.md",
 )
 
 

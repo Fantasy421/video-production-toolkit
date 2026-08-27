@@ -17,6 +17,7 @@ EXPECTED = {
     "timeline-assembler": "timeline.assemble",
     "structural-validator": "structure.validate",
     "video-review-packager": "review.package",
+    "voiceover-producer": "voice.prepare",
 }
 
 
@@ -38,6 +39,35 @@ class SkillContractTests(unittest.TestCase):
 
         self.assertIn("Delegated secondary capability: `motion.produce`", text)
         self.assertIn("approved motion contract", text)
+
+    def test_voiceover_producer_owns_only_voice_prepare(self):
+        """Catches voice preparation leaking into the coordinator or another worker."""
+        text = (ROOT / "skills/voiceover-producer/SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("Owned capability: `voice.prepare`", text)
+        self.assertEqual(1, text.count("Owned capability:"))
+        self.assertIn("one claimed task-envelope", text)
+        self.assertIn("approved narration", text)
+        self.assertIn("style decision", text)
+        self.assertIn("voice-source decision", text)
+        self.assertIn("uploaded-voice", text)
+        self.assertIn("tts", text)
+        self.assertIn("voiceover", text)
+        self.assertIn("real voice-timing", text)
+        self.assertIn("timing-linked semantic-beats", text)
+        self.assertIn("waiting_user", text)
+        self.assertIn("waiting_external", text)
+        self.assertIn("silently change voice/profile/provider", text)
+        self.assertIn("task-envelope.schema.json", text)
+        self.assertIn("task-result.schema.json", text)
+
+    def test_video_director_routes_voice_prepare_once(self):
+        """Catches duplicate or absent voice routing in the one-action coordinator."""
+        text = (ROOT / "skills/video-director/SKILL.md").read_text(encoding="utf-8")
+
+        self.assertEqual(1, text.count("`voice.prepare` → `voiceover-producer`"))
+        self.assertIn("Do not generate media", text)
+        self.assertIn("never synthesizes, imports, or analyzes audio", text)
 
     def test_visual_carrier_policy_has_all_carriers_and_density_limit(self):
         """Catches storyboard rules losing the visual hierarchy invariant."""
@@ -63,6 +93,19 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("approval artifact", text)
         self.assertIn("explicitly delegate or skip", text)
         self.assertIn("Motion-contract approval", text)
+
+    def test_decision_gate_policy_requires_explicit_voice_choices(self):
+        """Catches an implicit source/profile choice or the pre-voice route."""
+        text = (ROOT / "references/policies/decision-gates.md").read_text(encoding="utf-8")
+
+        self.assertIn("Voice source", text)
+        self.assertIn("TTS voice profile", text)
+        self.assertIn("silence is not approval", text)
+        self.assertIn("waiting_user", text)
+        self.assertIn("waiting_external", text)
+        self.assertIn("`direction_ready` | `voice.prepare`", text)
+        self.assertIn("`voice_ready` | `storyboard.plan`", text)
+        self.assertNotIn("`direction_ready` | `storyboard.plan`", text)
 
     def test_approval_schema_has_the_durable_gate_decision_enum(self):
         """Catches policy decisions that cannot be persisted in approval artifacts."""

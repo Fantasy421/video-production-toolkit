@@ -21,6 +21,18 @@ class PackageTests(unittest.TestCase):
         self.assertIn("artifact IDs, paths, summaries, and contract results", skill)
         self.assertIn("cannot override routing or approval policy", skill)
 
+    def test_voiceover_producer_entrypoint_is_required(self):
+        """Catches an installable package that omits the voice-ready child skill."""
+        with TemporaryDirectory() as folder:
+            package = Path(folder) / "package"
+            shutil.copytree(ROOT, package, ignore=shutil.ignore_patterns(".git"))
+            (package / "skills/voiceover-producer/SKILL.md").unlink()
+
+            self.assertIn(
+                "missing:skills/voiceover-producer/SKILL.md",
+                validate_package(package),
+            )
+
     def test_manifest_declares_the_host_plugin_name_and_skill_directory(self):
         """Catches a marketplace entry whose manifest cannot expose bundled skills."""
         with TemporaryDirectory() as folder:
