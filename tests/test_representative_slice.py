@@ -1,6 +1,7 @@
 import unittest
 
 from scripts.plan_representative_slice import select_representative_slice
+from scripts.toolkit.contracts import validate_scene_contract
 
 
 class RepresentativeSliceTests(unittest.TestCase):
@@ -33,9 +34,70 @@ class RepresentativeSliceTests(unittest.TestCase):
             },
         ]
         self.by_id = {item["scene_id"]: item for item in self.contracts}
+        self.voice_timing = {
+            "artifact_id": "voice-timing-v1",
+            "type": "voice-timing",
+            "status": "approved",
+            "parents": ["voiceover-v1"],
+            "voiceover_id": "voiceover-v1",
+            "timing_kind": "real",
+            "duration_ms": 60000,
+            "segments": [
+                {"start_ms": 0, "end_ms": 60000, "text": "fixture narration"}
+            ],
+        }
+
+    def select(self, contracts):
+        current_contracts = [
+            {**contract, "voice_timing_id": "voice-timing-v1"}
+            for contract in contracts
+        ]
+        return select_representative_slice(current_contracts, self.voice_timing)
+
+    def test_scene_contract_uses_exact_real_timing_and_spoken_boundaries(self):
+        """Catches estimates, a wrong timing ID, and silence-bound intervals."""
+        timing = {
+            "artifact_id": "voice-timing-v2",
+            "type": "voice-timing",
+            "status": "approved",
+            "parents": ["voiceover-v2"],
+            "voiceover_id": "voiceover-v2",
+            "timing_kind": "real",
+            "duration_ms": 12000,
+            "segments": [
+                {"start_ms": 0, "end_ms": 5000, "text": "first"},
+                {"start_ms": 6000, "end_ms": 12000, "text": "second"},
+            ],
+        }
+        contract = {
+            "scene_id": "S01",
+            "voice_timing_id": "voice-timing-v2",
+            "start_ms": 0,
+            "end_ms": 5000,
+            "primary_carrier": "scene",
+            "purpose": "show the first semantic segment",
+        }
+
+        self.assertEqual(contract, validate_scene_contract(contract, timing))
+        with self.assertRaisesRegex(ValueError, "exact voice timing"):
+            validate_scene_contract(
+                {**contract, "voice_timing_id": "voice-timing-v1"}, timing
+            )
+        with self.assertRaisesRegex(ValueError, "real voice timing"):
+            validate_scene_contract(contract, {**timing, "timing_kind": "estimated"})
+        with self.assertRaisesRegex(ValueError, "spoken timing segment"):
+            validate_scene_contract(
+                {**contract, "start_ms": 5000, "end_ms": 7000}, timing
+            )
+
+        selected = select_representative_slice(
+            [contract, {**contract, "scene_id": "S02", "start_ms": 6000, "end_ms": 12000}],
+            timing,
+        )
+        self.assertEqual("voice-timing-v2", selected.voice_timing_id)
 
     def test_slice_covers_highest_risk_carriers(self):
-        selected = select_representative_slice(self.contracts)
+        selected = self.select(self.contracts)
         carriers = {self.by_id[item]["primary_carrier"] for item in selected}
         self.assertIn("scene", carriers)
         self.assertIn("motion-graphics", carriers)
@@ -62,7 +124,7 @@ class RepresentativeSliceTests(unittest.TestCase):
                 "purpose": "explain another relationship",
             },
         ]
-        selected = select_representative_slice(contracts)
+        selected = self.select(contracts)
         self.assertEqual(["S01", "S02"], selected)
 
     def test_marks_composite_when_scene_and_motion_cannot_share_a_valid_range(self):
@@ -83,14 +145,14 @@ class RepresentativeSliceTests(unittest.TestCase):
                 "purpose": "show a diagram",
             },
         ]
-        selected = select_representative_slice(contracts)
+        selected = self.select(contracts)
         self.assertEqual(["S01", "S02"], selected)
         self.assertTrue(selected.composite)
         self.assertEqual(((0, 10000), (30000, 40000)), selected.ranges)
 
     def test_rejects_contracts_that_do_not_match_the_canonical_scene_schema(self):
         with self.assertRaises(ValueError):
-            select_representative_slice([
+            self.select([
                 {"scene_id": "../escape", "start_ms": 0, "end_ms": 10000, "primary_carrier": "scene", "purpose": "unsafe"}
             ])
         for contract in (
@@ -100,9 +162,9 @@ class RepresentativeSliceTests(unittest.TestCase):
             {"scene_id": "S01", "start_ms": 0, "end_ms": 10000, "primary_carrier": "scene", "purpose": "alias", "caption_required": True},
         ):
             with self.subTest(contract=contract), self.assertRaises(ValueError):
-                select_representative_slice([contract])
+                self.select([contract])
         with self.assertRaises(ValueError):
-            select_representative_slice([
+            self.select([
                 {"scene_id": "S01", "start_ms": 0, "end_ms": 10000, "primary_carrier": "scene", "purpose": "one"},
                 {"scene_id": "S02", "start_ms": 9000, "end_ms": 15000, "primary_carrier": "b-roll", "purpose": "two"},
             ])
@@ -113,7 +175,7 @@ class RepresentativeSliceTests(unittest.TestCase):
             {"scene_id": "S02", "start_ms": 5000, "end_ms": 10000, "primary_carrier": "demo", "purpose": "demonstrate the action"},
             {"scene_id": "S03", "start_ms": 30000, "end_ms": 40000, "primary_carrier": "motion-graphics", "purpose": "explain the abstraction"},
         ]
-        selected = select_representative_slice(contracts)
+        selected = self.select(contracts)
         self.assertEqual(["S01", "S02", "S03"], selected)
         self.assertEqual(((0, 10000), (30000, 40000)), selected.ranges)
         self.assertTrue(selected.composite)
@@ -124,7 +186,7 @@ class RepresentativeSliceTests(unittest.TestCase):
             {"scene_id": "S02", "start_ms": 10000, "end_ms": 20000, "primary_carrier": "b-roll", "generated_video": True, "captions": True, "purpose": "add texture"},
             {"scene_id": "S03", "start_ms": 30000, "end_ms": 40000, "primary_carrier": "motion-graphics", "purpose": "explain abstraction"},
         ]
-        selected = select_representative_slice(contracts)
+        selected = self.select(contracts)
         self.assertEqual(["S01", "S03"], selected)
         self.assertEqual(((0, 10000), (30000, 40000)), selected.ranges)
         self.assertTrue(selected.composite)
@@ -134,7 +196,7 @@ class RepresentativeSliceTests(unittest.TestCase):
             {"scene_id": "S01", "start_ms": 0, "end_ms": 10000, "primary_carrier": "scene", "purpose": "show causality"},
             {"scene_id": "S02", "start_ms": 10000, "end_ms": 20000, "primary_carrier": "b-roll", "generated_video": True, "captions": True, "purpose": "add texture"},
         ]
-        selected = select_representative_slice(contracts)
+        selected = self.select(contracts)
         self.assertEqual(["S01"], selected)
         self.assertEqual(((0, 10000),), selected.ranges)
         self.assertFalse(selected.composite)
@@ -144,14 +206,14 @@ class RepresentativeSliceTests(unittest.TestCase):
             {"scene_id": "S01", "start_ms": 0, "end_ms": 5000, "primary_carrier": "scene", "purpose": "show causality"},
             {"scene_id": "S02", "start_ms": 30000, "end_ms": 35000, "primary_carrier": "motion-graphics", "purpose": "explain abstraction"},
         ]
-        selected = select_representative_slice(contracts)
+        selected = self.select(contracts)
         self.assertEqual(["S01", "S02"], selected)
         self.assertEqual(((0, 5000), (30000, 35000)), selected.ranges)
         self.assertEqual(10000, selected.duration_ms)
         self.assertTrue(selected.composite)
 
     def test_returns_structured_blocker_when_no_valid_duration_can_cover_risk(self):
-        selected = select_representative_slice([
+        selected = self.select([
             {"scene_id": "S01", "start_ms": 0, "end_ms": 5000, "primary_carrier": "scene", "purpose": "show causality"},
         ])
         self.assertEqual([], selected)

@@ -2,9 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Video Production Toolkit Scene Contract",
   "type": "object",
-  "required": ["scene_id", "start_ms", "end_ms", "primary_carrier", "purpose"],
+  "required": ["scene_id", "voice_timing_id", "start_ms", "end_ms", "primary_carrier", "purpose"],
   "properties": {
     "scene_id": {"$ref": "#/$defs/safeId"},
+    "voice_timing_id": {"$ref": "#/$defs/safeId"},
     "start_ms": {"type": "integer", "minimum": 0},
     "end_ms": {"type": "integer", "minimum": 1},
     "primary_carrier": {"enum": ["a-roll", "b-roll", "scene", "demo", "motion-graphics", "evidence"]},

@@ -191,6 +191,19 @@ def artifact(
 
 
 def candidate(task_id, capability, inputs, gate, target_id, **constraints):
+    inputs = list(inputs)
+    if capability in {
+        "storyboard.plan",
+        "scene.produce",
+        "motion.preview",
+        "motion.produce",
+        "timeline.assemble",
+    }:
+        voice_timing_id = constraints.setdefault(
+            "voice_timing_id", "voice-timing-v1"
+        )
+        if voice_timing_id not in inputs:
+            inputs.append(voice_timing_id)
     return {
         "task_id": task_id,
         "capability": capability,
@@ -205,7 +218,182 @@ def candidate(task_id, capability, inputs, gate, target_id, **constraints):
     }
 
 
+def voice_bundle(*, timing_id="voice-timing-v1", timing_status="approved"):
+    """Return one hand-checked, real timing lineage for coordinator tests."""
+    return [
+        artifact("narration-v1", "narration"),
+        artifact(
+            "voice-source-v1",
+            "voice-source-decision",
+            narration_id="narration-v1",
+            mode="tts",
+            decision="approved",
+        ),
+        artifact(
+            "voice-profile-v1",
+            "voice-profile",
+            mode="tts",
+            language="zh-CN",
+            provider="chatcut",
+            voice_id="narrator-1",
+            speaking_rate=1.0,
+            emotion="calm",
+            pronunciations=[],
+            approved=True,
+        ),
+        artifact(
+            "voiceover-v1",
+            "voiceover",
+            parents=["narration-v1", "voice-profile-v1"],
+            narration_id="narration-v1",
+            profile_id="voice-profile-v1",
+            media_path="media/voiceover-v1.wav",
+            duration_ms=12000,
+            provenance="chatcut:voice",
+        ),
+        artifact(
+            timing_id,
+            "voice-timing",
+            status=timing_status,
+            parents=["voiceover-v1"],
+            voiceover_id="voiceover-v1",
+            timing_kind="real",
+            duration_ms=12000,
+            segments=[
+                {"start_ms": 0, "end_ms": 6000, "text": "first"},
+                {"start_ms": 6000, "end_ms": 12000, "text": "second"},
+            ],
+        ),
+    ]
+
+
+def create_voice_bundle(project):
+    for record in voice_bundle():
+        create_artifact(project, record)
+
+
 class CoordinatorTests(unittest.TestCase):
+    def test_direction_ready_routes_voice_prepare_and_blocks_storyboard(self):
+        """Catches direction approval dispatching storyboard before narration exists."""
+        style = artifact("style-v1", "style-pack")
+        narration = artifact("narration-v1", "narration")
+        source = artifact("source-v1", "voice-source-decision")
+        profile = artifact("profile-v1", "voice-profile")
+        voice_task = candidate(
+            "voice-prepare-v1",
+            "voice.prepare",
+            ["narration-v1", "style-v1", "source-v1", "profile-v1"],
+            "visual-direction",
+            "style-v1",
+        )
+        storyboard_task = candidate(
+            "storyboard-v1",
+            "storyboard.plan",
+            ["style-v1", "voice-timing-v1"],
+            "visual-direction",
+            "style-v1",
+            voice_timing_id="voice-timing-v1",
+        )
+        approval = {
+            "target_id": "style-v1",
+            "scope": "visual-direction",
+            "decision": "approved",
+        }
+
+        self.assertEqual(
+            ["voice.prepare"],
+            calculate_ready_tasks(
+                {
+                    "phase": "direction_ready",
+                    "candidate_tasks": [storyboard_task, voice_task],
+                },
+                [style, narration, source, profile],
+                [approval],
+            ),
+        )
+
+    def test_voice_ready_routes_storyboard_with_current_real_timing(self):
+        """Catches the new voice-ready phase having no legal storyboard action."""
+        task = candidate(
+            "storyboard-v1",
+            "storyboard.plan",
+            ["style-v1", "voice-timing-v1"],
+            "visual-direction",
+            "style-v1",
+            voice_timing_id="voice-timing-v1",
+        )
+        artifacts = [artifact("style-v1", "style-pack"), *voice_bundle()]
+
+        self.assertEqual(
+            ["storyboard.plan"],
+            calculate_ready_tasks(
+                {"phase": "voice_ready", "candidate_tasks": [task]},
+                artifacts,
+                [
+                    {
+                        "target_id": "style-v1",
+                        "scope": "visual-direction",
+                        "decision": "approved",
+                    }
+                ],
+            ),
+        )
+
+    def test_voice_ready_rejects_storyboard_with_stale_timing_input(self):
+        """Catches an approved but superseded timing input authorizing storyboard."""
+        task = candidate(
+            "storyboard-v1",
+            "storyboard.plan",
+            ["style-v1", "voice-timing-v1"],
+            "visual-direction",
+            "style-v1",
+            voice_timing_id="voice-timing-v1",
+        )
+        current_bundle = voice_bundle(timing_id="voice-timing-v2")
+        old_timing = artifact(
+            "voice-timing-v1",
+            "voice-timing",
+            parents=["voiceover-v1"],
+            voiceover_id="voiceover-v1",
+            timing_kind="real",
+            duration_ms=12000,
+            segments=[{"start_ms": 0, "end_ms": 12000, "text": "old"}],
+        )
+
+        self.assertEqual(
+            [],
+            calculate_ready_tasks(
+                {"phase": "voice_ready", "candidate_tasks": [task]},
+                [artifact("style-v1", "style-pack"), *current_bundle, old_timing],
+                [
+                    {
+                        "target_id": "style-v1",
+                        "scope": "visual-direction",
+                        "decision": "approved",
+                    }
+                ],
+            ),
+        )
+
+    def test_production_ready_without_voice_bundle_recovers_at_direction(self):
+        """Catches resume trusting a late phase that has no real voice lineage."""
+        with TemporaryDirectory() as folder:
+            project = Path(folder) / "project"
+            initialize_project(project, "kv-no-voice", "knowledge-video")
+            advance_project(project, "production_ready")
+            event_log = project / "events" / "events.jsonl"
+            original_events = event_log.read_bytes()
+
+            resumed = resume_project(project)
+
+            self.assertEqual("direction_ready", resumed["phase"])
+            self.assertEqual([], resumed["ready_tasks"])
+            self.assertEqual(
+                "voice-artifacts-required",
+                resumed["migration_requirement"]["code"],
+            )
+            self.assertEqual(original_events, event_log.read_bytes())
+
     def test_coordinator_routes_capabilities_only_in_legal_project_phases(self):
         """Catches a valid envelope running before its workflow phase is ready."""
         task = candidate(
@@ -217,7 +405,7 @@ class CoordinatorTests(unittest.TestCase):
             production_scope="representative-slice",
             scene_id="S01",
         )
-        artifacts = [artifact("storyboard-v1", "storyboard")]
+        artifacts = [artifact("storyboard-v1", "storyboard"), *voice_bundle()]
         approvals = [
             {
                 "target_id": "storyboard-v1",
@@ -278,7 +466,19 @@ class CoordinatorTests(unittest.TestCase):
                     target_id,
                     **extra,
                 )
-                artifacts = [artifact(target_id, target_type)]
+                gate_voice = (
+                    voice_bundle()
+                    if capability
+                    in {
+                        "storyboard.plan",
+                        "scene.produce",
+                        "motion.preview",
+                        "motion.produce",
+                        "timeline.assemble",
+                    }
+                    else []
+                )
+                artifacts = [artifact(target_id, target_type), *gate_voice]
                 state = {"candidate_tasks": [task], "locked_task_ids": []}
 
                 self.assertEqual([], calculate_ready_tasks(state, artifacts, []))
@@ -299,7 +499,7 @@ class CoordinatorTests(unittest.TestCase):
                     [],
                     calculate_ready_tasks(
                         state,
-                        [artifact(target_id, "unrelated-review-artifact")],
+                        [artifact(target_id, "unrelated-review-artifact"), *gate_voice],
                         [approval],
                     ),
                     "the gate must reject an approval targeting the wrong artifact type",
@@ -330,7 +530,7 @@ class CoordinatorTests(unittest.TestCase):
                     [],
                     calculate_ready_tasks(
                         unrelated_state,
-                        [artifacts[0], artifact(descendant_id, "task-input")],
+                        [artifacts[0], artifact(descendant_id, "task-input"), *gate_voice],
                         [approval],
                     ),
                     "an artifact of the right type must not approve another lineage",
@@ -346,6 +546,7 @@ class CoordinatorTests(unittest.TestCase):
                                 "task-input",
                                 parents=[target_id],
                             ),
+                            *gate_voice,
                         ],
                         [approval],
                     ),
@@ -363,7 +564,7 @@ class CoordinatorTests(unittest.TestCase):
             scene_id="S01",
         )
         state = {"candidate_tasks": [task], "locked_task_ids": []}
-        artifacts = [artifact("slice-v1", "representative-slice")]
+        artifacts = [artifact("slice-v1", "representative-slice"), *voice_bundle()]
 
         self.assertEqual(
             [],
@@ -403,7 +604,7 @@ class CoordinatorTests(unittest.TestCase):
             ["timeline.assemble"],
             calculate_ready_tasks(
                 {"candidate_tasks": [task], "locked_task_ids": []},
-                [artifact("storyboard-v1", "storyboard")],
+                [artifact("storyboard-v1", "storyboard"), *voice_bundle()],
                 [
                     {
                         "target_id": "storyboard-v1",
@@ -447,6 +648,7 @@ class CoordinatorTests(unittest.TestCase):
             artifact("storyboard-v1", "storyboard"),
             artifact("contract-S01-v1", "scene-contract", status="stale"),
             artifact("contract-S02-v1", "scene-contract"),
+            *voice_bundle(),
         ]
 
         self.assertEqual(
@@ -479,7 +681,7 @@ class CoordinatorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             calculate_ready_tasks(
                 {"candidate_tasks": [task], "locked_task_ids": []},
-                [artifact("slice-v1", "representative-slice")],
+                [artifact("slice-v1", "representative-slice"), *voice_bundle()],
                 [{"target_id": "slice-v1", "scope": "storyboard-and-cost", "decision": "approved"}],
             )
 
@@ -504,7 +706,7 @@ class CoordinatorTests(unittest.TestCase):
             [],
             calculate_ready_tasks(
                 {"candidate_tasks": [task], "locked_task_ids": []},
-                [artifact("storyboard-v1", "storyboard")],
+                [artifact("storyboard-v1", "storyboard"), *voice_bundle()],
                 [approval],
             ),
         )
@@ -529,6 +731,7 @@ class CoordinatorTests(unittest.TestCase):
                 scene_id="S01",
             ),
             artifact("slice-unrelated-v1", "representative-slice"),
+            *voice_bundle(),
         ]
         approval = {
             "target_id": "slice-unrelated-v1",
@@ -603,6 +806,7 @@ class CoordinatorTests(unittest.TestCase):
         with TemporaryDirectory() as folder:
             project = Path(folder) / "project"
             initialize_project(project, "kv-e2e", "knowledge-video")
+            create_voice_bundle(project)
             create_artifact(project, artifact("storyboard-v1", "storyboard"))
             create_artifact(
                 project,
@@ -767,6 +971,7 @@ class CoordinatorTests(unittest.TestCase):
         with TemporaryDirectory() as folder:
             project = Path(folder) / "project"
             initialize_project(project, "kv-dead-lock", "knowledge-video")
+            create_voice_bundle(project)
             create_artifact(project, artifact("storyboard-v1", "storyboard"))
             approve_artifact(
                 project,

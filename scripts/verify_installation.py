@@ -61,7 +61,10 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
     contracts_path = root / "tests" / "fixtures" / "knowledge-video-minimal" / "scene-contracts.json"
     try:
         contracts = json.loads(contracts_path.read_text(encoding="utf-8"))
-        selected_slice = select_representative_slice(contracts)
+        timing = next(
+            item for item in _voice_bundle() if item["type"] == "voice-timing"
+        )
+        selected_slice = select_representative_slice(contracts, timing)
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
         return {
             "ok": False,
@@ -310,14 +313,26 @@ def _check_four_gates() -> bool:
         task = _candidate(
             f"gate-task-{index}", capability, [target_id], gate, target_id, **extra
         )
-        artifacts = [_artifact(target_id, target_type)]
+        gate_voice = (
+            _voice_bundle()
+            if capability
+            in {
+                "storyboard.plan",
+                "scene.produce",
+                "motion.preview",
+                "motion.produce",
+                "timeline.assemble",
+            }
+            else []
+        )
+        artifacts = [_artifact(target_id, target_type), *gate_voice]
         state = {"candidate_tasks": [task], "locked_task_ids": []}
         if calculate_ready_tasks(state, artifacts, []):
             return False
         approval = {"target_id": target_id, "scope": gate, "decision": "approved"}
         if calculate_ready_tasks(
             state,
-            [_artifact(target_id, "unrelated-review-artifact")],
+            [_artifact(target_id, "unrelated-review-artifact"), *gate_voice],
             [approval],
         ):
             return False
@@ -338,13 +353,14 @@ def _check_four_gates() -> bool:
         }
         if calculate_ready_tasks(
             unrelated_state,
-            [artifacts[0], _artifact(descendant_id, "task-input")],
+            [artifacts[0], _artifact(descendant_id, "task-input"), *gate_voice],
             [approval],
         ):
             return False
         related_artifacts = [
             artifacts[0],
             _artifact(descendant_id, "task-input", parents=[target_id]),
+            *gate_voice,
         ]
         if calculate_ready_tasks(
             unrelated_state,
@@ -359,6 +375,8 @@ def _run_resume_scenario() -> dict[str, Any]:
     with TemporaryDirectory() as folder:
         project = Path(folder) / "project"
         initialize_project(project, "kv-resume-smoke", "knowledge-video")
+        for item in _voice_bundle():
+            create_artifact(project, item)
         for item in (
             _artifact("storyboard-v1", "storyboard"),
             _artifact(
@@ -668,6 +686,19 @@ def _candidate(
     target_id: str,
     **constraints: Any,
 ) -> dict[str, Any]:
+    inputs = list(inputs)
+    if capability in {
+        "storyboard.plan",
+        "scene.produce",
+        "motion.preview",
+        "motion.produce",
+        "timeline.assemble",
+    }:
+        voice_timing_id = constraints.setdefault(
+            "voice_timing_id", "voice-timing-v1"
+        )
+        if voice_timing_id not in inputs:
+            inputs.append(voice_timing_id)
     return {
         "task_id": task_id,
         "capability": capability,
@@ -680,6 +711,54 @@ def _candidate(
             **constraints,
         },
     }
+
+
+def _voice_bundle() -> list[dict[str, Any]]:
+    return [
+        _artifact("narration-v1", "narration"),
+        _artifact(
+            "voice-source-v1",
+            "voice-source-decision",
+            narration_id="narration-v1",
+            mode="tts",
+            decision="approved",
+        ),
+        _artifact(
+            "voice-profile-v1",
+            "voice-profile",
+            mode="tts",
+            language="zh-CN",
+            provider="chatcut",
+            voice_id="narrator-1",
+            speaking_rate=1.0,
+            emotion="calm",
+            pronunciations=[],
+            approved=True,
+        ),
+        _artifact(
+            "voiceover-v1",
+            "voiceover",
+            parents=["narration-v1", "voice-profile-v1"],
+            narration_id="narration-v1",
+            profile_id="voice-profile-v1",
+            media_path="media/voiceover-v1.wav",
+            duration_ms=15000,
+            provenance="smoke-fixture",
+        ),
+        _artifact(
+            "voice-timing-v1",
+            "voice-timing",
+            parents=["voiceover-v1"],
+            voiceover_id="voiceover-v1",
+            timing_kind="real",
+            duration_ms=15000,
+            segments=[
+                {"start_ms": 0, "end_ms": 5000, "text": "first"},
+                {"start_ms": 5000, "end_ms": 10000, "text": "second"},
+                {"start_ms": 10000, "end_ms": 15000, "text": "third"},
+            ],
+        ),
+    ]
 
 
 def main() -> int:

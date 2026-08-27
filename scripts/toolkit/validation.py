@@ -82,7 +82,17 @@ def validate_project(root: Path) -> dict[str, list[dict[str, Any]]]:
     active_timeline = _resolve_active_timeline(root, project, artifacts, errors)
     if active_timeline is not None:
         timeline_id, timeline = active_timeline
-        _check_timeline(root, timeline_id, timeline, artifacts, errors, warnings)
+        _check_timeline(
+            root,
+            timeline_id,
+            timeline,
+            artifacts,
+            errors,
+            warnings,
+            allow_legacy_scene_contracts=(
+                project.get("schema_version") == LEGACY_PROJECT_SCHEMA_VERSION
+            ),
+        )
     _check_required_approvals(project, artifacts, approvals, errors)
     return {"errors": _sorted_issues(errors), "warnings": _sorted_issues(warnings)}
 
@@ -688,7 +698,16 @@ def _resolve_active_timeline(root: Path, project: dict[str, Any], artifacts: dic
     return None
 
 
-def _check_timeline(root: Path, timeline_id: str, timeline: dict[str, Any], artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]], warnings: list[dict[str, Any]]) -> None:
+def _check_timeline(
+    root: Path,
+    timeline_id: str,
+    timeline: dict[str, Any],
+    artifacts: dict[str, dict[str, Any]],
+    errors: list[dict[str, Any]],
+    warnings: list[dict[str, Any]],
+    *,
+    allow_legacy_scene_contracts: bool,
+) -> None:
     duration = timeline.get("duration_ms")
     if not _duration(duration) or duration <= 0:
         errors.append(_issue("invalid-timeline-duration", timeline_id=timeline_id))
@@ -706,7 +725,14 @@ def _check_timeline(root: Path, timeline_id: str, timeline: dict[str, Any], arti
     for track_id, _, primary, clips in tracks:
         _check_track(timeline_id, track_id, primary or primary_count != 1, clips, duration, artifacts, errors, warnings)
     _check_captions(timeline_id, timeline.get("captions", []), duration, errors)
-    contracted_clips = _check_contracts(root, timeline_id, timeline, artifacts, errors)
+    contracted_clips = _check_contracts(
+        root,
+        timeline_id,
+        timeline,
+        artifacts,
+        errors,
+        allow_legacy_scene_contracts=allow_legacy_scene_contracts,
+    )
     _check_demo_lifecycle(timeline_id, timeline, contracted_clips, errors)
 
 
@@ -792,6 +818,8 @@ def _check_contracts(
     timeline: dict[str, Any],
     artifacts: dict[str, dict[str, Any]],
     errors: list[dict[str, Any]],
+    *,
+    allow_legacy_scene_contracts: bool,
 ) -> list[tuple[dict[str, Any], dict[str, Any]]]:
     referenced: dict[str, list[dict[str, Any]]] = {}
     contracted_clips: list[tuple[dict[str, Any], dict[str, Any]]] = []
@@ -815,7 +843,12 @@ def _check_contracts(
             errors.append(_issue("invalid-contract-coverage", contract_id=contract_id, timeline_id=timeline_id))
             continue
         try:
-            payload = validate_scene_contract(payload)
+            timing = artifacts.get(payload.get("voice_timing_id"))
+            payload = validate_scene_contract(
+                payload,
+                None if allow_legacy_scene_contracts else timing,
+                allow_legacy_unresolved_timing=allow_legacy_scene_contracts,
+            )
         except ValueError:
             errors.append(
                 _issue(

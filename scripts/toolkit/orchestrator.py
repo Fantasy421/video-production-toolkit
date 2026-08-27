@@ -13,13 +13,20 @@ from scripts.toolkit.invalidation import (
     invalidate_descendants,
     invalidated_artifact_ids,
 )
-from scripts.toolkit.project_state import PHASES, append_event, replay_events
+from scripts.toolkit.project_state import (
+    PHASES,
+    append_event,
+    project_recovery_view,
+    replay_events,
+)
 from scripts.toolkit.runtime_paths import project_path, project_root
 from scripts.toolkit.tasks import (
     _read_envelope,
     _validate_envelope,
     active_claim_task_ids,
+    voice_timing_input_is_current,
 )
+from scripts.toolkit.voice import validate_voice_bundle
 
 
 GATES = (
@@ -32,6 +39,7 @@ GATES = (
 _BASE_GATES = {
     "narration.plan": "content",
     "visual.preview": "content",
+    "voice.prepare": "visual-direction",
     "storyboard.plan": "visual-direction",
     "scene.produce": "storyboard-and-cost",
     "motion.preview": "storyboard-and-cost",
@@ -57,7 +65,8 @@ _FINAL_GATE_TARGET_TYPES = {
 _CAPABILITY_PHASES = {
     "narration.plan": {"initialized"},
     "visual.preview": {"content_ready"},
-    "storyboard.plan": {"direction_ready"},
+    "voice.prepare": {"direction_ready"},
+    "storyboard.plan": {"voice_ready"},
     "scene.produce": {"storyboard_ready", "production_ready"},
     "motion.preview": {"storyboard_ready"},
     "motion.produce": {"storyboard_ready", "production_ready"},
@@ -108,6 +117,8 @@ def calculate_ready_tasks(
         if phase is not None and not _capability_is_legal_in_phase(candidate, phase):
             continue
         if not _parents_are_current(candidate["inputs"], by_id):
+            continue
+        if not voice_timing_input_is_current(candidate, by_id):
             continue
         gate = _required_gate(candidate)
         if gate is not None and not _has_gate_approval(
@@ -167,6 +178,11 @@ def resume_project(root: Path) -> dict[str, Any]:
         {**item, "status": "stale"} if item["artifact_id"] in invalidated else item
         for item in artifacts
     ]
+    state = project_recovery_view(
+        root,
+        effective_artifacts,
+        has_current_voice_lineage=_has_current_voice_bundle,
+    )
     candidate_tasks = _load_candidate_tasks(root)
     locked = active_claim_task_ids(root)
     completed = sorted(
@@ -190,6 +206,28 @@ def resume_project(root: Path) -> dict[str, Any]:
         "completed_task_ids": completed,
         "ready_tasks": ready,
     }
+
+
+def _has_current_voice_bundle(artifacts: Iterable[Mapping[str, Any]]) -> bool:
+    """Use the authoritative validator behind project-state's dependency seam."""
+    records = list(artifacts)
+    narration_ids = sorted(
+        {
+            item.get("narration_id")
+            for item in records
+            if isinstance(item, Mapping)
+            and item.get("type") == "voice-source-decision"
+            and isinstance(item.get("narration_id"), str)
+            and item.get("narration_id")
+        }
+    )
+    for narration_id in narration_ids:
+        try:
+            if validate_voice_bundle(records, narration_id)["ok"]:
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 def _required_gate(candidate: Mapping[str, Any]) -> Optional[str]:

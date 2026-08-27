@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -16,10 +17,53 @@ class TaskTests(unittest.TestCase):
     def setUp(self):
         self.folder = TemporaryDirectory()
         self.root = Path(self.folder.name)
+        self.create_artifact("narration-v1", "narration", 1)
+        self.create_artifact(
+            "voice-source-v1",
+            "voice-source-decision",
+            1,
+            narration_id="narration-v1",
+            mode="tts",
+            decision="approved",
+        )
+        self.create_artifact(
+            "voice-profile-v1",
+            "voice-profile",
+            1,
+            mode="tts",
+            language="zh-CN",
+            provider="chatcut",
+            voice_id="narrator-1",
+            speaking_rate=1.0,
+            emotion="calm",
+            pronunciations=[],
+            approved=True,
+        )
+        self.create_artifact(
+            "voiceover-v1",
+            "voiceover",
+            1,
+            parents=["narration-v1", "voice-profile-v1"],
+            narration_id="narration-v1",
+            profile_id="voice-profile-v1",
+            media_path="media/voiceover-v1.wav",
+            duration_ms=12000,
+            provenance="chatcut:voice",
+        )
         self.inputs = [
             self.create_artifact("scene-contract-S03-v4", "scene-contract", 4),
             self.create_artifact("style-v3", "style-pack", 3),
             self.create_artifact("layout-v2", "layout-pack", 2),
+            self.create_artifact(
+                "voice-timing-v1",
+                "voice-timing",
+                1,
+                parents=["voiceover-v1"],
+                voiceover_id="voiceover-v1",
+                timing_kind="real",
+                duration_ms=12000,
+                segments=[{"start_ms": 0, "end_ms": 12000, "text": "narration"}],
+            ),
         ]
         self.create_artifact(
             "motion-preview-S03-v2",
@@ -34,7 +78,11 @@ class TaskTests(unittest.TestCase):
             "inputs": self.inputs,
             "adapter_preferences": ["hyperframes", "remotion"],
             "output_contract": "motion-preview-v1",
-            "constraints": {"do_not_rewrite_script": True, "max_attempts": 2},
+            "constraints": {
+                "do_not_rewrite_script": True,
+                "max_attempts": 2,
+                "voice_timing_id": "voice-timing-v1",
+            },
         }
 
     def tearDown(self):
@@ -82,6 +130,40 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(self.envelope, json.loads(path.read_text(encoding="utf-8")))
         with self.assertRaises(FileExistsError):
             create_task(self.root, self.envelope)
+
+    def test_downstream_task_envelope_requires_declared_voice_timing_input(self):
+        """Catches production work being persisted without immutable timing provenance."""
+        envelope = {
+            **self.envelope,
+            "task_id": "preview-without-timing",
+            "inputs": [
+                artifact_id
+                for artifact_id in self.envelope["inputs"]
+                if artifact_id != "voice-timing-v1"
+            ],
+            "constraints": {**self.envelope["constraints"]},
+        }
+        envelope["constraints"].pop("voice_timing_id")
+
+        with self.assertRaisesRegex(ValueError, "voice_timing_id"):
+            create_task(self.root, envelope)
+
+    def test_downstream_task_cannot_persist_a_superseded_timing_input(self):
+        """Catches immutable dispatch accepting a non-current real timing version."""
+        self.create_artifact(
+            "voice-timing-v2",
+            "voice-timing",
+            2,
+            parents=["voiceover-v1"],
+            voiceover_id="voiceover-v1",
+            timing_kind="real",
+            duration_ms=12000,
+            segments=[{"start_ms": 0, "end_ms": 12000, "text": "current"}],
+        )
+        envelope = {**self.envelope, "task_id": "preview-with-stale-timing"}
+
+        with self.assertRaisesRegex(ValueError, "current real voice_timing_id"):
+            create_task(self.root, envelope)
 
     def test_task_storage_rejects_a_symlink_escape(self):
         """Catches task envelopes and claims being written outside the runtime project."""
@@ -219,6 +301,22 @@ class TaskTests(unittest.TestCase):
         )
         self.assertFalse((self.root / "tasks" / "results" / "preview-S03-v2.json").exists())
 
+    def test_late_result_is_stale_after_a_new_real_timing_is_published(self):
+        """Catches completion reusing timing that ceased to be current after dispatch."""
+        claim = self.dispatch_and_claim()
+        self.create_artifact(
+            "voice-timing-v2",
+            "voice-timing",
+            2,
+            parents=["voiceover-v1"],
+            voiceover_id="voiceover-v1",
+            timing_kind="real",
+            duration_ms=12000,
+            segments=[{"start_ms": 0, "end_ms": 12000, "text": "revised"}],
+        )
+
+        self.assertEqual("stale-result", complete_task(self.root, self.result_for(claim)))
+
     def test_stale_result_is_terminal_and_repeated_completion_leaves_no_claim(self):
         """Catches a second stale publication colliding and trapping a reclaimed task lock."""
         claim = self.dispatch_and_claim()
@@ -286,22 +384,7 @@ class TaskTests(unittest.TestCase):
         for status in ("blocked", "waiting_external", "waiting_user", "failed", "cancelled"):
             with self.subTest(status=status), TemporaryDirectory() as folder:
                 root = Path(folder)
-                for artifact_id, artifact_type, version in (
-                    ("scene-contract-S03-v4", "scene-contract", 4),
-                    ("style-v3", "style-pack", 3),
-                    ("layout-v2", "layout-pack", 2),
-                ):
-                    create_artifact(
-                        root,
-                        {
-                            "artifact_id": artifact_id,
-                            "type": artifact_type,
-                            "version": version,
-                            "status": "approved",
-                            "parents": [],
-                            "path": f"media/{artifact_id}.json",
-                        },
-                    )
+                shutil.copytree(self.root / "artifacts", root / "artifacts")
                 create_task(root, self.envelope)
                 claim = claim_task(root, "preview-S03-v2", "worker-a")
                 checkpoint = self.result_for(
@@ -454,6 +537,7 @@ class TaskTests(unittest.TestCase):
                     "remotion-best-practices",
                     "video-shotcraft:video-shotcraft",
                 ],
+                "voice_timing_id": "voice-timing-v1",
             },
         }
         create_task(self.root, envelope)

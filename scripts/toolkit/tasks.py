@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
@@ -13,6 +14,7 @@ from scripts.toolkit.artifacts import _artifact_paths_by_id, _read_valid_artifac
 from scripts.toolkit.adapters import select_adapter
 from scripts.toolkit.invalidation import invalidated_artifact_ids
 from scripts.toolkit.runtime_paths import project_path, project_root, storage_directory
+from scripts.toolkit.voice import validate_voice_bundle
 
 
 CLAIM_LEASE_SECONDS = 300.0
@@ -46,16 +48,98 @@ RESULT_KEYS = {
     "error",
     "user_decision_request",
 }
+VOICE_TIMING_CAPABILITIES = frozenset(
+    {
+        "storyboard.plan",
+        "scene.produce",
+        "motion.preview",
+        "motion.produce",
+        "timeline.assemble",
+        "captions.produce",
+        "representative-slice.produce",
+    }
+)
 
 
 def create_task(root: Path, envelope: dict[str, Any]) -> Path:
     """Persist one immutable, schema-shaped task envelope."""
     _validate_envelope(envelope)
     root = project_root(root)
+    if not voice_timing_input_is_current(
+        envelope, _artifacts_by_id(root / "artifacts")
+    ):
+        raise ValueError("task envelope requires the current real voice_timing_id")
     storage_directory(root, "tasks", create=True)
     destination = _task_path(root, envelope["task_id"])
     _publish_immutable_json(destination, _serialize_json(envelope))
     return destination
+
+
+def voice_timing_input_is_current(
+    envelope: dict[str, Any], artifacts: Any
+) -> bool:
+    """Return whether a timing consumer declares the exact current real timing.
+
+    Structural envelope defects remain programmer errors. Project-content
+    defects (missing, stale, estimated, or mismatched voice lineage) make the
+    task ineligible instead of weakening the immutable input contract.
+    """
+    _validate_envelope(envelope)
+    if envelope["capability"] not in VOICE_TIMING_CAPABILITIES:
+        return True
+    records = _artifact_values(artifacts)
+    timing_id = envelope["constraints"].get("voice_timing_id")
+    if (
+        not isinstance(timing_id, str)
+        or not timing_id
+        or timing_id in {".", ".."}
+        or "/" in timing_id
+        or "\\" in timing_id
+        or timing_id not in envelope["inputs"]
+    ):
+        return False
+    timing = _unique_record(records, timing_id)
+    if (
+        timing is None
+        or timing.get("type") != "voice-timing"
+        or timing.get("status") != "approved"
+    ):
+        return False
+    voiceover_id = timing.get("voiceover_id")
+    voiceover = _unique_record(records, voiceover_id)
+    if voiceover is None or voiceover.get("type") != "voiceover":
+        return False
+    narration_id = voiceover.get("narration_id")
+    if not isinstance(narration_id, str) or not narration_id:
+        return False
+    bundle = validate_voice_bundle(records, narration_id)
+    return (
+        bundle["ok"]
+        and bundle["voiceover_id"] == voiceover_id
+        and bundle["voice_timing_id"] == timing_id
+    )
+
+
+def _artifact_values(artifacts: Any) -> list[dict[str, Any]]:
+    values = artifacts.values() if isinstance(artifacts, Mapping) else artifacts
+    if isinstance(values, (str, bytes)):
+        raise ValueError("artifacts must be a collection")
+    try:
+        records = list(values)
+    except TypeError as error:
+        raise ValueError("artifacts must be a collection") from error
+    if not all(isinstance(item, Mapping) for item in records):
+        raise ValueError("artifacts must contain objects")
+    return [dict(item) for item in records]
+
+
+def _unique_record(
+    records: list[dict[str, Any]], artifact_id: Any
+) -> Optional[dict[str, Any]]:
+    if not isinstance(artifact_id, str) or not artifact_id:
+        return None
+    matches = [item for item in records if item.get("artifact_id") == artifact_id]
+    return matches[0] if len(matches) == 1 else None
 
 
 def claim_task(root: Path, task_id: str, worker_id: str) -> dict[str, str]:
@@ -212,6 +296,8 @@ def _is_current_result(root: Path, envelope: dict[str, Any], result: dict[str, A
         return False
     invalidated = invalidated_artifact_ids(root)
     artifacts = _artifacts_by_id(root / "artifacts")
+    if not voice_timing_input_is_current(envelope, artifacts):
+        return False
     for artifact_id in envelope["inputs"]:
         artifact = artifacts.get(artifact_id)
         if (

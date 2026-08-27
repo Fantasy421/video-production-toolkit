@@ -60,6 +60,7 @@ class ValidationTests(unittest.TestCase):
             json.dumps(
                 {
                     "scene_id": "S01",
+                    "voice_timing_id": "voice-timing-v1",
                     "start_ms": 0,
                     "end_ms": 10_000,
                     "primary_carrier": "scene",
@@ -775,6 +776,7 @@ class ValidationTests(unittest.TestCase):
             json.dumps(
                 {
                     "scene_id": "S01",
+                    "voice_timing_id": "voice-timing-v1",
                     "start_ms": 0,
                     "end_ms": 10_000,
                     "primary_carrier": "Scene",
@@ -796,6 +798,31 @@ class ValidationTests(unittest.TestCase):
             {item["code"] for item in result["errors"]},
         )
         self.assertNotIn(
+            "invalid-scene-contract",
+            {item["code"] for item in result["errors"]},
+        )
+
+    def test_current_project_scene_contract_rejects_estimated_timing_artifact(self):
+        """Catches v2 structural validation using the legacy syntax-only path."""
+        project_path = self.root / "project.json"
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project["schema_version"] = 2
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+        self.write_artifact(
+            "voice-timing-v1",
+            "voice-timing",
+            1,
+            "approved",
+            "metadata/voice-timing-v1.json",
+            voiceover_id="voiceover-v1",
+            timing_kind="estimated",
+            duration_ms=10_000,
+            segments=[{"start_ms": 0, "end_ms": 10_000, "text": "estimate"}],
+        )
+
+        result = validate_project(self.root)
+
+        self.assertIn(
             "invalid-scene-contract",
             {item["code"] for item in result["errors"]},
         )

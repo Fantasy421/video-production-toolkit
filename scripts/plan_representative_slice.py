@@ -31,11 +31,13 @@ class RepresentativeSlice(list[str]):
         scene_ids: list[str],
         ranges: tuple[tuple[int, int], ...],
         composite: bool,
+        voice_timing_id: str,
         blocker: Optional[dict[str, Any]] = None,
     ):
         super().__init__(scene_ids)
         self.ranges = ranges
         self.composite = composite
+        self.voice_timing_id = voice_timing_id
         self.blocker = blocker
         self.blocked = blocker is not None
 
@@ -44,32 +46,39 @@ class RepresentativeSlice(list[str]):
         return sum(end - start for start, end in self.ranges)
 
 
-def select_representative_slice(scene_contracts: Sequence[Mapping[str, Any]]) -> RepresentativeSlice:
+def select_representative_slice(
+    scene_contracts: Sequence[Mapping[str, Any]], voice_timing: Mapping[str, Any]
+) -> RepresentativeSlice:
     """Choose one 10--20 second adjacent range, or an explicit composite sample.
 
     Contracts are metadata only.  The result carries scene IDs rather than paths
     or media, which keeps the representative-slice gate deterministic and safe
     to pass through the coordinator.
     """
-    contracts = _normalize_contracts(scene_contracts)
+    if not isinstance(voice_timing, Mapping):
+        raise ValueError("voice_timing must be a mapping")
+    contracts = _normalize_contracts(scene_contracts, voice_timing)
+    voice_timing_id = voice_timing.get("artifact_id")
     if not contracts:
-        return RepresentativeSlice([], (), False)
+        return RepresentativeSlice([], (), False, voice_timing_id)
     candidates = _range_candidates(contracts)
     plans = _valid_plans(candidates, contracts)
     if not plans:
-        return _duration_blocker(contracts)
+        return _duration_blocker(contracts, voice_timing_id)
     best = min(plans, key=lambda plan: _plan_key(plan, contracts))
-    return _slice_from_ranges(best, contracts)
+    return _slice_from_ranges(best, contracts, voice_timing_id)
 
 
-def _normalize_contracts(scene_contracts: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _normalize_contracts(
+    scene_contracts: Sequence[Mapping[str, Any]], voice_timing: Mapping[str, Any]
+) -> list[dict[str, Any]]:
     if isinstance(scene_contracts, (str, bytes)) or not isinstance(scene_contracts, Sequence):
         raise ValueError("scene_contracts must be a sequence")
     normalized = []
     for contract in scene_contracts:
         if not isinstance(contract, Mapping):
             raise ValueError("scene contract must be a mapping")
-        contract = validate_scene_contract(contract)
+        contract = validate_scene_contract(contract, voice_timing)
         scene_id = contract["scene_id"]
         start, end = contract.get("start_ms"), contract.get("end_ms")
         if isinstance(start, bool) or isinstance(end, bool) or not isinstance(start, int) or not isinstance(end, int) or start < 0 or end <= start:
@@ -156,16 +165,23 @@ def _duration(plan: tuple[tuple[int, int], ...], contracts: list[dict[str, Any]]
     return sum(contracts[end]["end"] - contracts[start]["start"] for start, end in plan)
 
 
-def _slice_from_ranges(ranges: tuple[tuple[int, int], ...], contracts: list[dict[str, Any]]) -> RepresentativeSlice:
+def _slice_from_ranges(
+    ranges: tuple[tuple[int, int], ...],
+    contracts: list[dict[str, Any]],
+    voice_timing_id: str,
+) -> RepresentativeSlice:
     selected = [item for start, end in ranges for item in contracts[start : end + 1]]
     return RepresentativeSlice(
         [item["id"] for item in selected],
         tuple((contracts[start]["start"], contracts[end]["end"]) for start, end in ranges),
         len(ranges) == 2,
+        voice_timing_id,
     )
 
 
-def _duration_blocker(contracts: list[dict[str, Any]]) -> RepresentativeSlice:
+def _duration_blocker(
+    contracts: list[dict[str, Any]], voice_timing_id: str
+) -> RepresentativeSlice:
     required = sorted({
         item["carrier"]
         for item in contracts
@@ -175,6 +191,7 @@ def _duration_blocker(contracts: list[dict[str, Any]]) -> RepresentativeSlice:
         [],
         (),
         False,
+        voice_timing_id,
         {
             "status": "blocked",
             "code": "representative-slice-duration-unavailable",
@@ -186,11 +203,14 @@ def _duration_blocker(contracts: list[dict[str, Any]]) -> RepresentativeSlice:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plan a compact representative production slice.")
     parser.add_argument("contracts", help="JSON file containing an array of scene contracts")
+    parser.add_argument("voice_timing", help="JSON file containing the exact real voice timing artifact")
     args = parser.parse_args()
     with open(args.contracts, encoding="utf-8") as handle:
         contracts = json.load(handle)
-    selected = select_representative_slice(contracts)
-    print(json.dumps({"scene_ids": list(selected), "ranges": selected.ranges, "composite": selected.composite, "blocker": selected.blocker}, ensure_ascii=False, separators=(",", ":")))
+    with open(args.voice_timing, encoding="utf-8") as handle:
+        voice_timing = json.load(handle)
+    selected = select_representative_slice(contracts, voice_timing)
+    print(json.dumps({"scene_ids": list(selected), "ranges": selected.ranges, "composite": selected.composite, "voice_timing_id": selected.voice_timing_id, "blocker": selected.blocker}, ensure_ascii=False, separators=(",", ":")))
 
 
 if __name__ == "__main__":
