@@ -9,6 +9,49 @@ VOICE_SOURCE = "voice-source-decision"
 VOICE_PROFILE = "voice-profile"
 VOICEOVER = "voiceover"
 VOICE_TIMING = "voice-timing"
+_VOICE_TYPES = frozenset({VOICE_SOURCE, VOICE_PROFILE, VOICEOVER, VOICE_TIMING})
+_ARTIFACT_REQUIRED_FIELDS = (
+    "artifact_id",
+    "type",
+    "version",
+    "status",
+    "parents",
+    "path",
+)
+_ARTIFACT_STATUSES = frozenset({"draft", "approved", "stale", "superseded", "invalid"})
+_VOICE_REQUIRED_FIELDS = {
+    VOICE_SOURCE: frozenset({"narration_id", "mode", "decision"}),
+    VOICE_PROFILE: frozenset(
+        {
+            "mode",
+            "language",
+            "provider",
+            "voice_id",
+            "speaking_rate",
+            "emotion",
+            "pronunciations",
+            "approved",
+        }
+    ),
+    VOICEOVER: frozenset(
+        {
+            "narration_id",
+            "profile_id",
+            "media_path",
+            "duration_ms",
+            "provenance",
+        }
+    ),
+    VOICE_TIMING: frozenset(
+        {"voiceover_id", "timing_kind", "duration_ms", "segments"}
+    ),
+}
+_VOICE_ALLOWED_FIELDS = {
+    artifact_type: frozenset(_ARTIFACT_REQUIRED_FIELDS)
+    | required_fields
+    | {"output_contract"}
+    for artifact_type, required_fields in _VOICE_REQUIRED_FIELDS.items()
+}
 
 
 def validate_voice_bundle(
@@ -20,9 +63,10 @@ def validate_voice_bundle(
     stale record becomes a stable issue, never an exception.  Only API misuse
     (a non-iterable/non-mapping bundle or invalid narration selector) raises.
     """
-    records = _artifact_records(artifacts)
+    raw_records = _artifact_records(artifacts)
     _require_narration_id(narration_id)
     issues: list[dict[str, Any]] = []
+    records = _valid_voice_records(raw_records, issues)
 
     source = _current_source(records, narration_id, issues)
     voiceover = _current_voiceover(records, narration_id, issues)
@@ -62,8 +106,7 @@ def has_current_voice_lineage(
             item["narration_id"]
             for item in records
             if item.get("type") == VOICE_SOURCE
-            and isinstance(item.get("narration_id"), str)
-            and item["narration_id"].strip()
+            and _safe_id(item.get("narration_id"))
         }
     )
     return any(validate_voice_bundle(records, candidate)["ok"] for candidate in narration_ids)
@@ -82,8 +125,62 @@ def _artifact_records(artifacts: Iterable[Mapping[str, Any]]) -> list[dict[str, 
 
 
 def _require_narration_id(narration_id: Any) -> None:
-    if not isinstance(narration_id, str) or not narration_id.strip():
-        raise ValueError("narration_id must be non-empty text")
+    if not _safe_id(narration_id):
+        raise ValueError("narration_id must be a safe non-empty component")
+
+
+def _valid_voice_records(
+    records: list[dict[str, Any]], issues: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    valid: list[dict[str, Any]] = []
+    for record in records:
+        artifact_type = record.get("type")
+        if not isinstance(artifact_type, str) or artifact_type not in _VOICE_TYPES:
+            continue
+        if not _valid_voice_record(record):
+            _add_issue(issues, "malformed-voice-artifact", record)
+            continue
+        valid.append(record)
+    return valid
+
+
+def _valid_voice_record(record: Mapping[str, Any]) -> bool:
+    artifact_type = record.get("type")
+    if not isinstance(artifact_type, str) or artifact_type not in _VOICE_TYPES:
+        return False
+    if not all(field in record for field in _ARTIFACT_REQUIRED_FIELDS):
+        return False
+    if not _VOICE_REQUIRED_FIELDS[artifact_type].issubset(record):
+        return False
+    if not set(record).issubset(_VOICE_ALLOWED_FIELDS[artifact_type]):
+        return False
+    if "output_contract" in record and not _nonempty_text(record["output_contract"]):
+        return False
+    if not _safe_id(record["artifact_id"]) or not _safe_id(record["type"]):
+        return False
+    if (
+        isinstance(record["version"], bool)
+        or not isinstance(record["version"], int)
+        or record["version"] < 1
+        or not isinstance(record["status"], str)
+        or record["status"] not in _ARTIFACT_STATUSES
+        or not _safe_project_relative_path(record["path"])
+        or not _safe_id_list(record["parents"])
+    ):
+        return False
+    if artifact_type == VOICE_SOURCE:
+        return _safe_id(record["narration_id"])
+    if artifact_type == VOICEOVER:
+        return _safe_id(record["narration_id"]) and _safe_id(record["profile_id"])
+    if artifact_type == VOICE_TIMING:
+        return _safe_id(record["voiceover_id"])
+    return True
+
+
+def _safe_id_list(value: Any) -> bool:
+    if not isinstance(value, list) or not all(_safe_id(item) for item in value):
+        return False
+    return len(value) == len(set(value))
 
 
 def _current_source(
@@ -184,26 +281,28 @@ def _validate_source_and_profile(
     if source is not None:
         if source.get("narration_id") != narration_id:
             _add_issue(issues, "voice-source-decision-lineage-mismatch", source)
-        if source.get("mode") not in {"uploaded-voice", "tts"}:
+        if not _valid_mode(source.get("mode")):
             _add_issue(issues, "voice-source-decision-invalid-mode", source)
         if source.get("decision") != "approved":
             _add_issue(issues, "voice-source-decision-unapproved", source)
     if profile is not None:
-        if profile.get("mode") not in {"uploaded-voice", "tts"}:
+        if not _valid_mode(profile.get("mode")):
             _add_issue(issues, "voice-profile-invalid-mode", profile)
         if profile.get("approved") is not True:
             _add_issue(issues, "voice-profile-unapproved", profile)
-        for field in ("language", "provider", "voice_id", "emotion"):
+        for field in ("language", "provider", "emotion"):
             if not _nonempty_text(profile.get(field)):
                 _add_issue(issues, "invalid-voice-profile", profile)
                 break
+        if not _safe_id(profile.get("voice_id")):
+            _add_issue(issues, "invalid-voice-profile", profile)
         rate = profile.get("speaking_rate")
         if isinstance(rate, bool) or not isinstance(rate, (int, float)) or rate <= 0:
             _add_issue(issues, "invalid-voice-profile", profile)
         pronunciations = profile.get("pronunciations")
         if not isinstance(pronunciations, list) or not all(
             _nonempty_text(item) for item in pronunciations
-        ):
+        ) or len(pronunciations) != len(set(pronunciations)):
             _add_issue(issues, "invalid-voice-profile", profile)
         if source is not None and profile.get("mode") != source.get("mode"):
             _add_issue(issues, "voice-profile-lineage-mismatch", profile)
@@ -277,6 +376,9 @@ def _validate_segments(
         if not isinstance(segment, Mapping):
             _add_issue(issues, "invalid-voice-timing-segment", timing)
             continue
+        if set(segment) != {"start_ms", "end_ms", "text"}:
+            _add_issue(issues, "invalid-voice-timing-segment", timing)
+            continue
         start, end, text = segment.get("start_ms"), segment.get("end_ms"), segment.get("text")
         if not _nonnegative_milliseconds(start) or not _positive_milliseconds(end) or end <= start:
             _add_issue(issues, "invalid-voice-timing-segment", timing)
@@ -305,6 +407,20 @@ def _safe_project_relative_path(value: Any) -> bool:
     )
 
 
+def _safe_id(value: Any) -> bool:
+    return (
+        _nonempty_text(value)
+        and not any(character.isspace() for character in value)
+        and value not in {".", ".."}
+        and "/" not in value
+        and "\\" not in value
+    )
+
+
+def _valid_mode(value: Any) -> bool:
+    return isinstance(value, str) and value in {"uploaded-voice", "tts"}
+
+
 def _positive_milliseconds(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
@@ -324,7 +440,7 @@ def _nonempty_text(value: Any) -> bool:
 def _add_issue(issues: list[dict[str, Any]], code: str, artifact: Optional[Mapping[str, Any]] = None) -> None:
     issue: dict[str, Any] = {"code": code}
     artifact_id = artifact.get("artifact_id") if artifact is not None else None
-    if isinstance(artifact_id, str) and artifact_id:
+    if _safe_id(artifact_id):
         issue["artifact_id"] = artifact_id
     issues.append(issue)
 

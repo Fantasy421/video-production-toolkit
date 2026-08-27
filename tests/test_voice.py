@@ -23,6 +23,8 @@ class VoiceBundleTests(unittest.TestCase):
                 "type": "voice-source-decision",
                 "version": 2,
                 "status": "approved",
+                "parents": [],
+                "path": "metadata/source-v2.json",
                 "narration_id": "narration-v2",
                 "mode": "tts",
                 "decision": "approved",
@@ -32,6 +34,8 @@ class VoiceBundleTests(unittest.TestCase):
                 "type": "voice-profile",
                 "version": 2,
                 "status": "approved",
+                "parents": [],
+                "path": "metadata/profile-v2.json",
                 "mode": "tts",
                 "language": "zh-CN",
                 "provider": "chatcut",
@@ -46,6 +50,7 @@ class VoiceBundleTests(unittest.TestCase):
                 "type": "voiceover",
                 "version": 2,
                 "status": "approved",
+                "path": "media/voiceover-v2.wav",
                 "narration_id": "narration-v2",
                 "profile_id": "profile-v2",
                 "media_path": "media/voiceover-v2.wav",
@@ -58,6 +63,7 @@ class VoiceBundleTests(unittest.TestCase):
                 "type": "voice-timing",
                 "version": 2,
                 "status": "approved",
+                "path": "metadata/voice-timing-v2.json",
                 "voiceover_id": "voiceover-v2",
                 "timing_kind": timing_kind,
                 "duration_ms": duration_ms,
@@ -144,12 +150,111 @@ class VoiceBundleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "narration_id"):
             validate_voice_bundle(self.bundle(), "")
 
+    def test_unhashable_parent_metadata_returns_a_project_issue(self):
+        artifacts = self.bundle()
+        artifacts[2]["parents"] = [["narration-v2"]]
+
+        result = validate_voice_bundle(artifacts, "narration-v2")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("malformed-voice-artifact", self.codes(result))
+
+    def test_malformed_scalar_metadata_returns_a_project_issue(self):
+        artifacts = self.bundle()
+        artifacts[0]["status"] = []
+        artifacts[1]["mode"] = []
+
+        result = validate_voice_bundle(artifacts, "narration-v2")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("malformed-voice-artifact", self.codes(result))
+
+    def test_missing_artifact_identity_cannot_satisfy_current_lineage(self):
+        artifacts = self.bundle()
+        artifacts[0].pop("artifact_id")
+
+        result = validate_voice_bundle(artifacts, "narration-v2")
+
+        self.assertFalse(has_current_voice_lineage(artifacts, "narration-v2"))
+        self.assertIn("malformed-voice-artifact", self.codes(result))
+
+    def test_unsafe_linkage_identity_cannot_satisfy_current_lineage(self):
+        artifacts = self.bundle()
+        artifacts[1]["artifact_id"] = "profile v2"
+        artifacts[2]["profile_id"] = "profile v2"
+        artifacts[2]["parents"] = ["narration-v2", "profile v2"]
+
+        result = validate_voice_bundle(artifacts, "narration-v2")
+
+        self.assertFalse(has_current_voice_lineage(artifacts, "narration-v2"))
+        self.assertIn("malformed-voice-artifact", self.codes(result))
+
+    def test_duplicate_pronunciations_are_not_a_current_profile(self):
+        artifacts = self.bundle()
+        artifacts[1]["pronunciations"] = ["OpenAI", "OpenAI"]
+
+        result = validate_voice_bundle(artifacts, "narration-v2")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("invalid-voice-profile", self.codes(result))
+
+    def test_unknown_artifact_metadata_cannot_satisfy_a_closed_contract(self):
+        artifacts = self.bundle()
+        artifacts[1]["unexpected"] = True
+
+        result = validate_voice_bundle(artifacts, "narration-v2")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("malformed-voice-artifact", self.codes(result))
+
+    def test_unknown_timing_segment_metadata_cannot_satisfy_a_closed_contract(self):
+        artifacts = self.bundle()
+        artifacts[3]["segments"][0]["unexpected"] = True
+
+        result = validate_voice_bundle(artifacts, "narration-v2")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("invalid-voice-timing-segment", self.codes(result))
+
+    def test_schema_optional_output_contract_is_checked_at_runtime(self):
+        artifacts = self.bundle()
+        artifacts[2]["output_contract"] = ""
+
+        result = validate_voice_bundle(artifacts, "narration-v2")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("malformed-voice-artifact", self.codes(result))
+
+    def test_schema_safe_voice_id_is_checked_at_runtime(self):
+        artifacts = self.bundle()
+        artifacts[1]["voice_id"] = "voice id"
+
+        result = validate_voice_bundle(artifacts, "narration-v2")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("invalid-voice-profile", self.codes(result))
+
 
 class VoiceSchemaTests(unittest.TestCase):
     REQUIRED = {
-        "voice-source-decision": ["artifact_id", "narration_id", "mode", "decision"],
+        "voice-source-decision": [
+            "artifact_id",
+            "type",
+            "version",
+            "status",
+            "parents",
+            "path",
+            "narration_id",
+            "mode",
+            "decision",
+        ],
         "voice-profile": [
             "artifact_id",
+            "type",
+            "version",
+            "status",
+            "parents",
+            "path",
             "mode",
             "language",
             "provider",
@@ -161,20 +266,28 @@ class VoiceSchemaTests(unittest.TestCase):
         ],
         "voiceover": [
             "artifact_id",
+            "type",
+            "version",
+            "status",
+            "parents",
+            "path",
             "narration_id",
             "profile_id",
             "media_path",
             "duration_ms",
             "provenance",
-            "parents",
         ],
         "voice-timing": [
             "artifact_id",
+            "type",
+            "version",
+            "status",
+            "parents",
+            "path",
             "voiceover_id",
             "timing_kind",
             "duration_ms",
             "segments",
-            "parents",
         ],
     }
 
@@ -188,6 +301,20 @@ class VoiceSchemaTests(unittest.TestCase):
                 )
                 self.assertEqual(required, schema["required"])
                 self.assertFalse(schema["additionalProperties"])
+
+    def test_voice_schemas_cover_the_persisted_artifact_envelopes(self):
+        """Catches a closed schema that rejects the Artifact Manager records."""
+        fixture = VoiceBundleTests().bundle()
+        for artifact in fixture:
+            schema = json.loads(
+                (ROOT / "references/schemas" / f"{artifact['type']}.schema.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            with self.subTest(artifact_type=artifact["type"]):
+                self.assertTrue(set(schema["required"]).issubset(artifact))
+                self.assertTrue(set(artifact).issubset(schema["properties"]))
+                self.assertEqual(artifact["type"], schema["properties"]["type"]["const"])
 
 
 if __name__ == "__main__":

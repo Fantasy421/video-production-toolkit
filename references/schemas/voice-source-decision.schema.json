@@ -1,16 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Video Production Toolkit Voice Source Decision",
+  "title": "Video Production Toolkit Voice Source Decision Artifact",
   "type": "object",
-  "required": ["artifact_id", "narration_id", "mode", "decision"],
+  "required": ["artifact_id", "type", "version", "status", "parents", "path", "narration_id", "mode", "decision"],
   "properties": {
-    "artifact_id": {"$ref": "#/$defs/safeId"},
-    "narration_id": {"$ref": "#/$defs/safeId"},
-    "mode": {"enum": ["uploaded-voice", "tts"]},
-    "decision": {"const": "approved"}
+    "artifact_id": {"$ref": "#/$defs/safeId"}, "type": {"const": "voice-source-decision"}, "version": {"type": "integer", "minimum": 1}, "status": {"enum": ["draft", "approved", "stale", "superseded", "invalid"]}, "parents": {"$ref": "#/$defs/parents"}, "path": {"$ref": "#/$defs/projectPath"}, "output_contract": {"type": "string", "minLength": 1},
+    "narration_id": {"$ref": "#/$defs/safeId"}, "mode": {"enum": ["uploaded-voice", "tts"]}, "decision": {"const": "approved"}
   },
   "additionalProperties": false,
-  "$defs": {
-    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"}
-  }
+  "$defs": {"safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"}, "parents": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true}, "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"}}
 }
