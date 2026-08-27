@@ -210,34 +210,24 @@ class ImageContextTests(unittest.TestCase):
 
     def test_compact_result_normalizes_urls_data_urls_and_wrapped_base64(self):
         """Catches payload scanners that depend on leading text or uninterrupted base64."""
+        png_payload = (
+            "iVBORw0KGgoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        )
+        self.assertEqual(128, len(png_payload))
         cases = (
             {"summary": "preview=(https://example.invalid/review.png)"},
             {"summary": "preview=https://example.invalid/review.png"},
             {"summary": "note[payload=data:image/png;base64,\nAAEC]"},
+            {"metadata": {"digest": png_payload[:65] + "\n" + png_payload[65:]}},
             {
-                "metadata": {
-                    "digest": (
-                        "QUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJD\n"
-                        "QUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJD"
-                    )
-                }
-            },
-            {
-                "summary": (
-                    'image_bytes="'
-                    "QUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJD"
-                    "QUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJD"
-                    '"'
+                "summary": " ".join(
+                    png_payload[index : index + 10]
+                    for index in range(0, len(png_payload), 10)
                 )
             },
-            {
-                "summary": (
-                    "```\n"
-                    "QUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJD"
-                    "QUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJDQUJD"
-                    "\n```"
-                )
-            },
+            {"summary": f'image_bytes="{png_payload}"'},
+            {"summary": f"```\n{png_payload}\n```"},
         )
         for result in cases:
             with self.subTest(result=result), self.assertRaisesRegex(
@@ -250,6 +240,17 @@ class ImageContextTests(unittest.TestCase):
         raw = {"summary": "normal " * 22}
 
         self.assertEqual(raw, compact_image_result(self.context(), raw))
+
+    def test_compact_result_requires_media_evidence_before_rejecting_base64_text(self):
+        """Catches hashes or harmless base64 prose being treated as media payloads."""
+        cases = (
+            {"metadata": {"sha512": "0123456789abcdef" * 8}},
+            {"summary": "The exporter may mention base64, but no payload is present."},
+            {"metadata": {"digest": "QUJD" * 32}},
+        )
+        for raw in cases:
+            with self.subTest(raw=raw):
+                self.assertEqual(raw, compact_image_result(self.context(), raw))
 
     def test_compact_result_rejects_unsafe_undeclared_paths_and_preview_overflow(self):
         """Catches path smuggling and multiple review renders in a compact handoff."""
@@ -347,6 +348,8 @@ class ImageSchemaTests(unittest.TestCase):
                 "timeline.assemble",
                 "structure.validate",
                 "review.package",
+                "captions.produce",
+                "representative-slice.produce",
             },
             set(envelope["properties"]["capability"]["enum"]),
         )

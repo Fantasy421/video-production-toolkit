@@ -915,6 +915,36 @@ class ValidationTests(unittest.TestCase):
             },
         )
 
+    def test_validator_rejects_unknown_reserved_visual_operation(self):
+        """Catches persisted non-scene tasks bypassing the reserved visual enum."""
+        tasks = self.root / "tasks"
+        tasks.mkdir()
+        task_id = "project-manage-bogus-visual"
+        (tasks / f"{task_id}.json").write_text(
+            json.dumps(
+                {
+                    "task_id": task_id,
+                    "capability": "project.manage",
+                    "inputs": [],
+                    "adapter_preferences": ["chatcut"],
+                    "output_contract": "task-result-v1",
+                    "constraints": {"visual_operation": "bogus"},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = validate_project(self.root)
+
+        self.assertIn(
+            "tasks/project-manage-bogus-visual.json",
+            {
+                item["path"]
+                for item in result["errors"]
+                if item["code"] == "invalid-task-envelope"
+            },
+        )
+
     def test_malformed_mixed_timing_emits_an_issue_without_crashing(self):
         timeline_path = self.root / "timeline" / "timeline-v1.json"
         timeline = json.loads(timeline_path.read_text(encoding="utf-8"))

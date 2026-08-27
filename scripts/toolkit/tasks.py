@@ -71,6 +71,8 @@ TASK_CAPABILITIES = frozenset(
         "timeline.assemble",
         "structure.validate",
         "review.package",
+        "captions.produce",
+        "representative-slice.produce",
     }
 )
 VOICE_TIMING_CAPABILITIES = frozenset(

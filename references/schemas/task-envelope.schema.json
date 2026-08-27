@@ -17,7 +17,9 @@
         "motion.produce",
         "timeline.assemble",
         "structure.validate",
-        "review.package"
+        "review.package",
+        "captions.produce",
+        "representative-slice.produce"
       ]
     },
     "inputs": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},

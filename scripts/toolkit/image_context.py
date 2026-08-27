@@ -5,6 +5,8 @@ compact JSON-shaped handoffs before an isolated worker may access an artifact
 or return metadata to its parent task.
 """
 
+import base64
+import binascii
 import json
 import math
 import re
@@ -56,6 +58,7 @@ HISTORICAL_SCENE_IMAGE_TYPES = frozenset(
 CURRENT_SCENE_IMAGE_TYPES = frozenset({"scene-image"})
 IMAGE_FILE_SUFFIXES = frozenset(
     {
+        ".apng",
         ".avif",
         ".bmp",
         ".gif",
@@ -75,6 +78,7 @@ IMAGE_FILE_SUFFIXES = frozenset(
 MEDIA_KINDS = frozenset({"audio", "data", "document", "image", "video"})
 MEDIA_SUFFIX_RULES = {
     ".aac": ("audio", frozenset({"audio/aac"})),
+    ".apng": ("image", frozenset({"image/apng"})),
     ".avif": ("image", frozenset({"image/avif"})),
     ".bmp": ("image", frozenset({"image/bmp"})),
     ".flac": ("audio", frozenset({"audio/flac"})),
@@ -89,6 +93,7 @@ MEDIA_SUFFIX_RULES = {
     ".jpg": ("image", frozenset({"image/jpeg"})),
     ".jxl": ("image", frozenset({"image/jxl"})),
     ".m4a": ("audio", frozenset({"audio/mp4", "audio/x-m4a"})),
+    ".mkv": ("video", frozenset({"video/x-matroska"})),
     ".mov": ("video", frozenset({"video/quicktime"})),
     ".mp3": ("audio", frozenset({"audio/mpeg"})),
     ".mp4": ("video", frozenset({"video/mp4"})),
@@ -117,9 +122,6 @@ MIME_TYPE_RE = re.compile(
 )
 URI_SCHEME_RE = re.compile(r"[a-z][a-z0-9+.-]*://", re.IGNORECASE)
 DATA_IMAGE_URL_RE = re.compile(r"data\s*:\s*image\s*/", re.IGNORECASE)
-BASE64_LABEL_RE = re.compile(
-    r"(?:^|[^a-z0-9])base64\s*(?::|=|,)", re.IGNORECASE
-)
 BASE64_TOKEN_RE = re.compile(
     r"(?<![A-Za-z0-9+/=])"
     r"([A-Za-z0-9+/]{4,}(?:[ \t\r\n]+[A-Za-z0-9+/]{4,})*={0,2})"
@@ -328,6 +330,13 @@ def validate_image_task_constraints(
     """Validate conditional image authority without changing non-image tasks."""
     if not isinstance(constraints, Mapping):
         raise ValueError("constraints must be an object")
+    if (
+        "visual_operation" in constraints
+        and constraints["visual_operation"] not in {"image-generation", "non-image"}
+    ):
+        raise ValueError(
+            "visual_operation must declare image-generation or non-image"
+        )
     has_operation = "image_operation" in constraints
     has_context = "image_context" in constraints
     if capability == "structure.validate" and not has_operation:
@@ -509,8 +518,12 @@ def validate_media_artifact_metadata(artifact: Mapping[str, Any]) -> None:
             raise ValueError("media_kind conflicts with media suffix")
         if mime_type is not None and mime_type not in suffix_mime_types:
             raise ValueError("mime_type conflicts with media suffix")
-    elif media_kind == "image" or mime_kind == "image":
-        raise ValueError("image media requires a recognized image extension")
+    elif suffix:
+        if media_kind == "image" or mime_kind == "image":
+            raise ValueError("image media requires a recognized image extension")
+        raise ValueError("media requires a recognized media suffix")
+    else:
+        raise ValueError("media requires a recognized media extension")
     if mime_type in KNOWN_MIME_SUFFIXES and suffix not in KNOWN_MIME_SUFFIXES[mime_type]:
         raise ValueError("mime_type conflicts with media suffix")
 
@@ -674,10 +687,9 @@ def _reject_leaking_content(value: Any, *, key: str = "") -> None:
     if isinstance(value, str):
         compact_text = value.strip().lower()
         if (
-            compact_text.startswith(("base64:", "binary:", "data:"))
+            compact_text.startswith(("binary:", "data:"))
             or URI_SCHEME_RE.search(compact_text)
             or DATA_IMAGE_URL_RE.search(compact_text)
-            or BASE64_LABEL_RE.search(compact_text)
         ):
             raise ValueError("image result must not contain an image payload")
         if any(
@@ -708,25 +720,43 @@ def _contains_base64_token(value: str) -> bool:
         candidate = match.group(1)
         chunks = re.split(r"\s+", candidate.strip())
         payload_text = "".join(chunks)
-        if (
-            len(payload_text) >= 128
-            and len(payload_text) % 4 == 0
-            and len(set(payload_text.rstrip("="))) >= 4
-            and (
-                len(chunks) == 1
-                or (
-                    len(chunks) > 1
-                    and all(
-                        len(chunk) >= 32 and len(chunk) % 4 == 0
-                        for chunk in chunks[:-1]
-                    )
-                    and 4 <= len(chunks[-1]) <= len(chunks[-2])
-                    and len(chunks[-1]) % 4 == 0
-                )
-            )
-        ):
+        if len(payload_text) < 128 or len(payload_text) % 4 != 0:
+            continue
+        try:
+            decoded = base64.b64decode(payload_text, validate=True)
+        except (binascii.Error, ValueError):
+            continue
+        if _looks_like_media_payload(decoded):
             return True
     return False
+
+
+def _looks_like_media_payload(value: bytes) -> bool:
+    if value.startswith(
+        (
+            b"\x89PNG\r\n\x1a\n",
+            b"\xff\xd8\xff",
+            b"GIF87a",
+            b"GIF89a",
+            b"BM",
+            b"II*\x00",
+            b"MM\x00*",
+            b"\x00\x00\x01\x00",
+            b"fLaC",
+            b"OggS",
+            b"ID3",
+        )
+    ):
+        return True
+    if len(value) >= 12 and value.startswith(b"RIFF") and value[8:12] in {
+        b"WEBP",
+        b"WAVE",
+    }:
+        return True
+    if len(value) >= 12 and value[4:8] == b"ftyp":
+        return True
+    stripped = value.lstrip().lower()
+    return stripped.startswith((b"<svg", b"<?xml")) and b"<svg" in stripped[:512]
 
 
 def _project_path(value: Any) -> bool:

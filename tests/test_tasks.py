@@ -306,6 +306,37 @@ class TaskTests(unittest.TestCase):
                 },
             )
 
+    def test_existing_voice_timing_capabilities_remain_valid_task_routes(self):
+        """Catches the closed capability enum dropping existing timing consumers."""
+        for capability in ("captions.produce", "representative-slice.produce"):
+            task_id = capability.replace(".", "-")
+            envelope = {
+                **self.envelope,
+                "task_id": task_id,
+                "capability": capability,
+            }
+            with self.subTest(capability=capability):
+                self.assertEqual(
+                    self.root / "tasks" / f"{task_id}.json",
+                    create_task(self.root, envelope),
+                )
+
+    def test_reserved_visual_operation_is_validated_for_every_capability(self):
+        """Catches non-scene tasks persisting an unknown reserved visual mode."""
+        with self.assertRaisesRegex(ValueError, "visual_operation"):
+            create_task(
+                self.root,
+                {
+                    **self.envelope,
+                    "task_id": "project-manage-bogus-visual",
+                    "capability": "project.manage",
+                    "constraints": {
+                        **self.envelope["constraints"],
+                        "visual_operation": "bogus",
+                    },
+                },
+            )
+
     def test_image_operation_conditionally_requires_closed_context(self):
         """Catches image work starting without bounded immutable authority."""
         missing_context = {
@@ -578,6 +609,51 @@ class TaskTests(unittest.TestCase):
                     self.root / "tasks" / f"task-{artifact_id}.json",
                     create_task(self.root, envelope),
                 )
+
+    def test_unknown_media_suffixes_fail_closed_without_rejecting_known_video(self):
+        """Catches unlisted image formats relabeled with an unknown video MIME."""
+        invalid = (
+            ("apng-as-video", "media/apng-as-video.apng", "video/x-apng"),
+            ("unknown-as-video", "media/unknown-as-video.unknown", "video/x-unknown"),
+        )
+        for artifact_id, path, mime_type in invalid:
+            self.create_artifact(
+                artifact_id,
+                "media",
+                1,
+                path=path,
+                media_kind="video",
+                mime_type=mime_type,
+            )
+            with self.subTest(artifact_id=artifact_id), self.assertRaisesRegex(
+                ValueError, "suffix|extension"
+            ):
+                create_task(
+                    self.root,
+                    {
+                        **self.envelope,
+                        "task_id": f"task-{artifact_id}",
+                        "inputs": [*self.envelope["inputs"], artifact_id],
+                    },
+                )
+
+        self.create_artifact(
+            "valid-matroska",
+            "media",
+            1,
+            path="media/valid-matroska.mkv",
+            media_kind="video",
+            mime_type="video/x-matroska",
+        )
+        valid = {
+            **self.envelope,
+            "task_id": "task-valid-matroska",
+            "inputs": [*self.envelope["inputs"], "valid-matroska"],
+        }
+        self.assertEqual(
+            self.root / "tasks" / "task-valid-matroska.json",
+            create_task(self.root, valid),
+        )
 
     def test_image_result_requires_one_validated_compact_handoff(self):
         """Catches image payloads or absent handoffs crossing the task boundary."""
