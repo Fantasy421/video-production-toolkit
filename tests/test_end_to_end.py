@@ -180,6 +180,9 @@ def artifact(
     path=None,
     **metadata,
 ):
+    if artifact_type == "media":
+        metadata.setdefault("media_kind", "video")
+        metadata.setdefault("mime_type", "video/mp4")
     return {
         "artifact_id": artifact_id,
         "type": artifact_type,
@@ -193,6 +196,8 @@ def artifact(
 
 def candidate(task_id, capability, inputs, gate, target_id, **constraints):
     inputs = list(inputs)
+    if capability == "scene.produce":
+        constraints.setdefault("visual_operation", "non-image")
     if capability in {
         "storyboard.plan",
         "scene.produce",

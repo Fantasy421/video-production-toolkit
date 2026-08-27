@@ -715,6 +715,9 @@ def _artifact(
     parents: Optional[list[str]] = None,
     **metadata: Any,
 ) -> dict[str, Any]:
+    if artifact_type == "media":
+        metadata.setdefault("media_kind", "video")
+        metadata.setdefault("mime_type", "video/mp4")
     return {
         "artifact_id": artifact_id,
         "type": artifact_type,
@@ -735,6 +738,8 @@ def _candidate(
     **constraints: Any,
 ) -> dict[str, Any]:
     inputs = list(inputs)
+    if capability == "scene.produce":
+        constraints.setdefault("visual_operation", "non-image")
     if capability in {
         "storyboard.plan",
         "scene.produce",

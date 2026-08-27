@@ -807,6 +807,32 @@ class ValidationTests(unittest.TestCase):
             <= unsafe
         )
 
+    def test_validator_rejects_malformed_conditional_image_context(self):
+        """Catches persisted image tasks bypassing the runtime's closed context."""
+        tasks = self.root / "tasks"
+        tasks.mkdir()
+        task_id = "image-task-null-context"
+        (tasks / f"{task_id}.json").write_text(
+            json.dumps(
+                {
+                    "task_id": task_id,
+                    "capability": "structure.validate",
+                    "inputs": [],
+                    "adapter_preferences": ["chatcut"],
+                    "output_contract": "task-result-v1",
+                    "constraints": {
+                        "image_operation": "inspect",
+                        "image_context": None,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = validate_project(self.root)
+
+        self.assertIn("invalid-task-envelope", {item["code"] for item in result["errors"]})
+
     def test_malformed_mixed_timing_emits_an_issue_without_crashing(self):
         timeline_path = self.root / "timeline" / "timeline-v1.json"
         timeline = json.loads(timeline_path.read_text(encoding="utf-8"))

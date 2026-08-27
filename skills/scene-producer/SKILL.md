@@ -12,9 +12,29 @@ Owned capability: `scene.produce`
 
 Allowed inputs: accept only one claimed task-envelope with capability
 `scene.produce` and declared approved scene-contract, style, and asset IDs.
+Every envelope declares `visual_operation` as exactly `image-generation` or
+`non-image`; image generation additionally requires `image_operation: generate`
+and the closed `image_context`. The discriminator may never be omitted or
+inferred from a generic output contract.
+
+All image generation is an isolated child operation. It handles exactly one Scene Contract or one character-asset batch and receives a closed
+`image_context` under task constraints. Enforce `allowed_image_artifact_ids`,
+`allowed_character_pack_ids`, `forbidden_scene_image_access`,
+`max_review_previews`, and `context_budget`; the worker must not discover or load undeclared images. Historical access is limited to declared approved
+independent character assets and identity metadata. Historical Scene,
+Storyboard, B-roll, Motion Graphics, and scene-preview imagery is forbidden,
+including imagery containing the same character. A current Scene image is
+available only by exact allowlist or one exact user-requested continuity
+exception.
+Immediately before every image read or image-tool invocation, resolve the
+declared Artifact metadata and call `authorize_image_access`; a denial is a
+contract error and cannot broaden the context.
 
 Required output: Return a task-result envelope with compact asset IDs, contract
 checks, warnings, and any required user decision request.
+For image work, return only a compact image handoff containing Artifact IDs,
+project-contained paths, structural metadata, stable issue codes, a short
+summary, decision status, and no more than the declared review previews. It must not return image bytes, base64/data URLs, or prompt histories.
 
 Stopping conditions: do not rewrite narration, teaching goals, visual direction,
 carrier choice, or shot purpose. Stop on missing Storyboard and cost approval,
@@ -23,5 +43,6 @@ or `blocked` as applicable.
 
 Follow `../../references/schemas/task-envelope.schema.json`,
 `../../references/schemas/task-result.schema.json`,
+`../../references/schemas/image-task-context.schema.json`,
 `../../references/policies/decision-gates.md`, and
 `../../references/policies/visual-carriers.md`.

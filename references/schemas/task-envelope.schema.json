@@ -9,7 +9,46 @@
     "inputs": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
     "adapter_preferences": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
     "output_contract": {"type": "string", "minLength": 1},
-    "constraints": {"type": "object"}
+    "constraints": {
+      "type": "object",
+      "properties": {
+        "image_operation": {"enum": ["generate", "inspect"]},
+        "image_context": {"$ref": "image-task-context.schema.json"},
+        "visual_operation": {"enum": ["image-generation", "non-image"]}
+      },
+      "allOf": [
+        {
+          "if": {"required": ["image_operation"]},
+          "then": {"required": ["image_context"]}
+        },
+        {
+          "if": {"required": ["image_context"]},
+          "then": {"required": ["image_operation"]}
+        },
+        {
+          "if": {
+            "properties": {"visual_operation": {"const": "image-generation"}},
+            "required": ["visual_operation"]
+          },
+          "then": {
+            "required": ["image_operation", "image_context"],
+            "properties": {"image_operation": {"const": "generate"}}
+          }
+        }
+      ],
+      "additionalProperties": true
+    }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"capability": {"const": "scene.produce"}},
+        "required": ["capability"]
+      },
+      "then": {
+        "properties": {"constraints": {"required": ["visual_operation"]}}
+      }
+    }
+  ],
   "additionalProperties": false
 }

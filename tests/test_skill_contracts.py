@@ -86,6 +86,29 @@ class SkillContractTests(unittest.TestCase):
             "delegate image generation and inspection to isolated child tasks",
             text,
         )
+        self.assertIn("must never invoke image tools", text)
+        self.assertIn("may relay the single declared review-preview path", text)
+        self.assertIn("must never open, dereference, or visually inspect it", text)
+
+    def test_image_workers_use_one_bounded_scope_and_return_compact_metadata(self):
+        """Catches generation or inspection escaping its one-contract child context."""
+        scene = (ROOT / "skills/scene-producer/SKILL.md").read_text(encoding="utf-8")
+        validator = (ROOT / "skills/structural-validator/SKILL.md").read_text(
+            encoding="utf-8"
+        )
+
+        for text in (scene, validator):
+            self.assertIn("image-task-context.schema.json", text)
+            self.assertIn("exactly one Scene Contract or one character-asset batch", text)
+            self.assertIn("allowed_image_artifact_ids", text)
+            self.assertIn("max_review_previews", text)
+            self.assertIn("must not discover or load undeclared images", text)
+            self.assertIn("must not return image bytes", text)
+            self.assertIn("compact image handoff", text)
+            self.assertIn("call `authorize_image_access`", text)
+        self.assertIn("image generation", scene)
+        self.assertIn("image inspection", validator)
+        self.assertIn("Aesthetic acceptance remains a user decision", validator)
 
     def test_visual_carrier_policy_has_all_carriers_and_density_limit(self):
         """Catches storyboard rules losing the visual hierarchy invariant."""

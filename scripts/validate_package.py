@@ -11,6 +11,7 @@ REQUIRED = (
     "previews/layouts/talking-head-left-explainer-right-v1.html",
     "references/schemas/style-pack.schema.json",
     "references/schemas/layout-pack.schema.json",
+    "references/schemas/image-task-context.schema.json",
     "references/schemas/voice-source-decision.schema.json",
     "references/schemas/voice-profile.schema.json",
     "references/schemas/voiceover.schema.json",

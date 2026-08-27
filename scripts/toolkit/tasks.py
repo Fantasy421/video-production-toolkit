@@ -13,6 +13,11 @@ from uuid import uuid4
 from scripts.toolkit.artifacts import _artifact_paths_by_id, _read_valid_artifact
 from scripts.toolkit.adapters import select_adapter
 from scripts.toolkit.invalidation import invalidated_artifact_ids
+from scripts.toolkit.image_context import (
+    compact_image_result,
+    validate_declared_image_inputs,
+    validate_image_task_constraints,
+)
 from scripts.toolkit.project_state import _state_lock
 from scripts.toolkit.runtime_paths import project_path, project_root, storage_directory
 from scripts.toolkit.voice import validate_authoritative_voice_bundle
@@ -48,6 +53,7 @@ RESULT_KEYS = {
     "claim_token",
     "error",
     "user_decision_request",
+    "image_handoff",
 }
 VOICE_TIMING_CAPABILITIES = frozenset(
     {
@@ -73,6 +79,7 @@ def create_task(root: Path, envelope: dict[str, Any]) -> Path:
             raise ValueError("task envelope requires the current real voice_timing_id")
         if not _artifact_inputs_are_current(envelope, artifacts):
             raise ValueError("task envelope requires current approved inputs")
+        _authorize_declared_image_inputs(envelope, artifacts)
         storage_directory(root, "tasks", create=True)
         destination = _task_path(root, envelope["task_id"])
         _publish_immutable_json(destination, _serialize_json(envelope))
@@ -180,6 +187,7 @@ def complete_task(root: Path, result: dict[str, Any]) -> str:
         _require_current_claim(handle, result)
         envelope = _read_envelope(root, task_id)
         _validate_result_artifacts(root, envelope, result)
+        _validate_conditional_image_result(root, envelope, result)
         if not _is_current_result(root, envelope, result):
             destination = _stale_result_path(root, task_id)
             status = "stale-result"
@@ -294,7 +302,14 @@ def _task_inputs_are_current(
     return (
         voice_timing_input_is_current(envelope, artifacts)
         and _artifact_inputs_are_current(envelope, artifacts)
+        and _authorize_declared_image_inputs(envelope, artifacts)
     )
+
+
+def _authorize_declared_image_inputs(
+    envelope: dict[str, Any], artifacts: dict[str, dict[str, Any]]
+) -> bool:
+    return validate_declared_image_inputs(envelope, artifacts)
 
 
 def _artifact_inputs_are_current(
@@ -646,6 +661,7 @@ def _validate_envelope(envelope: dict[str, Any]) -> None:
     _validate_adapters(envelope["adapter_preferences"])
     if not isinstance(envelope["constraints"], dict):
         raise ValueError("constraints must be an object")
+    validate_image_task_constraints(envelope["constraints"])
 
 
 def _validate_result(result: dict[str, Any]) -> None:
@@ -667,6 +683,28 @@ def _validate_result(result: dict[str, Any]) -> None:
     for key in ("error", "user_decision_request"):
         if key in result:
             _require_nonempty_string(result[key], key)
+
+
+def _validate_conditional_image_result(
+    root: Path, envelope: dict[str, Any], result: dict[str, Any]
+) -> None:
+    image_context = validate_image_task_constraints(envelope["constraints"])
+    handoff = result.get("image_handoff")
+    if image_context is None:
+        if handoff is not None:
+            raise ValueError("non-image task result cannot contain image_handoff")
+        return
+    if handoff is None:
+        raise ValueError("image task result requires image_handoff")
+    compact = compact_image_result(image_context, handoff)
+    if compact.get("artifact_ids", []) != result["artifacts"]:
+        raise ValueError("image_handoff artifact_ids must match result artifacts")
+    if "status" in compact and compact["status"] != result["status"]:
+        raise ValueError("image_handoff status must match task result status")
+    artifacts = _artifacts_by_id(root / "artifacts")
+    registered_paths = [artifacts[artifact_id]["path"] for artifact_id in result["artifacts"]]
+    if compact.get("paths", []) != registered_paths:
+        raise ValueError("image_handoff contains an undeclared artifact path")
 
 
 def _validate_retry_result(result: dict[str, Any]) -> None:

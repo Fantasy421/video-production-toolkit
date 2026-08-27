@@ -18,6 +18,7 @@ from .project_state import (
     replay_events,
 )
 from .invalidation import invalidated_artifact_ids
+from .image_context import validate_declared_image_inputs, validate_image_task_constraints
 from .packs import validate_layout_pack, validate_style_pack
 from .runtime_paths import project_path, project_root
 from .voice import validate_authoritative_voice_bundle
@@ -710,6 +711,11 @@ def _check_tasks(root: Path, artifacts: dict[str, dict[str, Any]], errors: list[
         for artifact_id in envelope["inputs"]:
             if artifact_id not in artifacts:
                 errors.append(_issue("missing-task-input", artifact_id=artifact_id, task_id=envelope["task_id"]))
+        if all(artifact_id in artifacts for artifact_id in envelope["inputs"]):
+            try:
+                validate_declared_image_inputs(envelope, artifacts)
+            except (PermissionError, ValueError):
+                errors.append(_issue("invalid-task-envelope", path=_relative(root, path)))
 
 
 def _valid_task_envelope(envelope: dict[str, Any]) -> bool:
@@ -725,7 +731,14 @@ def _valid_task_envelope(envelope: dict[str, Any]) -> bool:
             return False
         if not all(_safe_component(item) for item in value):
             return False
-    return isinstance(envelope.get("constraints"), dict)
+    constraints = envelope.get("constraints")
+    if not isinstance(constraints, dict):
+        return False
+    try:
+        validate_image_task_constraints(constraints)
+    except ValueError:
+        return False
+    return True
 
 
 def resolve_active_timeline(root: Path) -> Optional[tuple[str, dict[str, Any]]]:

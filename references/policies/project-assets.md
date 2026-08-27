@@ -70,3 +70,33 @@ missing paths, invalid metadata, absent provenance, incompatible ownership, or
 unverified transparency. The checker does not copy, move, delete, or silently
 promote media. Artifact Manager owns immutable persistence; registry promotion
 owns deliberate cross-project reuse; the user owns subjective acceptance.
+
+## Isolated Image Context
+
+Image generation, editing, and inspection run only in an isolated child task
+handling exactly one Scene Contract or one character-asset batch. The closed
+task context declares exact image Artifact IDs, exact Character Pack IDs, a
+hard historical-scene ban, a zero-or-one review-preview limit, and a positive
+serialized-result byte budget. Workers must not discover neighboring or undeclared image
+paths.
+
+Historical access requires an exact declaration, approved status, and one
+independent character class: model sheet, turnaround, clothing reference,
+expression reference, pose reference, transparent character action, or
+identity metadata. Historical Scene images, Storyboard images, B-roll images,
+Motion Graphics screenshots or previews, and Scene previews are always
+forbidden. Character identity within one of those scene classes never converts
+it into a reusable character asset.
+
+Current-project image access also requires an exact allowlist entry. The only
+exception is one current Scene Artifact explicitly named by the user for
+continuity; its exact Artifact ID, `user_requested: true`, and non-empty reason
+must be persisted in the image context. It authorizes no other image.
+
+The child returns a compact image handoff only: Artifact IDs, project-contained
+paths, structural metadata, a short summary, stable issue codes, user-decision
+status, and at most the declared review-preview count. Binary content,
+base64/data URLs, image payload fields, prompt histories, undeclared paths, and
+context or preview overflow are contract errors. The primary coordinator never
+invokes image tools or opens or inspects images. It may relay the one declared
+review-preview path to the user without dereferencing it.

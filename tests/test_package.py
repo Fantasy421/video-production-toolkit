@@ -33,6 +33,18 @@ class PackageTests(unittest.TestCase):
                 validate_package(package),
             )
 
+    def test_image_context_schema_is_required(self):
+        """Catches a package whose image workers reference a missing contract."""
+        with TemporaryDirectory() as folder:
+            package = Path(folder) / "package"
+            shutil.copytree(ROOT, package, ignore=shutil.ignore_patterns(".git"))
+            (package / "references/schemas/image-task-context.schema.json").unlink()
+
+            self.assertIn(
+                "missing:references/schemas/image-task-context.schema.json",
+                validate_package(package),
+            )
+
     def test_manifest_declares_the_host_plugin_name_and_skill_directory(self):
         """Catches a marketplace entry whose manifest cannot expose bundled skills."""
         with TemporaryDirectory() as folder:

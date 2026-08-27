@@ -13,7 +13,34 @@
     "worker_id": {"type": "string", "minLength": 1},
     "claim_token": {"type": "string", "minLength": 1},
     "error": {"type": "string", "minLength": 1},
-    "user_decision_request": {"type": "string", "minLength": 1}
+    "user_decision_request": {"type": "string", "minLength": 1},
+    "image_handoff": {
+      "type": "object",
+      "properties": {
+        "artifact_ids": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
+        "paths": {"type": "array", "items": {"$ref": "#/$defs/artifactPath"}, "uniqueItems": true},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 500},
+        "metadata": {"type": "object", "additionalProperties": {"$ref": "#/$defs/compactScalar"}},
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code"],
+            "properties": {
+              "code": {"$ref": "#/$defs/safeId"},
+              "artifact_id": {"$ref": "#/$defs/safeId"},
+              "message": {"type": "string", "minLength": 1, "maxLength": 500},
+              "severity": {"type": "string", "minLength": 1, "maxLength": 500}
+            },
+            "additionalProperties": false
+          }
+        },
+        "status": {"enum": ["blocked", "waiting_external", "waiting_user", "succeeded", "failed", "cancelled"]},
+        "user_decision_request": {"type": "string", "minLength": 1, "maxLength": 500},
+        "review_previews": {"type": "array", "maxItems": 1, "items": {"$ref": "#/$defs/previewPath"}, "uniqueItems": true}
+      },
+      "additionalProperties": false
+    }
   },
   "allOf": [
     {
@@ -21,5 +48,20 @@
       "then": {"properties": {"artifacts": {"minItems": 1}}}
     }
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"},
+    "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"},
+    "artifactPath": {"allOf": [{"$ref": "#/$defs/projectPath"}, {"pattern": "^(?:artifacts|media)/"}]},
+    "previewPath": {"allOf": [{"$ref": "#/$defs/projectPath"}, {"pattern": "^previews/"}]},
+    "compactScalar": {
+      "anyOf": [
+        {"type": "string", "minLength": 1, "maxLength": 500},
+        {"type": "integer"},
+        {"type": "number"},
+        {"type": "boolean"},
+        {"type": "null"}
+      ]
+    }
+  }
 }

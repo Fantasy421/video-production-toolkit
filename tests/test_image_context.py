@@ -1,0 +1,328 @@
+"""Closed metadata-only contracts for isolated image work."""
+
+import json
+import unittest
+from pathlib import Path
+
+from scripts.toolkit.image_context import authorize_image_access, compact_image_result
+
+
+ROOT = Path(__file__).parents[1]
+
+
+class ImageContextTests(unittest.TestCase):
+    def context(self, *, allowed=None, packs=None, max_previews=1, budget=4096, **extra):
+        return {
+            "allowed_image_artifact_ids": list(allowed or []),
+            "allowed_character_pack_ids": list(packs or []),
+            "forbidden_scene_image_access": True,
+            "max_review_previews": max_previews,
+            "context_budget": budget,
+            **extra,
+        }
+
+    def artifact(self, artifact_type, *, artifact_id=None, status="approved", **extra):
+        return {
+            "artifact_id": artifact_id or f"host-{artifact_type}-v1",
+            "type": artifact_type,
+            "status": status,
+            **extra,
+        }
+
+    def test_historical_approved_independent_character_classes_are_allowed(self):
+        """Catches an allowlist that blocks approved project-independent identity assets."""
+        for artifact_type in (
+            "character-model-sheet",
+            "character-turnaround",
+            "character-clothing-reference",
+            "character-expression-reference",
+            "character-pose-reference",
+            "transparent-character-action",
+            "character-identity-metadata",
+        ):
+            with self.subTest(artifact_type=artifact_type):
+                artifact = self.artifact(artifact_type)
+                authorize_image_access(
+                    self.context(allowed=[artifact["artifact_id"]]),
+                    artifact,
+                    historical=True,
+                )
+
+    def test_historical_scene_classes_are_forbidden_even_for_the_same_character(self):
+        """Catches character identity metadata laundering historical scene imagery."""
+        for artifact_type in (
+            "scene",
+            "scene-image",
+            "storyboard",
+            "storyboard-image",
+            "b-roll",
+            "b-roll-image",
+            "motion-graphics",
+            "motion-graphic-screenshot",
+            "motion-graphics-screenshot",
+            "motion-preview",
+            "scene-preview",
+        ):
+            with self.subTest(artifact_type=artifact_type):
+                artifact = self.artifact(
+                    artifact_type,
+                    character_ids=["host-v1"],
+                )
+                with self.assertRaisesRegex(PermissionError, "historical scene image"):
+                    authorize_image_access(
+                        self.context(allowed=[artifact["artifact_id"]]),
+                        artifact,
+                        historical=True,
+                    )
+
+    def test_historical_access_requires_declaration_approval_and_hard_ban(self):
+        """Catches discovery, draft reuse, or a disabled scene ban broadening history."""
+        artifact = self.artifact("character-model-sheet")
+        with self.assertRaisesRegex(PermissionError, "undeclared image"):
+            authorize_image_access(self.context(), artifact, historical=True)
+        with self.assertRaisesRegex(PermissionError, "approved character asset"):
+            authorize_image_access(
+                self.context(allowed=[artifact["artifact_id"]]),
+                {**artifact, "status": "draft"},
+                historical=True,
+            )
+
+    def test_character_pack_never_replaces_the_exact_image_allowlist(self):
+        """Catches pack membership implicitly authorizing an undeclared image."""
+        artifact = self.artifact(
+            "character-model-sheet", character_pack_id="host-pack-v1"
+        )
+        with self.assertRaisesRegex(PermissionError, "undeclared image"):
+            authorize_image_access(
+                self.context(packs=["host-pack-v1"]),
+                artifact,
+                historical=True,
+            )
+        authorize_image_access(
+            self.context(
+                allowed=[artifact["artifact_id"]], packs=["host-pack-v1"]
+            ),
+            artifact,
+            historical=True,
+        )
+        with self.assertRaisesRegex(PermissionError, "historical scene ban"):
+            authorize_image_access(
+                {
+                    **self.context(allowed=[artifact["artifact_id"]]),
+                    "forbidden_scene_image_access": False,
+                },
+                artifact,
+                historical=True,
+            )
+
+    def test_current_access_is_exact_allowlist_or_one_user_continuity_exception(self):
+        """Catches neighboring scene discovery or an implied continuity exception."""
+        allowed = self.artifact("scene-image", artifact_id="S02-image-v3")
+        authorize_image_access(
+            self.context(allowed=[allowed["artifact_id"]]),
+            allowed,
+            historical=False,
+        )
+
+        exception = self.artifact("scene-image", artifact_id="S01-image-v2")
+        authorize_image_access(
+            self.context(
+                continuity_exception={
+                    "artifact_id": exception["artifact_id"],
+                    "user_requested": True,
+                    "reason": "Match the explicitly named eyeline.",
+                }
+            ),
+            exception,
+            historical=False,
+        )
+
+        neighbor = self.artifact("scene-image", artifact_id="S03-image-v1")
+        with self.assertRaisesRegex(PermissionError, "undeclared image"):
+            authorize_image_access(
+                self.context(
+                    continuity_exception={
+                        "artifact_id": exception["artifact_id"],
+                        "user_requested": True,
+                        "reason": "Match the explicitly named eyeline.",
+                    }
+                ),
+                neighbor,
+                historical=False,
+            )
+
+        non_scene = self.artifact(
+            "character-model-sheet", artifact_id=exception["artifact_id"]
+        )
+        with self.assertRaisesRegex(PermissionError, "continuity.*scene image"):
+            authorize_image_access(
+                self.context(
+                    continuity_exception={
+                        "artifact_id": exception["artifact_id"],
+                        "user_requested": True,
+                        "reason": "Match the explicitly named eyeline.",
+                    }
+                ),
+                non_scene,
+                historical=False,
+            )
+
+    def test_context_is_closed_safe_unique_and_within_its_item_budget(self):
+        """Catches malformed or oversized context being treated as authority."""
+        cases = (
+            ({**self.context(), "surprise": True}, "unknown"),
+            (self.context(allowed=["../outside"]), "safe"),
+            (self.context(allowed=["same", "same"]), "duplicates"),
+            (self.context(max_previews=2), "max_review_previews"),
+            (self.context(budget=0), "positive integer"),
+            (
+                self.context(
+                    continuity_exception={
+                        "artifact_id": "S01-image-v2",
+                        "user_requested": False,
+                        "reason": "No explicit request.",
+                    }
+                ),
+                "user_requested",
+            ),
+        )
+        artifact = self.artifact("scene-image", artifact_id="asset-a")
+        for context, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                authorize_image_access(context, artifact, historical=False)
+
+    def test_compact_result_rejects_payloads_data_urls_and_prompt_histories(self):
+        """Catches image or generation transcript content escaping into the parent task."""
+        cases = (
+            ({"image_bytes": b"binary", "review_previews": []}, "image payload"),
+            ({"base64": "AAEC", "review_previews": []}, "image payload"),
+            ({"images": ["data:image/png;base64,AAEC"], "review_previews": []}, "image payload"),
+            ({"prompt_history": ["first", "second"], "review_previews": []}, "prompt history"),
+            ({"metadata": {"image_url": "https://example.invalid/x.png"}}, "image payload"),
+            ({"summary": "leak https://example.invalid/x.png"}, "image payload"),
+            ({"summary": "prompt history: first, second"}, "prompt history"),
+            ({"summary": "x " * 50_000}, "compact text"),
+            ({"metadata": {"digest": "x " * 2048}}, "compact scalar"),
+        )
+        for result, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                compact_image_result(self.context(), result)
+
+    def test_compact_result_rejects_unsafe_undeclared_paths_and_preview_overflow(self):
+        """Catches path smuggling and multiple review renders in a compact handoff."""
+        with self.assertRaisesRegex(ValueError, "undeclared path"):
+            compact_image_result(
+                self.context(),
+                {"artifact_ids": [], "paths": ["artifacts/unbound.json"]},
+            )
+        with self.assertRaisesRegex(ValueError, "project-contained path"):
+            compact_image_result(
+                self.context(),
+                {"artifact_ids": ["asset-a"], "paths": ["private/unbound.txt"]},
+            )
+        with self.assertRaisesRegex(ValueError, "project-contained path"):
+            compact_image_result(
+                self.context(),
+                {"artifact_ids": ["asset-a"], "paths": ["private/asset-a.json"]},
+            )
+        for unsafe_path in (
+            "../outside.png",
+            "/outside.png",
+            "https://example.invalid/outside.png",
+            "file:///outside.png",
+            "data:image/png;base64,AAEC",
+        ):
+            with self.subTest(path=unsafe_path), self.assertRaisesRegex(
+                ValueError, "project-contained path|image payload"
+            ):
+                compact_image_result(
+                    self.context(),
+                    {"artifact_ids": ["asset-a"], "paths": [unsafe_path]},
+                )
+        with self.assertRaisesRegex(ValueError, "preview budget"):
+            compact_image_result(
+                self.context(max_previews=1),
+                {"review_previews": ["previews/a.jpg", "previews/b.jpg"]},
+            )
+
+    def test_compact_result_keeps_only_the_closed_artifact_handoff(self):
+        """Catches compact structural metadata being dropped or expanded on return."""
+        raw = {
+            "artifact_ids": ["scene-S02-v3"],
+            "paths": ["artifacts/media/scene-S02-v3.json"],
+            "summary": "角色一致；等待用户审美确认",
+            "metadata": {"width": 1920, "height": 1080},
+            "issues": [{"code": "needs-user-aesthetic-review"}],
+            "status": "waiting_user",
+            "user_decision_request": "请审美确认唯一预览。",
+            "review_previews": ["previews/scene-S02-v3.jpg"],
+        }
+
+        result = compact_image_result(self.context(max_previews=1), raw)
+
+        self.assertEqual(raw, result)
+        self.assertNotIn("images", result)
+
+    def test_compact_result_enforces_declared_context_budget(self):
+        """Catches serialized handoff content overflowing its declared byte budget."""
+        with self.assertRaisesRegex(ValueError, "context budget"):
+            compact_image_result(
+                self.context(budget=256),
+                {
+                    "artifact_ids": ["asset-a"],
+                    "paths": ["artifacts/asset-a.json"],
+                    "summary": "summary " * 30,
+                    "metadata": {"width": 1920},
+                },
+            )
+
+
+class ImageSchemaTests(unittest.TestCase):
+    def test_image_context_schema_is_closed_and_task_context_is_conditional(self):
+        """Catches generic non-image tasks being forced to carry image authority."""
+        context = json.loads(
+            (ROOT / "references/schemas/image-task-context.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        envelope = json.loads(
+            (ROOT / "references/schemas/task-envelope.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertFalse(context["additionalProperties"])
+        self.assertEqual(
+            {
+                "allowed_image_artifact_ids",
+                "allowed_character_pack_ids",
+                "forbidden_scene_image_access",
+                "max_review_previews",
+                "context_budget",
+            },
+            set(context["required"]),
+        )
+        constraints = envelope["properties"]["constraints"]
+        self.assertEqual(
+            "image-task-context.schema.json",
+            constraints["properties"]["image_context"]["$ref"],
+        )
+        self.assertNotIn("image_context", constraints.get("required", []))
+        self.assertIn("allOf", constraints)
+
+    def test_image_result_contract_is_optional_for_non_image_results(self):
+        """Catches the compact image handoff breaking existing task-result records."""
+        result = json.loads(
+            (ROOT / "references/schemas/task-result.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertNotIn("image_handoff", result["required"])
+        handoff = result["properties"]["image_handoff"]
+        self.assertFalse(handoff["additionalProperties"])
+        self.assertIn("allOf", result)
+
+
+if __name__ == "__main__":
+    unittest.main()

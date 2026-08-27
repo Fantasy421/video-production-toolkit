@@ -118,6 +118,30 @@ class TaskTests(unittest.TestCase):
         result.update(updates)
         return result
 
+    def image_context(self):
+        return {
+            "allowed_image_artifact_ids": ["scene-S03-v1"],
+            "allowed_character_pack_ids": ["host-pack-v1"],
+            "forbidden_scene_image_access": True,
+            "max_review_previews": 1,
+            "context_budget": 4096,
+        }
+
+    def create_image_context_artifacts(self, *, historical=False, image_type="scene-image"):
+        self.create_artifact(
+            "host-pack-v1",
+            "character-pack",
+            1,
+            identity_provenance="approved-host-v1",
+        )
+        self.create_artifact(
+            "scene-S03-v1",
+            image_type,
+            1,
+            character_pack_id="host-pack-v1",
+            historical=historical,
+        )
+
     def invalidate_artifact(self, artifact_id):
         events = self.root / "events"
         events.mkdir(exist_ok=True)
@@ -269,6 +293,224 @@ class TaskTests(unittest.TestCase):
         claim = self.dispatch_and_claim()
         with self.assertRaises(ValueError):
             complete_task(self.root, self.result_for(claim, unexpected=True))
+
+    def test_image_operation_conditionally_requires_closed_context(self):
+        """Catches image work starting without bounded immutable authority."""
+        missing_context = {
+            **self.envelope,
+            "task_id": "image-inspect-without-context",
+            "constraints": {
+                **self.envelope["constraints"],
+                "image_operation": "inspect",
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "image_context"):
+            create_task(self.root, missing_context)
+
+        context_without_operation = {
+            **self.envelope,
+            "task_id": "context-without-image-operation",
+            "constraints": {
+                **self.envelope["constraints"],
+                "image_context": self.image_context(),
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "image_operation"):
+            create_task(self.root, context_without_operation)
+
+        null_context = {
+            **self.envelope,
+            "task_id": "null-image-context",
+            "constraints": {
+                **self.envelope["constraints"],
+                "image_operation": "inspect",
+                "image_context": None,
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "image_context"):
+            create_task(self.root, null_context)
+
+    def test_create_and_claim_enforce_every_declared_image_access(self):
+        """Catches metadata authorization existing only as an unused helper."""
+        self.create_image_context_artifacts(historical=True)
+        envelope = {
+            **self.envelope,
+            "task_id": "historical-scene-inspect",
+            "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
+            "constraints": {
+                **self.envelope["constraints"],
+                "image_operation": "inspect",
+                "image_context": self.image_context(),
+            },
+        }
+        with self.assertRaisesRegex(PermissionError, "historical scene image"):
+            create_task(self.root, envelope)
+
+        image_path = self.root / "artifacts" / "scene-image" / "scene-S03-v1.json"
+        artifact = json.loads(image_path.read_text(encoding="utf-8"))
+        artifact["historical"] = False
+        image_path.write_text(json.dumps(artifact), encoding="utf-8")
+        create_task(self.root, envelope)
+
+        artifact["historical"] = True
+        image_path.write_text(json.dumps(artifact), encoding="utf-8")
+        with self.assertRaisesRegex(PermissionError, "historical scene image"):
+            claim_task(self.root, envelope["task_id"], "worker-a")
+
+        artifact.pop("historical")
+        image_path.write_text(json.dumps(artifact), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "explicit historical origin"):
+            claim_task(self.root, envelope["task_id"], "worker-a")
+
+    def test_image_bearing_inputs_cannot_make_the_context_opt_in(self):
+        """Catches ordinary task inputs exposing undeclared neighboring images."""
+        self.create_image_context_artifacts()
+        inputs = [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"]
+        without_context = {
+            **self.envelope,
+            "task_id": "image-input-without-context",
+            "inputs": inputs,
+        }
+        with self.assertRaisesRegex(PermissionError, "image_context"):
+            create_task(self.root, without_context)
+
+        empty_allowlist = {
+            **self.envelope,
+            "task_id": "image-input-outside-allowlist",
+            "inputs": inputs,
+            "constraints": {
+                **self.envelope["constraints"],
+                "image_operation": "inspect",
+                "image_context": {
+                    **self.image_context(),
+                    "allowed_image_artifact_ids": [],
+                },
+            },
+        }
+        with self.assertRaisesRegex(PermissionError, "undeclared image"):
+            create_task(self.root, empty_allowlist)
+
+    def test_scene_production_requires_an_explicit_visual_operation(self):
+        """Catches text-to-image work hiding behind the generic scene route."""
+        scene_envelope = {
+            **self.envelope,
+            "task_id": "scene-without-visual-operation",
+            "capability": "scene.produce",
+        }
+        with self.assertRaisesRegex(ValueError, "visual_operation"):
+            create_task(self.root, scene_envelope)
+
+        image_generation = {
+            **scene_envelope,
+            "task_id": "scene-image-without-context",
+            "constraints": {
+                **scene_envelope["constraints"],
+                "visual_operation": "image-generation",
+            },
+        }
+        with self.assertRaisesRegex(PermissionError, "image_context"):
+            create_task(self.root, image_generation)
+
+    def test_generic_media_input_requires_canonical_media_kind(self):
+        """Catches unlisted image formats bypassing suffix-based classification."""
+        self.create_artifact(
+            "generic-media-v1",
+            "media",
+            1,
+            path="media/generic-media-v1.bmp",
+            historical=False,
+        )
+        envelope = {
+            **self.envelope,
+            "task_id": "generic-media-without-kind",
+            "inputs": [*self.envelope["inputs"], "generic-media-v1"],
+        }
+        with self.assertRaisesRegex(ValueError, "media_kind"):
+            create_task(self.root, envelope)
+
+        path = self.root / "artifacts" / "media" / "generic-media-v1.json"
+        artifact = json.loads(path.read_text(encoding="utf-8"))
+        artifact["media_kind"] = "image"
+        path.write_text(json.dumps(artifact), encoding="utf-8")
+        with self.assertRaisesRegex(PermissionError, "image_context"):
+            create_task(self.root, {**envelope, "task_id": "generic-image-without-context"})
+
+        self.create_artifact(
+            "conflicting-media-v1",
+            "media",
+            1,
+            path="media/conflicting-media-v1.png",
+            media_kind="video",
+            mime_type=" image/png",
+            historical=False,
+        )
+        conflicting = {
+            **self.envelope,
+            "task_id": "conflicting-media-kind",
+            "inputs": [*self.envelope["inputs"], "conflicting-media-v1"],
+        }
+        with self.assertRaisesRegex(ValueError, "canonical mime_type|image suffix"):
+            create_task(self.root, conflicting)
+
+    def test_image_result_requires_one_validated_compact_handoff(self):
+        """Catches image payloads or absent handoffs crossing the task boundary."""
+        self.create_image_context_artifacts()
+        envelope = {
+            **self.envelope,
+            "task_id": "image-inspect-S03-v2",
+            "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
+            "constraints": {
+                **self.envelope["constraints"],
+                "image_operation": "inspect",
+                "image_context": self.image_context(),
+            },
+        }
+        create_task(self.root, envelope)
+        claim = claim_task(self.root, envelope["task_id"], "worker-a")
+        result = self.result_for(claim)
+        result["task_id"] = envelope["task_id"]
+        result["inputs"] = envelope["inputs"]
+
+        with self.assertRaisesRegex(ValueError, "image_handoff"):
+            complete_task(self.root, result)
+
+        with self.assertRaisesRegex(ValueError, "image payload"):
+            complete_task(
+                self.root,
+                {
+                    **result,
+                    "image_handoff": {
+                        "artifact_ids": result["artifacts"],
+                        "image_bytes": "base64",
+                    },
+                },
+            )
+
+        handoff = {
+            "artifact_ids": result["artifacts"],
+            "paths": ["media/motion-preview-S03-v2.json"],
+            "summary": "Structural image QA complete.",
+            "metadata": {"width": 1920, "height": 1080},
+            "issues": [],
+            "status": "succeeded",
+            "review_previews": ["previews/motion-preview-S03-v2.jpg"],
+        }
+        self.assertEqual(
+            "completed",
+            complete_task(self.root, {**result, "image_handoff": handoff}),
+        )
+
+    def test_non_image_result_cannot_attach_an_image_handoff(self):
+        """Catches generic workers smuggling image metadata through an optional field."""
+        claim = self.dispatch_and_claim()
+        with self.assertRaisesRegex(ValueError, "non-image"):
+            complete_task(
+                self.root,
+                {
+                    **self.result_for(claim),
+                    "image_handoff": {"artifact_ids": ["motion-contract-S03-v1"]},
+                },
+            )
 
     def test_second_worker_cannot_claim_same_task(self):
         """Catches two workers executing the same isolated task concurrently."""
