@@ -14,6 +14,7 @@ from .project_state import (
     LEGACY_PROJECT_SCHEMA_VERSION,
     PHASES,
     PROJECT_SCHEMA_VERSIONS,
+    replay_events,
 )
 from .invalidation import invalidated_artifact_ids
 from .packs import validate_layout_pack, validate_style_pack
@@ -63,7 +64,11 @@ def validate_project(root: Path) -> dict[str, list[dict[str, Any]]]:
             "errors": [_issue("unsafe-runtime-root")],
             "warnings": [],
         }
-    project = _read_project(root, errors)
+    project_snapshot = _read_project(root, errors)
+    replayed_project, schema_origin = _replayed_project_authority(root, errors)
+    if project_snapshot and replayed_project and project_snapshot != replayed_project:
+        errors.append(_issue("project-state-mismatch", path="project.json"))
+    project = replayed_project or project_snapshot
     artifacts = _read_artifacts(root, errors)
     try:
         invalidated = invalidated_artifact_ids(root)
@@ -90,11 +95,29 @@ def validate_project(root: Path) -> dict[str, list[dict[str, Any]]]:
             errors,
             warnings,
             allow_legacy_scene_contracts=(
-                project.get("schema_version") == LEGACY_PROJECT_SCHEMA_VERSION
+                schema_origin == LEGACY_PROJECT_SCHEMA_VERSION
             ),
         )
     _check_required_approvals(project, artifacts, approvals, errors)
     return {"errors": _sorted_issues(errors), "warnings": _sorted_issues(warnings)}
+
+
+def _replayed_project_authority(
+    root: Path, errors: list[dict[str, Any]]
+) -> tuple[dict[str, Any], Optional[int]]:
+    try:
+        replayed = replay_events(root)
+        event_log = project_path(root, "events/events.jsonl")
+        first_line = event_log.read_text(encoding="utf-8").splitlines()[0]
+        initialized = json.loads(first_line)
+    except (IndexError, OSError, TypeError, ValueError, json.JSONDecodeError):
+        errors.append(_issue("invalid-event-log"))
+        return {}, None
+    origin = initialized.get("schema_version")
+    if initialized.get("event") != "project.initialized" or origin not in PROJECT_SCHEMA_VERSIONS:
+        errors.append(_issue("invalid-event-log"))
+        return {}, None
+    return replayed, origin
 
 
 def read_effective_artifacts(root: Path) -> dict[str, dict[str, Any]]:
@@ -848,6 +871,7 @@ def _check_contracts(
                 payload,
                 None if allow_legacy_scene_contracts else timing,
                 allow_legacy_unresolved_timing=allow_legacy_scene_contracts,
+                artifacts=None if allow_legacy_scene_contracts else artifacts.values(),
             )
         except ValueError:
             errors.append(

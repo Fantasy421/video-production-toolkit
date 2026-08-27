@@ -19,7 +19,7 @@ from scripts.toolkit.orchestrator import (
 )
 from scripts.toolkit.project_state import PHASES, append_event, initialize_project
 from scripts.toolkit.tasks import claim_task, complete_task, create_task
-from scripts.verify_installation import run_smoke, verify_installation
+from scripts.verify_installation import _run_resume_scenario, run_smoke, verify_installation
 
 
 ROOT = Path(__file__).parents[1]
@@ -375,6 +375,41 @@ class CoordinatorTests(unittest.TestCase):
             ),
         )
 
+    def test_voice_ready_rejects_voice_for_a_superseded_narration(self):
+        """Catches routing deriving narration authority from the candidate timing."""
+        task = candidate(
+            "storyboard-v1",
+            "storyboard.plan",
+            ["style-v1", "voice-timing-v1"],
+            "visual-direction",
+            "style-v1",
+        )
+        artifacts = [
+            artifact("style-v1", "style-pack"),
+            *voice_bundle(),
+            artifact(
+                "narration-v2",
+                "narration",
+                version=2,
+                parents=["narration-v1"],
+            ),
+        ]
+
+        self.assertEqual(
+            [],
+            calculate_ready_tasks(
+                {"phase": "voice_ready", "candidate_tasks": [task]},
+                artifacts,
+                [
+                    {
+                        "target_id": "style-v1",
+                        "scope": "visual-direction",
+                        "decision": "approved",
+                    }
+                ],
+            ),
+        )
+
     def test_production_ready_without_voice_bundle_recovers_at_direction(self):
         """Catches resume trusting a late phase that has no real voice lineage."""
         with TemporaryDirectory() as folder:
@@ -393,6 +428,31 @@ class CoordinatorTests(unittest.TestCase):
                 resumed["migration_requirement"]["code"],
             )
             self.assertEqual(original_events, event_log.read_bytes())
+
+    def test_production_ready_with_only_superseded_narration_voice_recovers_at_direction(self):
+        """Catches recovery accepting any historical complete voice bundle."""
+        with TemporaryDirectory() as folder:
+            project = Path(folder) / "project"
+            initialize_project(project, "kv-old-voice", "knowledge-video")
+            create_voice_bundle(project)
+            create_artifact(
+                project,
+                artifact(
+                    "narration-v2",
+                    "narration",
+                    version=2,
+                    parents=["narration-v1"],
+                ),
+            )
+            advance_project(project, "production_ready")
+
+            resumed = resume_project(project)
+
+            self.assertEqual("direction_ready", resumed["phase"])
+            self.assertEqual(
+                "voice-artifacts-required",
+                resumed["migration_requirement"]["code"],
+            )
 
     def test_coordinator_routes_capabilities_only_in_legal_project_phases(self):
         """Catches a valid envelope running before its workflow phase is ready."""
@@ -1074,6 +1134,29 @@ class SmokeAndInstallationTests(unittest.TestCase):
             self.assertFalse(blocked["ok"])
             self.assertEqual("failed", blocked["checks"]["migration_audit"])
             self.assertEqual("migration-audit-required", blocked["blocker"]["code"])
+
+    def test_resume_smoke_seeds_and_preserves_the_declared_voice_fixture(self):
+        """Catches metadata-only voiceover smoke passing without real audio bytes."""
+        observed = []
+        real_resume = resume_project
+
+        def observe_voice_fixture(project):
+            fixture = project / "media" / "voiceover-v1.wav"
+            observed.append(fixture.read_bytes())
+            return real_resume(project)
+
+        with patch(
+            "scripts.verify_installation.resume_project",
+            side_effect=observe_voice_fixture,
+        ):
+            result = _run_resume_scenario()
+
+        self.assertEqual(2, len(observed))
+        self.assertGreater(len(observed[0]), 44)
+        self.assertEqual(observed[0], observed[1])
+        self.assertEqual(["voiceover-v1.wav"], result["media_files"])
+        self.assertEqual(["voiceover-v1.wav"], result["seeded_media_files"])
+        self.assertTrue(result["voice_fixture_unchanged"])
 
     def test_resume_smoke_exercises_gate_type_and_lineage_counterexamples(self):
         """Catches an installed smoke accepting any same-scope approval token."""

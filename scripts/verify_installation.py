@@ -4,6 +4,7 @@
 import argparse
 import json
 import re
+import struct
 import sys
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -128,11 +129,20 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
         }
     checks["resume_local_invalidation"] = "passed"
     checks["one_action_only"] = "passed"
-    if resumed["media_files"]:
+    generated_media = sorted(
+        set(resumed["media_files"]) - set(resumed["seeded_media_files"])
+    )
+    if generated_media or not resumed["voice_fixture_unchanged"]:
         return {
             "ok": False,
             "checks": checks,
-            "blocker": {"code": "coordinator-generated-media", "detail": resumed["media_files"]},
+            "blocker": {
+                "code": "coordinator-generated-media",
+                "detail": {
+                    "generated": generated_media,
+                    "voice_fixture_unchanged": resumed["voice_fixture_unchanged"],
+                },
+            },
         }
     checks["no_media_generation"] = "passed"
     return {
@@ -375,6 +385,9 @@ def _run_resume_scenario() -> dict[str, Any]:
     with TemporaryDirectory() as folder:
         project = Path(folder) / "project"
         initialize_project(project, "kv-resume-smoke", "knowledge-video")
+        voice_fixture = _silent_wav(duration_ms=15_000)
+        voice_fixture_path = project / "media" / "voiceover-v1.wav"
+        voice_fixture_path.write_bytes(voice_fixture)
         for item in _voice_bundle():
             create_artifact(project, item)
         for item in (
@@ -441,7 +454,32 @@ def _run_resume_scenario() -> dict[str, Any]:
         second = resume_project(project)
         if first != second:
             raise RuntimeError("resume is not deterministic")
-        return {**first, "media_files": sorted(path.name for path in (project / "media").iterdir())}
+        return {
+            **first,
+            "media_files": sorted(path.name for path in (project / "media").iterdir()),
+            "seeded_media_files": [voice_fixture_path.name],
+            "voice_fixture_unchanged": (
+                voice_fixture_path.is_file()
+                and voice_fixture_path.read_bytes() == voice_fixture
+            ),
+        }
+
+
+def _silent_wav(*, duration_ms: int, sample_rate: int = 8_000) -> bytes:
+    """Return deterministic unsigned 8-bit mono PCM silence for smoke fixtures."""
+    sample_count = duration_ms * sample_rate // 1_000
+    audio = bytes([128]) * sample_count
+    byte_rate = sample_rate
+    block_align = 1
+    return (
+        b"RIFF"
+        + struct.pack("<I", 36 + len(audio))
+        + b"WAVEfmt "
+        + struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, byte_rate, block_align, 8)
+        + b"data"
+        + struct.pack("<I", len(audio))
+        + audio
+    )
 
 
 def _migration_prerequisite(root: Path, legacy_root: Optional[Path]) -> dict[str, Any]:

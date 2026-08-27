@@ -26,7 +26,7 @@ from scripts.toolkit.tasks import (
     active_claim_task_ids,
     voice_timing_input_is_current,
 )
-from scripts.toolkit.voice import validate_voice_bundle
+from scripts.toolkit.voice import validate_authoritative_voice_bundle
 
 
 GATES = (
@@ -210,24 +210,10 @@ def resume_project(root: Path) -> dict[str, Any]:
 
 def _has_current_voice_bundle(artifacts: Iterable[Mapping[str, Any]]) -> bool:
     """Use the authoritative validator behind project-state's dependency seam."""
-    records = list(artifacts)
-    narration_ids = sorted(
-        {
-            item.get("narration_id")
-            for item in records
-            if isinstance(item, Mapping)
-            and item.get("type") == "voice-source-decision"
-            and isinstance(item.get("narration_id"), str)
-            and item.get("narration_id")
-        }
-    )
-    for narration_id in narration_ids:
-        try:
-            if validate_voice_bundle(records, narration_id)["ok"]:
-                return True
-        except ValueError:
-            continue
-    return False
+    try:
+        return validate_authoritative_voice_bundle(list(artifacts))["ok"]
+    except ValueError:
+        return False
 
 
 def _required_gate(candidate: Mapping[str, Any]) -> Optional[str]:

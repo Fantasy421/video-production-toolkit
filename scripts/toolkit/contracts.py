@@ -1,8 +1,10 @@
 """Canonical runtime validation for persisted production contracts."""
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any, Optional
+
+from .voice import validate_authoritative_voice_bundle
 
 
 SCENE_CARRIERS = frozenset(
@@ -37,6 +39,7 @@ def validate_scene_contract(
     voice_timing: Optional[Mapping[str, Any]] = None,
     *,
     allow_legacy_unresolved_timing: bool = False,
+    artifacts: Optional[Iterable[Mapping[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Return a normalized copy when *value* matches scene-contract-v1 exactly."""
     if not isinstance(value, Mapping):
@@ -80,6 +83,17 @@ def validate_scene_contract(
     ):
         if field in value and not isinstance(value[field], bool):
             raise ValueError(f"scene contract {field} must be a boolean")
+    if artifacts is not None:
+        records = list(artifacts)
+        bundle = validate_authoritative_voice_bundle(records)
+        if not bundle["ok"] or bundle["voice_timing_id"] != voice_timing_id:
+            raise ValueError("scene contract requires the authoritative voice timing")
+        matches = [
+            item for item in records if item.get("artifact_id") == voice_timing_id
+        ]
+        if len(matches) != 1:
+            raise ValueError("scene contract requires one authoritative voice timing")
+        voice_timing = matches[0]
     if voice_timing is None:
         if not allow_legacy_unresolved_timing:
             raise ValueError("current scene contract requires its real voice timing artifact")

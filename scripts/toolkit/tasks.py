@@ -14,7 +14,7 @@ from scripts.toolkit.artifacts import _artifact_paths_by_id, _read_valid_artifac
 from scripts.toolkit.adapters import select_adapter
 from scripts.toolkit.invalidation import invalidated_artifact_ids
 from scripts.toolkit.runtime_paths import project_path, project_root, storage_directory
-from scripts.toolkit.voice import validate_voice_bundle
+from scripts.toolkit.voice import validate_authoritative_voice_bundle
 
 
 CLAIM_LEASE_SECONDS = 300.0
@@ -98,24 +98,9 @@ def voice_timing_input_is_current(
         or timing_id not in envelope["inputs"]
     ):
         return False
-    timing = _unique_record(records, timing_id)
-    if (
-        timing is None
-        or timing.get("type") != "voice-timing"
-        or timing.get("status") != "approved"
-    ):
-        return False
-    voiceover_id = timing.get("voiceover_id")
-    voiceover = _unique_record(records, voiceover_id)
-    if voiceover is None or voiceover.get("type") != "voiceover":
-        return False
-    narration_id = voiceover.get("narration_id")
-    if not isinstance(narration_id, str) or not narration_id:
-        return False
-    bundle = validate_voice_bundle(records, narration_id)
+    bundle = validate_authoritative_voice_bundle(records)
     return (
         bundle["ok"]
-        and bundle["voiceover_id"] == voiceover_id
         and bundle["voice_timing_id"] == timing_id
     )
 
@@ -131,15 +116,6 @@ def _artifact_values(artifacts: Any) -> list[dict[str, Any]]:
     if not all(isinstance(item, Mapping) for item in records):
         raise ValueError("artifacts must contain objects")
     return [dict(item) for item in records]
-
-
-def _unique_record(
-    records: list[dict[str, Any]], artifact_id: Any
-) -> Optional[dict[str, Any]]:
-    if not isinstance(artifact_id, str) or not artifact_id:
-        return None
-    matches = [item for item in records if item.get("artifact_id") == artifact_id]
-    return matches[0] if len(matches) == 1 else None
 
 
 def claim_task(root: Path, task_id: str, worker_id: str) -> dict[str, str]:

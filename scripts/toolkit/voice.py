@@ -97,6 +97,38 @@ def validate_voice_bundle(
     }
 
 
+def validate_authoritative_voice_bundle(
+    artifacts: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Validate voice only for the one current approved narration DAG head."""
+    records = _artifact_records(artifacts)
+    narration = _authoritative_narration(records)
+    if narration is None:
+        approved = [
+            item
+            for item in records
+            if item.get("type") == "narration" and item.get("status") == "approved"
+        ]
+        return {
+            "ok": False,
+            "narration_id": None,
+            "voiceover_id": None,
+            "voice_timing_id": None,
+            "issues": [
+                {
+                    "code": (
+                        "authoritative-narration-ambiguous"
+                        if approved
+                        else "authoritative-narration-missing"
+                    )
+                }
+            ],
+        }
+    narration_id = narration["artifact_id"]
+    result = validate_voice_bundle(records, narration_id)
+    return {**result, "narration_id": narration_id}
+
+
 def has_current_voice_lineage(
     artifacts: Iterable[Mapping[str, Any]], narration_id: Optional[str] = None
 ) -> bool:
@@ -114,6 +146,61 @@ def has_current_voice_lineage(
         }
     )
     return any(validate_voice_bundle(records, candidate)["ok"] for candidate in narration_ids)
+
+
+def _authoritative_narration(
+    records: list[dict[str, Any]],
+) -> Optional[dict[str, Any]]:
+    by_id = {
+        item["artifact_id"]: item
+        for item in records
+        if _valid_narration_record(item)
+    }
+    current = [
+        item
+        for item in by_id.values()
+        if item["status"] == "approved"
+        and not any(
+            candidate["status"] == "approved"
+            and candidate["version"] > item["version"]
+            and _is_descendant(candidate, item["artifact_id"], by_id)
+            for candidate in by_id.values()
+        )
+    ]
+    return current[0] if len(current) == 1 else None
+
+
+def _valid_narration_record(record: Mapping[str, Any]) -> bool:
+    return (
+        record.get("type") == "narration"
+        and _safe_id(record.get("artifact_id"))
+        and isinstance(record.get("version"), int)
+        and not isinstance(record.get("version"), bool)
+        and record["version"] > 0
+        and record.get("status")
+        in {"draft", "approved", "stale", "superseded", "invalid"}
+        and _safe_id_list(record.get("parents"))
+    )
+
+
+def _is_descendant(
+    candidate: Mapping[str, Any],
+    ancestor_id: str,
+    artifacts: Mapping[str, Mapping[str, Any]],
+) -> bool:
+    pending = list(candidate.get("parents", []))
+    seen: set[str] = set()
+    while pending:
+        artifact_id = pending.pop()
+        if artifact_id == ancestor_id:
+            return True
+        if artifact_id in seen:
+            continue
+        seen.add(artifact_id)
+        parent = artifacts.get(artifact_id)
+        if parent is not None:
+            pending.extend(parent.get("parents", []))
+    return False
 
 
 def _artifact_records(artifacts: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:

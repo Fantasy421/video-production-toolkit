@@ -107,9 +107,97 @@ class ValidationTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        self.write_project_history(1)
 
     def tearDown(self):
         self.folder.cleanup()
+
+    def write_project_history(self, schema_version):
+        phases = [
+            "content_ready",
+            "direction_ready",
+            *(["voice_ready"] if schema_version == 2 else []),
+            "storyboard_ready",
+            "production_ready",
+            "assembled",
+            "review_ready",
+        ]
+        events = [
+            {
+                "event": "project.initialized",
+                "schema_version": schema_version,
+                "project_id": "validation-test",
+                "workflow": "knowledge-video",
+            },
+            *(
+                {"event": "project.phase_changed", "phase": phase}
+                for phase in phases
+            ),
+        ]
+        events_root = self.root / "events"
+        events_root.mkdir(exist_ok=True)
+        (events_root / "events.jsonl").write_text(
+            "\n".join(json.dumps(event) for event in events) + "\n",
+            encoding="utf-8",
+        )
+
+    def write_voice_bundle(self, *, include_timing_v2=False):
+        self.write_artifact(
+            "narration-v1", "narration", 1, "approved", "metadata/narration-v1.json"
+        )
+        self.write_artifact(
+            "voice-source-v1",
+            "voice-source-decision",
+            1,
+            "approved",
+            "metadata/voice-source-v1.json",
+            narration_id="narration-v1",
+            mode="tts",
+            decision="approved",
+        )
+        self.write_artifact(
+            "voice-profile-v1",
+            "voice-profile",
+            1,
+            "approved",
+            "metadata/voice-profile-v1.json",
+            mode="tts",
+            language="zh-CN",
+            provider="chatcut",
+            voice_id="narrator-1",
+            speaking_rate=1.0,
+            emotion="calm",
+            pronunciations=[],
+            approved=True,
+        )
+        self.write_artifact(
+            "voiceover-v1",
+            "voiceover",
+            1,
+            "approved",
+            "media/voiceover-v1.wav",
+            parents=["narration-v1", "voice-profile-v1"],
+            narration_id="narration-v1",
+            profile_id="voice-profile-v1",
+            media_path="media/voiceover-v1.wav",
+            duration_ms=10_000,
+            provenance="test-fixture",
+        )
+        for version in range(1, 3 if include_timing_v2 else 2):
+            self.write_artifact(
+                f"voice-timing-v{version}",
+                "voice-timing",
+                version,
+                "approved",
+                f"metadata/voice-timing-v{version}.json",
+                parents=["voiceover-v1"],
+                voiceover_id="voiceover-v1",
+                timing_kind="real",
+                duration_ms=10_000,
+                segments=[
+                    {"start_ms": 0, "end_ms": 10_000, "text": f"timing {version}"}
+                ],
+            )
 
     def write_artifact(
         self, artifact_id, artifact_type, version, status, path, parents=None, **metadata
@@ -587,26 +675,15 @@ class ValidationTests(unittest.TestCase):
     def test_event_overlay_invalidation_is_applied_before_structural_review(self):
         """Catches immutable artifact metadata hiding a newer invalidation event."""
         events = self.root / "events"
-        events.mkdir()
-        (events / "events.jsonl").write_text(
-            "\n".join(
-                (
-                    json.dumps(
-                        {
-                            "event": "project.initialized",
-                            "schema_version": 1,
-                            "project_id": "validation-test",
-                            "workflow": "knowledge-video",
-                        }
-                    ),
-                    json.dumps(
-                        {
-                            "event": "artifacts.invalidated",
-                            "changed_id": "scene-S01-v1",
-                            "artifact_ids": ["scene-S01-v1"],
-                        }
-                    ),
-                )
+        event_log = events / "events.jsonl"
+        event_log.write_text(
+            event_log.read_text(encoding="utf-8")
+            + json.dumps(
+                {
+                    "event": "artifacts.invalidated",
+                    "changed_id": "scene-S01-v1",
+                    "artifact_ids": ["scene-S01-v1"],
+                }
             )
             + "\n",
             encoding="utf-8",
@@ -808,6 +885,7 @@ class ValidationTests(unittest.TestCase):
         project = json.loads(project_path.read_text(encoding="utf-8"))
         project["schema_version"] = 2
         project_path.write_text(json.dumps(project), encoding="utf-8")
+        self.write_project_history(2)
         self.write_artifact(
             "voice-timing-v1",
             "voice-timing",
@@ -819,6 +897,32 @@ class ValidationTests(unittest.TestCase):
             duration_ms=10_000,
             segments=[{"start_ms": 0, "end_ms": 10_000, "text": "estimate"}],
         )
+
+        result = validate_project(self.root)
+
+        self.assertIn(
+            "invalid-scene-contract",
+            {item["code"] for item in result["errors"]},
+        )
+
+    def test_snapshot_downgrade_cannot_enable_legacy_unresolved_timing(self):
+        """Catches mutable project.json claiming legacy compatibility over v2 replay."""
+        self.write_project_history(2)
+
+        result = validate_project(self.root)
+
+        codes = {item["code"] for item in result["errors"]}
+        self.assertIn("project-state-mismatch", codes)
+        self.assertIn("invalid-scene-contract", codes)
+
+    def test_scene_contract_requires_the_authoritative_current_timing(self):
+        """Catches a valid historical timing remaining eligible after timing v2."""
+        project_path = self.root / "project.json"
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project["schema_version"] = 2
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+        self.write_project_history(2)
+        self.write_voice_bundle(include_timing_v2=True)
 
         result = validate_project(self.root)
 

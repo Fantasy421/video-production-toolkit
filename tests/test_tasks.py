@@ -165,6 +165,21 @@ class TaskTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "current real voice_timing_id"):
             create_task(self.root, envelope)
 
+    def test_downstream_task_cannot_use_voice_for_a_superseded_narration(self):
+        """Catches task creation deriving narration authority from its old voiceover."""
+        self.create_artifact(
+            "narration-v2",
+            "narration",
+            2,
+            parents=["narration-v1"],
+        )
+
+        with self.assertRaisesRegex(ValueError, "current real voice_timing_id"):
+            create_task(
+                self.root,
+                {**self.envelope, "task_id": "preview-with-old-narration"},
+            )
+
     def test_task_storage_rejects_a_symlink_escape(self):
         """Catches task envelopes and claims being written outside the runtime project."""
         with TemporaryDirectory() as outside_folder:
@@ -313,6 +328,18 @@ class TaskTests(unittest.TestCase):
             timing_kind="real",
             duration_ms=12000,
             segments=[{"start_ms": 0, "end_ms": 12000, "text": "revised"}],
+        )
+
+        self.assertEqual("stale-result", complete_task(self.root, self.result_for(claim)))
+
+    def test_late_result_is_stale_after_a_new_narration_is_published(self):
+        """Catches completion deriving narration authority from the task's old timing."""
+        claim = self.dispatch_and_claim()
+        self.create_artifact(
+            "narration-v2",
+            "narration",
+            2,
+            parents=["narration-v1"],
         )
 
         self.assertEqual("stale-result", complete_task(self.root, self.result_for(claim)))
