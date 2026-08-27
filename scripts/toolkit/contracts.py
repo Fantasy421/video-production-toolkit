@@ -83,6 +83,8 @@ def validate_scene_contract(
     ):
         if field in value and not isinstance(value[field], bool):
             raise ValueError(f"scene contract {field} must be a boolean")
+    if artifacts is None and not allow_legacy_unresolved_timing:
+        raise ValueError("current scene contract requires full artifact DAG context")
     if artifacts is not None:
         records = list(artifacts)
         bundle = validate_authoritative_voice_bundle(records)
@@ -94,10 +96,7 @@ def validate_scene_contract(
         if len(matches) != 1:
             raise ValueError("scene contract requires one authoritative voice timing")
         voice_timing = matches[0]
-    if voice_timing is None:
-        if not allow_legacy_unresolved_timing:
-            raise ValueError("current scene contract requires its real voice timing artifact")
-    else:
+    if voice_timing is not None:
         _validate_scene_interval_against_voice_timing(
             voice_timing, voice_timing_id, start, end
         )

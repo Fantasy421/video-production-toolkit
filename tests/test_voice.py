@@ -3,7 +3,11 @@ import unittest
 from pathlib import Path
 
 from scripts.toolkit import voice
-from scripts.toolkit.voice import has_current_voice_lineage, validate_voice_bundle
+from scripts.toolkit.voice import (
+    has_current_voice_lineage,
+    validate_authoritative_voice_bundle,
+    validate_voice_bundle,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -126,6 +130,49 @@ class VoiceBundleTests(unittest.TestCase):
             result,
         )
         self.assertTrue(has_current_voice_lineage(self.bundle(), "narration-v2"))
+
+    def test_authoritative_narration_walks_intermediate_artifact_types(self):
+        """Catches narration supersession traversal discarding non-narration nodes."""
+        artifacts = [
+            {
+                "artifact_id": "narration-v1",
+                "type": "narration",
+                "version": 1,
+                "status": "approved",
+                "parents": [],
+                "path": "metadata/narration-v1.json",
+            },
+            {
+                "artifact_id": "revision-bridge",
+                "type": "decision-pack",
+                "version": 1,
+                "status": "approved",
+                "parents": ["cycle-node"],
+                "path": "metadata/revision-bridge.json",
+            },
+            {
+                "artifact_id": "cycle-node",
+                "type": "semantic-beats",
+                "version": 1,
+                "status": "approved",
+                "parents": ["revision-bridge", "narration-v1"],
+                "path": "metadata/cycle-node.json",
+            },
+            {
+                "artifact_id": "narration-v2",
+                "type": "narration",
+                "version": 2,
+                "status": "approved",
+                "parents": ["revision-bridge"],
+                "path": "metadata/narration-v2.json",
+            },
+            *self.bundle(),
+        ]
+
+        result = validate_authoritative_voice_bundle(artifacts)
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual("narration-v2", result["narration_id"])
 
     def test_project_defects_return_issue_codes_instead_of_raising(self):
         artifacts = self.bundle()

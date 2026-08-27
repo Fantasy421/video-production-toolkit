@@ -3,13 +3,15 @@
 
 import argparse
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Optional
 
 try:
     from scripts.toolkit.contracts import SCENE_CARRIERS, validate_scene_contract
+    from scripts.toolkit.voice import validate_authoritative_voice_bundle
 except ModuleNotFoundError:
     from toolkit.contracts import SCENE_CARRIERS, validate_scene_contract
+    from toolkit.voice import validate_authoritative_voice_bundle
 
 
 _WEIGHTS = {
@@ -47,7 +49,8 @@ class RepresentativeSlice(list[str]):
 
 
 def select_representative_slice(
-    scene_contracts: Sequence[Mapping[str, Any]], voice_timing: Mapping[str, Any]
+    scene_contracts: Sequence[Mapping[str, Any]],
+    artifacts: Iterable[Mapping[str, Any]],
 ) -> RepresentativeSlice:
     """Choose one 10--20 second adjacent range, or an explicit composite sample.
 
@@ -55,10 +58,14 @@ def select_representative_slice(
     or media, which keeps the representative-slice gate deterministic and safe
     to pass through the coordinator.
     """
-    if not isinstance(voice_timing, Mapping):
-        raise ValueError("voice_timing must be a mapping")
-    contracts = _normalize_contracts(scene_contracts, voice_timing)
-    voice_timing_id = voice_timing.get("artifact_id")
+    if isinstance(artifacts, (Mapping, str, bytes)):
+        raise ValueError("artifacts must be an iterable of mappings")
+    records = list(artifacts)
+    bundle = validate_authoritative_voice_bundle(records)
+    if not bundle["ok"]:
+        raise ValueError("representative slice requires the authoritative voice bundle")
+    contracts = _normalize_contracts(scene_contracts, records)
+    voice_timing_id = bundle["voice_timing_id"]
     if not contracts:
         return RepresentativeSlice([], (), False, voice_timing_id)
     candidates = _range_candidates(contracts)
@@ -70,7 +77,8 @@ def select_representative_slice(
 
 
 def _normalize_contracts(
-    scene_contracts: Sequence[Mapping[str, Any]], voice_timing: Mapping[str, Any]
+    scene_contracts: Sequence[Mapping[str, Any]],
+    artifacts: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     if isinstance(scene_contracts, (str, bytes)) or not isinstance(scene_contracts, Sequence):
         raise ValueError("scene_contracts must be a sequence")
@@ -78,7 +86,7 @@ def _normalize_contracts(
     for contract in scene_contracts:
         if not isinstance(contract, Mapping):
             raise ValueError("scene contract must be a mapping")
-        contract = validate_scene_contract(contract, voice_timing)
+        contract = validate_scene_contract(contract, artifacts=artifacts)
         scene_id = contract["scene_id"]
         start, end = contract.get("start_ms"), contract.get("end_ms")
         if isinstance(start, bool) or isinstance(end, bool) or not isinstance(start, int) or not isinstance(end, int) or start < 0 or end <= start:
@@ -203,13 +211,13 @@ def _duration_blocker(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plan a compact representative production slice.")
     parser.add_argument("contracts", help="JSON file containing an array of scene contracts")
-    parser.add_argument("voice_timing", help="JSON file containing the exact real voice timing artifact")
+    parser.add_argument("artifacts", help="JSON file containing the full current Artifact DAG")
     args = parser.parse_args()
     with open(args.contracts, encoding="utf-8") as handle:
         contracts = json.load(handle)
-    with open(args.voice_timing, encoding="utf-8") as handle:
-        voice_timing = json.load(handle)
-    selected = select_representative_slice(contracts, voice_timing)
+    with open(args.artifacts, encoding="utf-8") as handle:
+        artifacts = json.load(handle)
+    selected = select_representative_slice(contracts, artifacts)
     print(json.dumps({"scene_ids": list(selected), "ranges": selected.ranges, "composite": selected.composite, "voice_timing_id": selected.voice_timing_id, "blocker": selected.blocker}, ensure_ascii=False, separators=(",", ":")))
 
 

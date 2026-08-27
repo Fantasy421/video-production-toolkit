@@ -62,10 +62,8 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
     contracts_path = root / "tests" / "fixtures" / "knowledge-video-minimal" / "scene-contracts.json"
     try:
         contracts = json.loads(contracts_path.read_text(encoding="utf-8"))
-        timing = next(
-            item for item in _voice_bundle() if item["type"] == "voice-timing"
-        )
-        selected_slice = select_representative_slice(contracts, timing)
+        voice_artifacts = _voice_bundle()
+        selected_slice = select_representative_slice(contracts, voice_artifacts)
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
         return {
             "ok": False,
@@ -385,7 +383,7 @@ def _run_resume_scenario() -> dict[str, Any]:
     with TemporaryDirectory() as folder:
         project = Path(folder) / "project"
         initialize_project(project, "kv-resume-smoke", "knowledge-video")
-        voice_fixture = _silent_wav(duration_ms=15_000)
+        voice_fixture = _voice_fixture_wav(duration_ms=15_000)
         voice_fixture_path = project / "media" / "voiceover-v1.wav"
         voice_fixture_path.write_bytes(voice_fixture)
         for item in _voice_bundle():
@@ -465,17 +463,29 @@ def _run_resume_scenario() -> dict[str, Any]:
         }
 
 
-def _silent_wav(*, duration_ms: int, sample_rate: int = 8_000) -> bytes:
-    """Return deterministic unsigned 8-bit mono PCM silence for smoke fixtures."""
+def _voice_fixture_wav(*, duration_ms: int, sample_rate: int = 8_000) -> bytes:
+    """Return deterministic low-amplitude PCM pulses for smoke fixtures."""
     sample_count = duration_ms * sample_rate // 1_000
-    audio = bytes([128]) * sample_count
-    byte_rate = sample_rate
-    block_align = 1
+    pulse_frames = sample_rate // 10
+    half_period = max(1, sample_rate // 500)
+    audio = b"".join(
+        struct.pack(
+            "<h",
+            (
+                384 if (frame // half_period) % 2 == 0 else -384
+            )
+            if frame % sample_rate < pulse_frames
+            else 0,
+        )
+        for frame in range(sample_count)
+    )
+    block_align = 2
+    byte_rate = sample_rate * block_align
     return (
         b"RIFF"
         + struct.pack("<I", 36 + len(audio))
         + b"WAVEfmt "
-        + struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, byte_rate, block_align, 8)
+        + struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, byte_rate, block_align, 16)
         + b"data"
         + struct.pack("<I", len(audio))
         + audio

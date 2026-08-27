@@ -118,6 +118,22 @@ class TaskTests(unittest.TestCase):
         result.update(updates)
         return result
 
+    def invalidate_artifact(self, artifact_id):
+        events = self.root / "events"
+        events.mkdir(exist_ok=True)
+        event_log = events / "events.jsonl"
+        with event_log.open("a", encoding="utf-8") as stream:
+            stream.write(
+                json.dumps(
+                    {
+                        "event": "artifacts.invalidated",
+                        "changed_id": artifact_id,
+                        "artifact_ids": [artifact_id],
+                    }
+                )
+                + "\n"
+            )
+
     def dispatch_and_claim(self, worker_id="worker-a"):
         create_task(self.root, self.envelope)
         return claim_task(self.root, "preview-S03-v2", worker_id)
@@ -179,6 +195,36 @@ class TaskTests(unittest.TestCase):
                 self.root,
                 {**self.envelope, "task_id": "preview-with-old-narration"},
             )
+
+    def test_downstream_task_cannot_persist_event_invalidated_timing(self):
+        """Catches task creation reading approved metadata without event overlays."""
+        self.invalidate_artifact("voice-timing-v1")
+
+        with self.assertRaisesRegex(ValueError, "current"):
+            create_task(
+                self.root,
+                {**self.envelope, "task_id": "preview-with-invalidated-timing"},
+            )
+
+    def test_claim_revalidates_inputs_after_acquiring_its_task_lock(self):
+        """Catches invalidation between persistence and claim starting external work."""
+        create_task(self.root, self.envelope)
+        publish_claim = tasks._create_claim
+
+        def publish_then_invalidate(path, claim):
+            publish_claim(path, claim)
+            self.invalidate_artifact("voice-timing-v1")
+
+        with patch(
+            "scripts.toolkit.tasks._create_claim",
+            side_effect=publish_then_invalidate,
+        ):
+            with self.assertRaisesRegex(ValueError, "current"):
+                claim_task(self.root, "preview-S03-v2", "worker-a")
+
+        self.assertFalse(
+            (self.root / "tasks" / "locks" / "preview-S03-v2.lock").exists()
+        )
 
     def test_task_storage_rejects_a_symlink_escape(self):
         """Catches task envelopes and claims being written outside the runtime project."""

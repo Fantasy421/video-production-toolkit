@@ -151,20 +151,24 @@ def has_current_voice_lineage(
 def _authoritative_narration(
     records: list[dict[str, Any]],
 ) -> Optional[dict[str, Any]]:
-    by_id = {
-        item["artifact_id"]: item
-        for item in records
-        if _valid_narration_record(item)
-    }
+    by_id: dict[str, dict[str, Any]] = {}
+    for item in records:
+        artifact_id = item.get("artifact_id")
+        if not _safe_id(artifact_id) or not _safe_id_list(item.get("parents")):
+            continue
+        if artifact_id in by_id:
+            return None
+        by_id[artifact_id] = item
+    narrations = [item for item in by_id.values() if _valid_narration_record(item)]
     current = [
         item
-        for item in by_id.values()
+        for item in narrations
         if item["status"] == "approved"
         and not any(
             candidate["status"] == "approved"
             and candidate["version"] > item["version"]
             and _is_descendant(candidate, item["artifact_id"], by_id)
-            for candidate in by_id.values()
+            for candidate in narrations
         )
     ]
     return current[0] if len(current) == 1 else None

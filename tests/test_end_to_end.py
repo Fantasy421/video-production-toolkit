@@ -1,6 +1,7 @@
 import hashlib
 import json
 import shutil
+import struct
 import subprocess
 import sys
 import unittest
@@ -1157,6 +1158,21 @@ class SmokeAndInstallationTests(unittest.TestCase):
         self.assertEqual(["voiceover-v1.wav"], result["media_files"])
         self.assertEqual(["voiceover-v1.wav"], result["seeded_media_files"])
         self.assertTrue(result["voice_fixture_unchanged"])
+        wav = observed[0]
+        self.assertEqual(b"RIFF", wav[:4])
+        self.assertEqual(b"WAVEfmt ", wav[8:16])
+        bits_per_sample = struct.unpack("<H", wav[34:36])[0]
+        self.assertIn(bits_per_sample, {8, 16})
+        data_size = struct.unpack("<I", wav[40:44])[0]
+        audio = wav[44 : 44 + data_size]
+        if bits_per_sample == 8:
+            samples = (sample - 128 for sample in audio)
+        else:
+            samples = (
+                sample[0]
+                for sample in struct.iter_unpack("<h", audio)
+            )
+        self.assertTrue(any(sample != 0 for sample in samples), "fixture must be audible PCM")
 
     def test_resume_smoke_exercises_gate_type_and_lineage_counterexamples(self):
         """Catches an installed smoke accepting any same-scope approval token."""

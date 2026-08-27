@@ -13,6 +13,7 @@ from uuid import uuid4
 from scripts.toolkit.artifacts import _artifact_paths_by_id, _read_valid_artifact
 from scripts.toolkit.adapters import select_adapter
 from scripts.toolkit.invalidation import invalidated_artifact_ids
+from scripts.toolkit.project_state import _state_lock
 from scripts.toolkit.runtime_paths import project_path, project_root, storage_directory
 from scripts.toolkit.voice import validate_authoritative_voice_bundle
 
@@ -65,14 +66,17 @@ def create_task(root: Path, envelope: dict[str, Any]) -> Path:
     """Persist one immutable, schema-shaped task envelope."""
     _validate_envelope(envelope)
     root = project_root(root)
-    if not voice_timing_input_is_current(
-        envelope, _artifacts_by_id(root / "artifacts")
-    ):
-        raise ValueError("task envelope requires the current real voice_timing_id")
-    storage_directory(root, "tasks", create=True)
-    destination = _task_path(root, envelope["task_id"])
-    _publish_immutable_json(destination, _serialize_json(envelope))
-    return destination
+    storage_directory(root, "events", create=True)
+    with _state_lock(root, exclusive=False):
+        artifacts = _effective_artifacts_by_id(root)
+        if not voice_timing_input_is_current(envelope, artifacts):
+            raise ValueError("task envelope requires the current real voice_timing_id")
+        if not _artifact_inputs_are_current(envelope, artifacts):
+            raise ValueError("task envelope requires current approved inputs")
+        storage_directory(root, "tasks", create=True)
+        destination = _task_path(root, envelope["task_id"])
+        _publish_immutable_json(destination, _serialize_json(envelope))
+        return destination
 
 
 def voice_timing_input_is_current(
@@ -150,6 +154,17 @@ def claim_task(root: Path, task_id: str, worker_id: str) -> dict[str, str]:
         if _result_path(root, task_id).exists() or _stale_result_path(root, task_id).exists():
             _remove_claim_if_current(lock, token)
             raise RuntimeError(f"task already reached a terminal result: {task_id}")
+        try:
+            storage_directory(root, "events", create=True)
+            with _state_lock(root, exclusive=False):
+                envelope = _read_envelope(root, task_id)
+                if not _task_inputs_are_current(
+                    envelope, _effective_artifacts_by_id(root)
+                ):
+                    raise ValueError("task inputs are no longer current")
+        except BaseException:
+            _remove_claim_if_current(lock, token)
+            raise
         return {"worker_id": worker_id, "claim_token": token}
 
 
@@ -270,21 +285,41 @@ def active_claim_task_ids(root: Path) -> list[str]:
 def _is_current_result(root: Path, envelope: dict[str, Any], result: dict[str, Any]) -> bool:
     if result["inputs"] != envelope["inputs"]:
         return False
-    invalidated = invalidated_artifact_ids(root)
-    artifacts = _artifacts_by_id(root / "artifacts")
-    if not voice_timing_input_is_current(envelope, artifacts):
-        return False
+    return _task_inputs_are_current(envelope, _effective_artifacts_by_id(root))
+
+
+def _task_inputs_are_current(
+    envelope: dict[str, Any], artifacts: dict[str, dict[str, Any]]
+) -> bool:
+    return (
+        voice_timing_input_is_current(envelope, artifacts)
+        and _artifact_inputs_are_current(envelope, artifacts)
+    )
+
+
+def _artifact_inputs_are_current(
+    envelope: dict[str, Any], artifacts: dict[str, dict[str, Any]]
+) -> bool:
     for artifact_id in envelope["inputs"]:
         artifact = artifacts.get(artifact_id)
-        if (
-            artifact is None
-            or artifact["status"] != "approved"
-            or artifact_id in invalidated
-        ):
+        if artifact is None or artifact["status"] != "approved":
             return False
         if _has_newer_approved_lineage(artifact, artifacts):
             return False
     return True
+
+
+def _effective_artifacts_by_id(root: Path) -> dict[str, dict[str, Any]]:
+    artifacts = _artifacts_by_id(root / "artifacts")
+    invalidated = invalidated_artifact_ids(root)
+    return {
+        artifact_id: (
+            {**artifact, "status": "stale"}
+            if artifact_id in invalidated
+            else artifact
+        )
+        for artifact_id, artifact in artifacts.items()
+    }
 
 
 def _validate_result_artifacts(

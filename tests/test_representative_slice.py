@@ -5,6 +5,87 @@ from scripts.toolkit.contracts import validate_scene_contract
 
 
 class RepresentativeSliceTests(unittest.TestCase):
+    @staticmethod
+    def voice_artifacts(
+        *,
+        narration_id="narration-v1",
+        voiceover_id="voiceover-v1",
+        timing_id="voice-timing-v1",
+        duration_ms=60_000,
+        segments=None,
+        timing_kind="real",
+    ):
+        return [
+            {
+                "artifact_id": narration_id,
+                "type": "narration",
+                "version": 1,
+                "status": "approved",
+                "parents": [],
+                "path": f"metadata/{narration_id}.json",
+            },
+            {
+                "artifact_id": "voice-source-v1",
+                "type": "voice-source-decision",
+                "version": 1,
+                "status": "approved",
+                "parents": [],
+                "path": "metadata/voice-source-v1.json",
+                "narration_id": narration_id,
+                "mode": "tts",
+                "decision": "approved",
+            },
+            {
+                "artifact_id": "voice-profile-v1",
+                "type": "voice-profile",
+                "version": 1,
+                "status": "approved",
+                "parents": [],
+                "path": "metadata/voice-profile-v1.json",
+                "mode": "tts",
+                "language": "zh-CN",
+                "provider": "chatcut",
+                "voice_id": "narrator-1",
+                "speaking_rate": 1.0,
+                "emotion": "calm",
+                "pronunciations": [],
+                "approved": True,
+            },
+            {
+                "artifact_id": voiceover_id,
+                "type": "voiceover",
+                "version": 1,
+                "status": "approved",
+                "parents": [narration_id, "voice-profile-v1"],
+                "path": f"media/{voiceover_id}.wav",
+                "narration_id": narration_id,
+                "profile_id": "voice-profile-v1",
+                "media_path": f"media/{voiceover_id}.wav",
+                "duration_ms": duration_ms,
+                "provenance": "test-fixture",
+            },
+            {
+                "artifact_id": timing_id,
+                "type": "voice-timing",
+                "version": 1,
+                "status": "approved",
+                "parents": [voiceover_id],
+                "path": f"metadata/{timing_id}.json",
+                "voiceover_id": voiceover_id,
+                "timing_kind": timing_kind,
+                "duration_ms": duration_ms,
+                "segments": segments
+                if segments is not None
+                else [
+                    {
+                        "start_ms": 0,
+                        "end_ms": duration_ms,
+                        "text": "fixture narration",
+                    }
+                ],
+            },
+        ]
+
     def setUp(self):
         self.contracts = [
             {
@@ -34,41 +115,29 @@ class RepresentativeSliceTests(unittest.TestCase):
             },
         ]
         self.by_id = {item["scene_id"]: item for item in self.contracts}
-        self.voice_timing = {
-            "artifact_id": "voice-timing-v1",
-            "type": "voice-timing",
-            "status": "approved",
-            "parents": ["voiceover-v1"],
-            "voiceover_id": "voiceover-v1",
-            "timing_kind": "real",
-            "duration_ms": 60000,
-            "segments": [
-                {"start_ms": 0, "end_ms": 60000, "text": "fixture narration"}
-            ],
-        }
+        self.artifacts = self.voice_artifacts()
+        self.voice_timing = self.artifacts[-1]
 
     def select(self, contracts):
         current_contracts = [
             {**contract, "voice_timing_id": "voice-timing-v1"}
             for contract in contracts
         ]
-        return select_representative_slice(current_contracts, self.voice_timing)
+        return select_representative_slice(current_contracts, self.artifacts)
 
     def test_scene_contract_uses_exact_real_timing_and_spoken_boundaries(self):
         """Catches estimates, a wrong timing ID, and silence-bound intervals."""
-        timing = {
-            "artifact_id": "voice-timing-v2",
-            "type": "voice-timing",
-            "status": "approved",
-            "parents": ["voiceover-v2"],
-            "voiceover_id": "voiceover-v2",
-            "timing_kind": "real",
-            "duration_ms": 12000,
-            "segments": [
+        artifacts = self.voice_artifacts(
+            narration_id="narration-v2",
+            voiceover_id="voiceover-v2",
+            timing_id="voice-timing-v2",
+            duration_ms=12_000,
+            segments=[
                 {"start_ms": 0, "end_ms": 5000, "text": "first"},
                 {"start_ms": 6000, "end_ms": 12000, "text": "second"},
             ],
-        }
+        )
+        timing = artifacts[-1]
         contract = {
             "scene_id": "S01",
             "voice_timing_id": "voice-timing-v2",
@@ -78,21 +147,42 @@ class RepresentativeSliceTests(unittest.TestCase):
             "purpose": "show the first semantic segment",
         }
 
-        self.assertEqual(contract, validate_scene_contract(contract, timing))
-        with self.assertRaisesRegex(ValueError, "exact voice timing"):
+        with self.assertRaisesRegex(ValueError, "full artifact"):
+            validate_scene_contract(contract, timing)
+        with self.assertRaisesRegex(ValueError, "artifacts"):
+            select_representative_slice([contract], timing)
+        self.assertEqual(
+            contract,
             validate_scene_contract(
-                {**contract, "voice_timing_id": "voice-timing-v1"}, timing
+                contract,
+                timing,
+                allow_legacy_unresolved_timing=True,
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "authoritative voice timing"):
+            validate_scene_contract(
+                {**contract, "voice_timing_id": "voice-timing-v1"},
+                artifacts=artifacts,
             )
-        with self.assertRaisesRegex(ValueError, "real voice timing"):
-            validate_scene_contract(contract, {**timing, "timing_kind": "estimated"})
+        estimated = self.voice_artifacts(
+            narration_id="narration-v2",
+            voiceover_id="voiceover-v2",
+            timing_id="voice-timing-v2",
+            duration_ms=12_000,
+            segments=timing["segments"],
+            timing_kind="estimated",
+        )
+        with self.assertRaisesRegex(ValueError, "authoritative voice timing"):
+            validate_scene_contract(contract, artifacts=estimated)
         with self.assertRaisesRegex(ValueError, "spoken timing segment"):
             validate_scene_contract(
-                {**contract, "start_ms": 5000, "end_ms": 7000}, timing
+                {**contract, "start_ms": 5000, "end_ms": 7000},
+                artifacts=artifacts,
             )
 
         selected = select_representative_slice(
             [contract, {**contract, "scene_id": "S02", "start_ms": 6000, "end_ms": 12000}],
-            timing,
+            artifacts,
         )
         self.assertEqual("voice-timing-v2", selected.voice_timing_id)
 
