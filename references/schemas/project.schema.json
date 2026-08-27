@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Video Production Toolkit Project",
+  "description": "Version-one project snapshots remain readable. Recovery may expose a non-persisted compatibility projection at direction_ready when a recorded post-direction phase lacks current voice artifacts; event history is never rewritten.",
   "type": "object",
   "required": ["schema_version", "project_id", "workflow", "phase"],
   "properties": {
@@ -9,10 +10,12 @@
     "workflow": {"type": "string", "minLength": 1},
     "active_timeline_id": {"type": "string", "minLength": 1},
     "phase": {
+      "description": "Persisted phase order. New phase events must pass through voice_ready; compatibility recovery is a read-only view for pre-voice event logs.",
       "enum": [
         "initialized",
         "content_ready",
         "direction_ready",
+        "voice_ready",
         "storyboard_ready",
         "production_ready",
         "assembled",

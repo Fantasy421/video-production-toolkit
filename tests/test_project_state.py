@@ -10,6 +10,7 @@ from unittest.mock import patch
 from scripts.toolkit.project_state import (
     append_event,
     initialize_project,
+    project_recovery_view,
     replay_events,
     set_active_timeline,
 )
@@ -28,6 +29,124 @@ ROOT = Path(__file__).parents[1]
 
 
 class ProjectStateTests(unittest.TestCase):
+    def setUp(self):
+        self._temporary_directory = TemporaryDirectory()
+        self.root = Path(self._temporary_directory.name)
+
+    def tearDown(self):
+        self._temporary_directory.cleanup()
+
+    def advance_to(self, phase):
+        initialize_project(self.root, "kv-phase", "knowledge-video")
+        phases = (
+            "content_ready",
+            "direction_ready",
+            "voice_ready",
+            "storyboard_ready",
+            "production_ready",
+            "assembled",
+            "review_ready",
+            "handoff_ready",
+        )
+        for next_phase in phases[: phases.index(phase) + 1]:
+            append_event(
+                self.root,
+                {"event": "project.phase_changed", "phase": next_phase},
+            )
+
+    def write_pre_voice_event_log(self, *, final_phase):
+        event_log = self.root / "events" / "events.jsonl"
+        event_log.parent.mkdir(parents=True)
+        legacy_phases = (
+            "content_ready",
+            "direction_ready",
+            "storyboard_ready",
+            "production_ready",
+            "assembled",
+            "review_ready",
+            "handoff_ready",
+        )
+        events = [
+            {
+                "event": "project.initialized",
+                "schema_version": 1,
+                "project_id": "kv-legacy",
+                "workflow": "knowledge-video",
+            },
+            *(
+                {"event": "project.phase_changed", "phase": phase}
+                for phase in legacy_phases[: legacy_phases.index(final_phase) + 1]
+            ),
+        ]
+        event_log.write_text(
+            "\n".join(json.dumps(event) for event in events) + "\n",
+            encoding="utf-8",
+        )
+        self.event_log = event_log
+        self.original_events = event_log.read_bytes()
+
+    def test_direction_advances_to_voice_before_storyboard(self):
+        """Catches a new project jumping from direction directly to storyboarding."""
+        self.advance_to("direction_ready")
+
+        append_event(
+            self.root,
+            {"event": "project.phase_changed", "phase": "voice_ready"},
+        )
+
+        self.assertEqual("voice_ready", replay_events(self.root)["phase"])
+
+    def test_direction_cannot_skip_voice_ready(self):
+        """Catches a new phase event using the pre-voice transition order."""
+        self.advance_to("direction_ready")
+
+        with self.assertRaisesRegex(ValueError, "illegal project phase transition"):
+            append_event(
+                self.root,
+                {"event": "project.phase_changed", "phase": "storyboard_ready"},
+            )
+
+    def test_legacy_production_snapshot_without_voice_projects_to_direction_ready(self):
+        """Catches recovery treating a legacy late-phase snapshot as voice-ready."""
+        self.write_pre_voice_event_log(final_phase="production_ready")
+
+        view = project_recovery_view(self.root, artifacts=[])
+
+        self.assertEqual("direction_ready", view["phase"])
+        self.assertEqual("voice-artifacts-required", view["migration_requirement"]["code"])
+        self.assertEqual(self.original_events, self.event_log.read_bytes())
+
+    def test_legacy_replay_does_not_relax_the_phase_event_contract(self):
+        """Catches compatibility accepting a tampered old phase event."""
+        event_log = self.root / "events" / "events.jsonl"
+        event_log.parent.mkdir(parents=True)
+        event_log.write_text(
+            "\n".join(
+                (
+                    json.dumps(
+                        {
+                            "event": "project.initialized",
+                            "schema_version": 1,
+                            "project_id": "kv-legacy",
+                            "workflow": "knowledge-video",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "event": "project.phase_changed",
+                            "phase": "content_ready",
+                            "untrusted": True,
+                        }
+                    ),
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "event does not match"):
+            replay_events(self.root)
+
     def test_runtime_root_and_event_storage_reject_symlinks(self):
         """Catches project snapshots or events escaping through runtime symlinks."""
         with TemporaryDirectory() as folder, TemporaryDirectory() as outside_folder:

@@ -7,7 +7,7 @@ import os
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any, Callable, Iterable, Iterator, Mapping, Optional
 
 from .runtime_paths import project_path, project_root, storage_directory
 
@@ -16,11 +16,35 @@ PHASES = (
     "initialized",
     "content_ready",
     "direction_ready",
+    "voice_ready",
     "storyboard_ready",
     "production_ready",
     "assembled",
     "review_ready",
     "handoff_ready",
+)
+
+# Version-one event logs predate ``voice_ready``.  They remain replayable only
+# through the replay compatibility path below; append_event always uses PHASES.
+_LEGACY_PHASES = (
+    "initialized",
+    "content_ready",
+    "direction_ready",
+    "storyboard_ready",
+    "production_ready",
+    "assembled",
+    "review_ready",
+    "handoff_ready",
+)
+_LEGACY_COMPATIBLE_SCHEMA_VERSIONS = frozenset({1})
+_VOICE_REQUIRED_RECOVERY_PHASES = frozenset(
+    {
+        "storyboard_ready",
+        "production_ready",
+        "assembled",
+        "review_ready",
+        "handoff_ready",
+    }
 )
 
 RUNTIME_DIRECTORIES = (
@@ -106,6 +130,41 @@ def replay_events(root: Path) -> dict[str, Any]:
         return _replay_events_unlocked(root)
 
 
+def project_recovery_view(
+    root: Path,
+    artifacts: Iterable[Mapping[str, Any]],
+    *,
+    has_current_voice_lineage: Optional[
+        Callable[[Iterable[Mapping[str, Any]]], bool]
+    ] = None,
+) -> dict[str, Any]:
+    """Return a non-persisted recovery view for projects predating voice gates.
+
+    The optional predicate is an intentional dependency boundary: the voice
+    artifact module can become authoritative without project-state importing it
+    and creating a cycle.  Until a caller supplies that validator, recovery is
+    conservative and does not infer voice readiness from arbitrary metadata.
+    """
+    state = replay_events(root)
+    if state["phase"] not in _VOICE_REQUIRED_RECOVERY_PHASES:
+        return state
+    lineage_exists = (
+        has_current_voice_lineage(artifacts)
+        if has_current_voice_lineage is not None
+        else False
+    )
+    if lineage_exists:
+        return state
+    return {
+        **state,
+        "phase": "direction_ready",
+        "migration_requirement": {
+            "code": "voice-artifacts-required",
+            "recorded_phase": state["phase"],
+        },
+    }
+
+
 def _replay_events_unlocked(root: Path) -> dict[str, Any]:
     state: dict[str, Any] = {}
     event_log = project_path(root, "events/events.jsonl")
@@ -119,7 +178,7 @@ def _replay_events_unlocked(root: Path) -> dict[str, Any]:
         except (TypeError, ValueError, json.JSONDecodeError) as error:
             raise ValueError(f"invalid project event at line {number}") from error
         try:
-            _validate_event(event, state)
+            _validate_replayed_event(event, state)
         except ValueError as error:
             raise ValueError(f"invalid project event at line {number}: {error}") from error
         if event["event"] == "project.initialized":
@@ -173,6 +232,34 @@ def _validate_event(event: Any, state: dict[str, Any]) -> None:
             or any(not _safe_component(item) for item in artifact_ids)
         ):
             raise ValueError("artifact_ids must be unique safe components")
+
+
+def _validate_replayed_event(event: Any, state: dict[str, Any]) -> None:
+    """Validate persisted events, admitting only known v1 pre-voice history."""
+    try:
+        _validate_event(event, state)
+    except ValueError:
+        if not _is_legacy_phase_transition(event, state):
+            raise
+
+
+def _is_legacy_phase_transition(event: Any, state: Mapping[str, Any]) -> bool:
+    """Recognize the one phase-order difference in readable version-one logs."""
+    if (
+        not isinstance(event, dict)
+        or set(event) != _EVENT_FIELDS["project.phase_changed"]
+        or event.get("event") != "project.phase_changed"
+    ):
+        return False
+    if state.get("schema_version") not in _LEGACY_COMPATIBLE_SCHEMA_VERSIONS:
+        return False
+    current = state.get("phase")
+    phase = event.get("phase")
+    return (
+        current in _LEGACY_PHASES
+        and phase in _LEGACY_PHASES
+        and _LEGACY_PHASES.index(phase) == _LEGACY_PHASES.index(current) + 1
+    )
 
 
 @contextmanager
