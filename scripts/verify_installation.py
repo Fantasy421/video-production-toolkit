@@ -23,6 +23,7 @@ from scripts.toolkit.orchestrator import (
 )
 from scripts.toolkit.project_state import append_event, initialize_project
 from scripts.toolkit.tasks import create_task
+from scripts.toolkit.voice import validate_authoritative_voice_bundle
 from scripts.validate_package import validate_package
 
 
@@ -41,6 +42,11 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
     root = Path(root).resolve()
     checks = {
         "migration_audit": "failed",
+        "direction_ready_blocks_production": "not-run",
+        "voice_source_decision": "not-run",
+        "real_voice_timing": "not-run",
+        "voice_ready_storyboard": "not-run",
+        "voice_timing_revision": "not-run",
         "resume_local_invalidation": "not-run",
         "four_approval_gates": "not-run",
         "representative_slice": "not-run",
@@ -59,11 +65,98 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
         }
     checks["migration_audit"] = "passed"
 
+    try:
+        gates_ok = _check_four_gates()
+        resumed = _run_resume_scenario()
+    except (OSError, TypeError, ValueError, RuntimeError) as error:
+        return {
+            "ok": False,
+            "checks": checks,
+            "blocker": {"code": "resume-smoke-failed", "detail": str(error)},
+        }
+    if not gates_ok:
+        return {
+            "ok": False,
+            "checks": checks,
+            "blocker": {
+                "code": "approval-gate-failed",
+                "detail": "a gate advanced without exact approval",
+            },
+        }
+    checks["four_approval_gates"] = "passed"
+    if resumed["direction_ready_actions"]:
+        return {
+            "ok": False,
+            "checks": checks,
+            "blocker": {
+                "code": "direction-ready-production-not-blocked",
+                "detail": resumed["direction_ready_actions"],
+            },
+        }
+    checks["direction_ready_blocks_production"] = "passed"
+
+    records = resumed["artifacts"]
+    voice_source = [
+        item
+        for item in records
+        if item.get("type") == "voice-source-decision"
+        and item.get("status") == "approved"
+        and item.get("mode") in {"tts", "uploaded-voice"}
+        and item.get("decision") == "approved"
+    ]
+    if len(voice_source) != 1:
+        return {
+            "ok": False,
+            "checks": checks,
+            "blocker": {
+                "code": "voice-source-decision-missing",
+                "detail": voice_source,
+            },
+        }
+    checks["voice_source_decision"] = "passed"
+    bundle = validate_authoritative_voice_bundle(records)
+    if not bundle["ok"] or bundle["voice_timing_id"] != "voice-timing-v1":
+        return {
+            "ok": False,
+            "checks": checks,
+            "blocker": {
+                "code": "real-voice-timing-required",
+                "detail": bundle["issues"],
+            },
+        }
+    checks["real_voice_timing"] = "passed"
+    if (
+        resumed["voice_ready_phase"] != "voice_ready"
+        or resumed["voice_ready_actions"] != ["storyboard.plan"]
+    ):
+        return {
+            "ok": False,
+            "checks": checks,
+            "blocker": {
+                "code": "voice-ready-storyboard-not-routable",
+                "detail": {
+                    "phase": resumed["voice_ready_phase"],
+                    "actions": resumed["voice_ready_actions"],
+                },
+            },
+        }
+    checks["voice_ready_storyboard"] = "passed"
+    revision = resumed["voice_timing_revision"]
+    if (
+        revision["invalidated_artifact_ids"] != revision["declared_descendant_ids"]
+        or revision["preserved_artifact_ids"] != ["style-v1", "voice-timing-v2"]
+    ):
+        return {
+            "ok": False,
+            "checks": checks,
+            "blocker": {"code": "voice-timing-invalidation-failed", "detail": revision},
+        }
+    checks["voice_timing_revision"] = "passed"
+
     contracts_path = root / "tests" / "fixtures" / "knowledge-video-minimal" / "scene-contracts.json"
     try:
         contracts = json.loads(contracts_path.read_text(encoding="utf-8"))
-        voice_artifacts = _voice_bundle()
-        selected_slice = select_representative_slice(contracts, voice_artifacts)
+        selected_slice = select_representative_slice(contracts, records)
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
         return {
             "ok": False,
@@ -92,23 +185,6 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
             },
         }
     checks["representative_slice"] = "passed"
-
-    try:
-        gates_ok = _check_four_gates()
-        resumed = _run_resume_scenario()
-    except (OSError, TypeError, ValueError, RuntimeError) as error:
-        return {
-            "ok": False,
-            "checks": checks,
-            "blocker": {"code": "resume-smoke-failed", "detail": str(error)},
-        }
-    if not gates_ok:
-        return {
-            "ok": False,
-            "checks": checks,
-            "blocker": {"code": "approval-gate-failed", "detail": "a gate advanced without exact approval"},
-        }
-    checks["four_approval_gates"] = "passed"
     if resumed["ready_tasks"] != ["scene.produce:S02"]:
         return {
             "ok": False,
@@ -152,6 +228,7 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
             "ranges": [list(item) for item in selected_slice.ranges],
             "duration_ms": selected_slice.duration_ms,
             "composite": selected_slice.composite,
+            "voice_timing_id": selected_slice.voice_timing_id,
         },
     }
 
@@ -210,10 +287,32 @@ def verify_installation(
             adapter_id = manifest.get("id", path.stem)
             required = manifest.get("installed_skill")
             available = _matches_installed_skill(required, discovered, adapter_id)
+            capability_skills = manifest.get("capability_skills", {})
+            capabilities: dict[str, dict[str, Any]] = {}
+            if not isinstance(capability_skills, dict):
+                errors.append(f"invalid adapter capability skills: {path.name}")
+                capability_skills = {}
+            for capability, capability_skill in sorted(capability_skills.items()):
+                if not isinstance(capability, str) or not capability:
+                    errors.append(f"invalid adapter capability name: {path.name}")
+                    continue
+                capabilities[capability] = {
+                    "installed_skill": capability_skill,
+                    "available": _matches_installed_skill(
+                        capability_skill, discovered, adapter_id
+                    ),
+                    "required": False,
+                }
+                if not capabilities[capability]["available"]:
+                    warnings.append(
+                        "optional external capability unavailable: "
+                        f"{adapter_id}/{capability}: {capability_skill}"
+                    )
             external[adapter_id] = {
                 "installed_skill": required,
                 "available": available,
                 "required": False,
+                "capabilities": capabilities,
             }
             if not available:
                 warnings.append(f"optional external skill unavailable: {required}")
@@ -386,10 +485,61 @@ def _run_resume_scenario() -> dict[str, Any]:
         voice_fixture = _voice_fixture_wav(duration_ms=15_000)
         voice_fixture_path = project / "media" / "voiceover-v1.wav"
         voice_fixture_path.write_bytes(voice_fixture)
+        create_artifact(project, _artifact("style-v1", "style-pack"))
         for item in _voice_bundle():
             create_artifact(project, item)
+        create_artifact(
+            project,
+            _artifact(
+                "semantic-beats-v1",
+                "semantic-beats",
+                parents=["voice-timing-v1"],
+                voice_timing_id="voice-timing-v1",
+            ),
+        )
+        approve_artifact(
+            project,
+            "style-v1",
+            "visual-direction",
+            "voice smoke direction approved",
+        )
+        storyboard_task = _candidate(
+            "smoke-storyboard",
+            "storyboard.plan",
+            ["style-v1", "voice-timing-v1"],
+            "visual-direction",
+            "style-v1",
+        )
+        scene_task = _candidate(
+            "smoke-scene",
+            "scene.produce",
+            ["storyboard-v1", "voice-timing-v1"],
+            "storyboard-and-cost",
+            "storyboard-v1",
+            production_scope="representative-slice",
+            scene_id="S01",
+        )
+        direction_approval = {
+            "target_id": "style-v1",
+            "scope": "visual-direction",
+            "decision": "approved",
+        }
+        append_event(project, {"event": "project.phase_changed", "phase": "content_ready"})
+        append_event(project, {"event": "project.phase_changed", "phase": "direction_ready"})
+        direction_ready_actions = calculate_ready_tasks(
+            {"phase": "direction_ready", "candidate_tasks": [storyboard_task, scene_task]},
+            [_artifact("style-v1", "style-pack"), *_voice_bundle()],
+            [direction_approval],
+        )
+        append_event(project, {"event": "project.phase_changed", "phase": "voice_ready"})
+        voice_ready_phase = "voice_ready"
+        voice_ready_actions = calculate_ready_tasks(
+            {"phase": voice_ready_phase, "candidate_tasks": [storyboard_task, scene_task]},
+            [_artifact("style-v1", "style-pack"), *_voice_bundle()],
+            [direction_approval],
+        )
         for item in (
-            _artifact("storyboard-v1", "storyboard"),
+            _artifact("storyboard-v1", "storyboard", parents=["voice-timing-v1"]),
             _artifact(
                 "contract-S01-v1", "scene-contract", parents=["storyboard-v1"], scene_id="S01"
             ),
@@ -429,16 +579,7 @@ def _run_resume_scenario() -> dict[str, Any]:
                 scene_id="S02",
             ),
         )
-        for phase in (
-            "content_ready",
-            "direction_ready",
-            "voice_ready",
-            "storyboard_ready",
-        ):
-            append_event(
-                project,
-                {"event": "project.phase_changed", "phase": phase},
-            )
+        append_event(project, {"event": "project.phase_changed", "phase": "storyboard_ready"})
         invalidate_artifact_descendants(
             project,
             "contract-S02-v1",
@@ -452,8 +593,55 @@ def _run_resume_scenario() -> dict[str, Any]:
         second = resume_project(project)
         if first != second:
             raise RuntimeError("resume is not deterministic")
+        create_artifact(
+            project,
+            _artifact(
+                "voice-timing-v2",
+                "voice-timing",
+                version=2,
+                parents=["voiceover-v1"],
+                voiceover_id="voiceover-v1",
+                timing_kind="real",
+                duration_ms=15000,
+                segments=[
+                    {"start_ms": 0, "end_ms": 5000, "text": "first"},
+                    {"start_ms": 5000, "end_ms": 10000, "text": "second"},
+                    {"start_ms": 10000, "end_ms": 15000, "text": "third"},
+                ],
+            ),
+        )
+        declared_descendants = [
+            "contract-S01-v1",
+            "contract-S02-v1",
+            "contract-S02-v2",
+            "scene-S01-v1",
+            "scene-S02-v1",
+            "semantic-beats-v1",
+            "storyboard-v1",
+        ]
+        invalidated = invalidate_artifact_descendants(
+            project,
+            "voice-timing-v1",
+            json.loads(
+                (Path(__file__).parents[1] / "references/policies/invalidation.json").read_text(
+                    encoding="utf-8"
+                )
+            ),
+        )
         return {
             **first,
+            "direction_ready_actions": direction_ready_actions,
+            "voice_ready_phase": voice_ready_phase,
+            "voice_ready_actions": voice_ready_actions,
+            "voice_timing_revision": {
+                "invalidated_artifact_ids": invalidated,
+                "declared_descendant_ids": declared_descendants,
+                "preserved_artifact_ids": sorted(
+                    artifact_id
+                    for artifact_id in ("style-v1", "voice-timing-v2")
+                    if artifact_id not in invalidated
+                ),
+            },
             "media_files": sorted(path.name for path in (project / "media").iterdir()),
             "seeded_media_files": [voice_fixture_path.name],
             "voice_fixture_unchanged": (

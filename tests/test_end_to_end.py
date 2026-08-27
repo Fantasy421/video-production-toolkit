@@ -11,7 +11,7 @@ from tempfile import TemporaryDirectory
 
 from scripts.install_personal_plugin import install_personal_plugin
 from scripts.migration_audit import DISPOSITIONS
-from scripts.retire_legacy_skill import retire_legacy_skill
+from scripts.retire_legacy_skill import _distributable_hashes, retire_legacy_skill
 from scripts.toolkit.artifacts import approve_artifact, create_artifact
 from scripts.toolkit.orchestrator import (
     calculate_ready_tasks,
@@ -1142,6 +1142,20 @@ class SmokeAndInstallationTests(unittest.TestCase):
             self.assertEqual("failed", blocked["checks"]["migration_audit"])
             self.assertEqual("migration-audit-required", blocked["blocker"]["code"])
 
+    def test_resume_smoke_requires_voice_before_representative_slice(self):
+        """Catches a smoke report that omits the real voice readiness evidence."""
+        result = run_smoke(ROOT, legacy_root=LEGACY)
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual("passed", result["checks"]["direction_ready_blocks_production"])
+        self.assertEqual("passed", result["checks"]["voice_source_decision"])
+        self.assertEqual("passed", result["checks"]["real_voice_timing"])
+        self.assertEqual("passed", result["checks"]["voice_ready_storyboard"])
+        self.assertEqual("passed", result["checks"]["voice_timing_revision"])
+        self.assertEqual(
+            "voice-timing-v1", result["representative_slice"]["voice_timing_id"]
+        )
+
     def test_resume_smoke_seeds_and_preserves_the_declared_voice_fixture(self):
         """Catches metadata-only voiceover smoke passing without real audio bytes."""
         observed = []
@@ -1263,6 +1277,31 @@ class SmokeAndInstallationTests(unittest.TestCase):
                 set(result["external_adapters"]),
             )
             self.assertTrue(result["warnings"])
+
+    def test_verifier_reports_chatcut_voice_capabilities(self):
+        """Catches voice-capable ChatCut installs being hidden behind its base Skill."""
+        with TemporaryDirectory() as folder:
+            home = Path(folder) / "home"
+            activate_personal_plugin(home, ROOT)
+            add_cached_plugin_skill(
+                home,
+                marketplace="chatcut-inc",
+                plugin="chatcut",
+                skill="voice",
+                frontmatter_name="chatcut:voice",
+                enabled=True,
+            )
+
+            result = verify_installation(
+                repo=None,
+                home=home,
+                check_external_skills=True,
+            )
+
+            capabilities = result["external_adapters"]["chatcut"]["capabilities"]
+            self.assertTrue(capabilities["voice.synthesize"]["available"])
+            self.assertTrue(capabilities["voice.time"]["available"])
+            self.assertEqual("chatcut:voice", capabilities["voice.time"]["installed_skill"])
 
     def test_verifier_discovers_current_versioned_personal_plugin_cache(self):
         """Catches current Codex version caches being mistaken for missing installs."""
@@ -1536,6 +1575,31 @@ class RetirementSafetyTests(unittest.TestCase):
                 )
 
             self.assertTrue(legacy.is_dir())
+
+    def test_runtime_fingerprint_requires_voice_ready_release_contracts(self):
+        """Catches a distributable fingerprint that omits voice-ready runtime files."""
+        required = (
+            "skills/voiceover-producer/SKILL.md",
+            "references/schemas/voice-source-decision.schema.json",
+            "references/schemas/voice-profile.schema.json",
+            "references/schemas/voiceover.schema.json",
+            "references/schemas/voice-timing.schema.json",
+            "scripts/toolkit/voice.py",
+            "scripts/toolkit/voice_tasks.py",
+            "references/policies/decision-gates.md",
+            "references/policies/invalidation.json",
+        )
+        with TemporaryDirectory() as folder:
+            repo = Path(folder) / "repo"
+            shutil.copytree(ROOT, repo, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+            for relative in required:
+                (repo / relative).unlink()
+
+            with self.assertRaisesRegex(RuntimeError, "required runtime files") as error:
+                _distributable_hashes(repo, "replacement repository")
+
+            for relative in required:
+                self.assertIn(relative, str(error.exception))
 
     def test_retirement_refuses_missing_confirmation_and_symlinks(self):
         """Catches an unapproved or redirected path reaching recursive deletion."""

@@ -70,5 +70,9 @@ inventory and content hashes match the reviewed repository, and required project
 review-pack templates are present. Only generated test/cache and Git scratch are excluded
 from that identity check. Its own verifier then runs in an isolated Python subprocess and
 must pass the live migration audit, recovery,
-four-gate type and lineage counterexamples, and representative-slice smoke tests before
-the user gives execution-time approval for the exact legacy directory.
+four-gate type and lineage counterexamples, a persisted voice-source decision,
+current real voice-timing, voice-timing descendant invalidation, and
+representative-slice timing-provenance smoke tests before the user gives
+execution-time approval for the exact legacy directory. The verifier also reports
+capability-scoped external adapters, including ChatCut Voice when it is available;
+availability alone does not authorize an undeclared provider fallback.
