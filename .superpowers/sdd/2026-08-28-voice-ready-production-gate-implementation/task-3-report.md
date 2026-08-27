@@ -40,3 +40,29 @@ Verification:
 - `git diff --check` — passed.
 
 Concerns: none.
+
+## Fix round 1
+
+Root cause: the coordinator contract said only that it did not generate media
+and did not synthesize, import, or analyze audio. That wording did not make the
+required image-payload isolation or direct non-audio media prohibition
+explicitly testable.
+
+Fix: `video-director` now states that it must never generate, edit, open,
+import, analyze, or visually inspect image payloads; must never directly handle
+non-audio media; and must delegate image generation and inspection to isolated
+bounded-context child tasks. It may only route compact artifact IDs, paths,
+summaries, and contract results, without loading or returning media bytes or
+previews. The existing voice route remains exactly once.
+
+TDD evidence: the new static regression failed before the contract update
+because the concrete image and non-audio-media prohibitions were absent, then
+passed after the explicit boundary language was added.
+
+Fix verification:
+
+- `PYTHONPYCACHEPREFIX=/private/tmp/voice-ready-task3-fix1-targeted python3 -m unittest tests.test_skill_contracts tests.test_package -v` — 18 passed.
+- `PYTHONPYCACHEPREFIX=/private/tmp/voice-ready-task3-fix1-full python3 -m unittest discover -s tests -v` — 251 passed.
+- `PYTHONPYCACHEPREFIX=/private/tmp/voice-ready-task3-fix1-compile python3 -m py_compile scripts/validate_package.py tests/test_skill_contracts.py tests/test_package.py` — passed.
+- `python3 scripts/validate_package.py .` — `package valid`.
+- `git diff --check` — passed.

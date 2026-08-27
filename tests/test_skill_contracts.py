@@ -69,6 +69,24 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("Do not generate media", text)
         self.assertIn("never synthesizes, imports, or analyzes audio", text)
 
+    def test_video_director_never_handles_image_or_non_audio_media_payloads(self):
+        """Catches image work or direct media handling leaking into the coordinator."""
+        text = (ROOT / "skills/video-director/SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "must never generate, edit, open, import, analyze, or visually inspect image payloads",
+            text,
+        )
+        self.assertIn("must never directly handle non-audio media", text)
+        self.assertIn(
+            "only route compact artifact IDs, paths, summaries, and contract results",
+            text,
+        )
+        self.assertIn(
+            "delegate image generation and inspection to isolated child tasks",
+            text,
+        )
+
     def test_visual_carrier_policy_has_all_carriers_and_density_limit(self):
         """Catches storyboard rules losing the visual hierarchy invariant."""
         text = (ROOT / "references/policies/visual-carriers.md").read_text(encoding="utf-8")
