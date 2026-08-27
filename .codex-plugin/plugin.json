@@ -1,7 +1,7 @@
 {
   "id": "video-production-toolkit",
   "name": "video-production-toolkit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Recoverable, user-directed knowledge-video production workflows",
   "skills": "./skills/"
 }
