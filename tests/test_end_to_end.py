@@ -65,6 +65,38 @@ def activate_personal_plugin(home, source):
     return cache
 
 
+def activate_versioned_personal_plugin(home, source):
+    """Simulate the versioned cache layout used by current Codex hosts."""
+    install_personal_plugin(source, home=home, mode="link")
+    manifest = json.loads(
+        (Path(source) / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+    )
+    cache = (
+        Path(home)
+        / ".codex"
+        / "plugins"
+        / "cache"
+        / "personal"
+        / "video-production-toolkit"
+        / manifest["version"]
+    )
+    shutil.copytree(
+        source,
+        cache,
+        symlinks=True,
+        ignore=shutil.ignore_patterns(
+            ".git", ".worktrees", ".superpowers", "__pycache__", "*.pyc"
+        ),
+    )
+    config = Path(home) / ".codex" / "config.toml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(
+        '[plugins."video-production-toolkit@personal"]\nenabled = true\n',
+        encoding="utf-8",
+    )
+    return cache
+
+
 def add_cached_plugin_skill(
     home,
     *,
@@ -921,6 +953,21 @@ class SmokeAndInstallationTests(unittest.TestCase):
                 set(result["external_adapters"]),
             )
             self.assertTrue(result["warnings"])
+
+    def test_verifier_discovers_current_versioned_personal_plugin_cache(self):
+        """Catches current Codex version caches being mistaken for missing installs."""
+        with TemporaryDirectory() as folder:
+            home = Path(folder) / "home"
+            cache = activate_versioned_personal_plugin(home, ROOT)
+
+            result = verify_installation(
+                repo=None,
+                home=home,
+                require_skill="video-director",
+            )
+
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(cache.resolve(), Path(result["plugin"]["root"]).resolve())
 
     def test_verifier_does_not_treat_marketplace_registration_as_host_installation(self):
         """Catches an available catalog source being reported as installed and active."""

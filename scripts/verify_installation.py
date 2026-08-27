@@ -238,7 +238,7 @@ def discover_host_installed_plugin(home: Path, plugin_id: str = PLUGIN_ID) -> Pa
     home = Path(home).resolve()
     if not _safe_component(plugin_id):
         raise ValueError("plugin id is not a safe component")
-    _discover_personal_plugin(home, plugin_id)
+    source_root = _discover_personal_plugin(home, plugin_id)
     catalog = _read_personal_marketplace(home)
     marketplace_name = catalog.get("name")
     if not _safe_component(marketplace_name):
@@ -249,19 +249,34 @@ def discover_host_installed_plugin(home: Path, plugin_id: str = PLUGIN_ID) -> Pa
     plugin_key = f"{plugin_id}@{marketplace_name}"
     if not _plugin_is_enabled(config, plugin_key):
         raise ValueError("plugin is not host-installed and enabled")
-    cache = (
+    cache_root = (
         home
         / ".codex"
         / "plugins"
         / "cache"
         / marketplace_name
         / plugin_id
-        / "local"
     )
     try:
-        cache.parent.resolve().relative_to(home)
+        cache_root.resolve().relative_to(home)
     except ValueError:
         raise ValueError("host-installed plugin cache escapes personal home") from None
+    if cache_root.is_symlink():
+        raise ValueError("host-installed plugin cache must not be a symlink")
+    try:
+        manifest = json.loads(
+            (source_root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("personal plugin manifest is invalid") from error
+    version = manifest.get("version") if isinstance(manifest, dict) else None
+    if not _safe_component(version):
+        raise ValueError("personal plugin manifest version is invalid")
+    cache = cache_root / version
+    # Older local-plugin hosts used a literal `local` cache directory. Keep
+    # that layout readable while preferring the manifest-versioned host cache.
+    if not cache.exists() and (cache_root / "local").exists():
+        cache = cache_root / "local"
     if cache.is_symlink():
         raise ValueError("host-installed plugin cache must not be a symlink")
     try:
