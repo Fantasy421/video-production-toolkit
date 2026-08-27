@@ -14,9 +14,11 @@ from uuid import uuid4
 try:
     from scripts.toolkit.runtime_paths import project_path, project_root
     from scripts.toolkit.validation import read_effective_artifacts, resolve_active_timeline, validate_project
+    from scripts.toolkit.voice import validate_authoritative_voice_bundle
 except ModuleNotFoundError:
     from toolkit.runtime_paths import project_path, project_root
     from toolkit.validation import read_effective_artifacts, resolve_active_timeline, validate_project
+    from toolkit.voice import validate_authoritative_voice_bundle
 
 
 PREVIEW_SUFFIXES = {".html", ".htm", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".webm", ".wav", ".mp3"}
@@ -51,6 +53,7 @@ def build_review_pack(root: Path, output: Path) -> Path:
         raise ValueError("review pack current pointer must be a symlink")
     validation = validate_project(root)
     previews = _preview_links(root, current)
+    voice = _voice_review_data(root, current)
     active_timeline = resolve_active_timeline(root)
     scenes = _scene_rows(active_timeline[1]) if active_timeline is not None else []
     decision_requests = [{
@@ -60,12 +63,76 @@ def build_review_pack(root: Path, output: Path) -> Path:
     review = {
         "schema_version": 1,
         "previews": previews,
+        "voice": voice,
         "scenes": scenes,
         "timecoded_warnings": validation["warnings"],
         "structural_errors": validation["errors"],
         "decision_requests": decision_requests,
     }
-    return _publish_bundle(output, review, _render_html(previews, scenes, validation, decision_requests))
+    return _publish_bundle(output, review, _render_html(previews, voice, scenes, validation, decision_requests))
+
+
+def _voice_review_data(root: Path, output: Path) -> Optional[dict[str, Any]]:
+    """Summarize only the current effective voice metadata and link its audio file."""
+    artifacts = read_effective_artifacts(root)
+    bundle = validate_authoritative_voice_bundle(artifacts.values())
+    if not bundle["ok"]:
+        return None
+    voiceover = artifacts.get(bundle["voiceover_id"])
+    timing = artifacts.get(bundle["voice_timing_id"])
+    narration_id = bundle["narration_id"]
+    if voiceover is None or timing is None or not isinstance(narration_id, str):
+        return None
+    try:
+        audio_path = project_path(root, voiceover["media_path"])
+    except (KeyError, ValueError):
+        return None
+    if not audio_path.is_file():
+        return None
+    source = _latest_effective(
+        artifacts.values(), "voice-source-decision", narration_id, "narration_id"
+    )
+    profile = artifacts.get(voiceover.get("profile_id"))
+    if source is None or profile is None or profile.get("status") != "approved":
+        return None
+    beats = sorted(
+        artifact["artifact_id"]
+        for artifact in artifacts.values()
+        if artifact.get("type") == "semantic-beats"
+        and artifact.get("status") == "approved"
+        and artifact.get("voice_timing_id") == timing["artifact_id"]
+    )
+    return {
+        "voiceover_id": voiceover["artifact_id"],
+        "audio_href": os.path.relpath(audio_path, output).replace(os.sep, "/"),
+        "duration_ms": voiceover["duration_ms"],
+        "source": {"artifact_id": source["artifact_id"], "mode": source["mode"]},
+        "profile": {
+            "artifact_id": profile["artifact_id"],
+            "provider": profile["provider"],
+            "voice_id": profile["voice_id"],
+            "language": profile["language"],
+        },
+        "timing": {
+            "artifact_id": timing["artifact_id"],
+            "duration_ms": timing["duration_ms"],
+            "segment_count": len(timing["segments"]),
+        },
+        "semantic_beat_ids": beats,
+    }
+
+
+def _latest_effective(
+    artifacts: Any, artifact_type: str, value: str, field: str
+) -> Optional[dict[str, Any]]:
+    candidates = [
+        artifact
+        for artifact in artifacts
+        if artifact.get("type") == artifact_type
+        and artifact.get("status") == "approved"
+        and artifact.get(field) == value
+    ]
+    return max(candidates, key=lambda item: (item["version"], item["artifact_id"])) if candidates else None
 
 
 def _preview_links(root: Path, output: Path) -> list[dict[str, str]]:
@@ -137,7 +204,7 @@ def _publish_bundle(output: Path, review: dict[str, Any], rendered_html: str) ->
                 shutil.rmtree(stage)
 
 
-def _render_html(previews: list[dict[str, str]], scenes: list[dict[str, Any]], validation: dict[str, list[dict[str, Any]]], decision_requests: list[dict[str, str]]) -> str:
+def _render_html(previews: list[dict[str, str]], voice: Optional[dict[str, Any]], scenes: list[dict[str, Any]], validation: dict[str, list[dict[str, Any]]], decision_requests: list[dict[str, str]]) -> str:
     preview_items = "\n".join(
         f'<li><a href="{html.escape(item["href"], quote=True)}">{html.escape(item["label"])} [{html.escape(item["status"])}]</a></li>'
         for item in previews
@@ -149,6 +216,11 @@ def _render_html(previews: list[dict[str, str]], scenes: list[dict[str, Any]], v
     warning_items = "\n".join(f"<li>{html.escape(item['code'])}</li>" for item in validation["warnings"]) or "<li>None</li>"
     error_items = "\n".join(f"<li>{html.escape(item['code'])}</li>" for item in validation["errors"]) or "<li>None</li>"
     decision_items = "\n".join(f"<li><strong>{html.escape(item['gate'])}</strong>: {html.escape(item['request'])}</li>" for item in decision_requests)
+    voice_item = (
+        f'<li>{html.escape(voice["source"]["mode"])} · {html.escape(voice["profile"]["provider"])} / {html.escape(voice["profile"]["voice_id"])} · {voice["duration_ms"]} ms · <a href="{html.escape(voice["audio_href"], quote=True)}">voiceover</a></li>'
+        if voice is not None
+        else "<li>No current voiceover is available.</li>"
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Video review pack</title></head>
@@ -156,6 +228,7 @@ def _render_html(previews: list[dict[str, str]], scenes: list[dict[str, Any]], v
   <main>
     <h1>Video review pack</h1>
     <h2>Preview links</h2><ul>{preview_items}</ul>
+    <h2>Voiceover</h2><ul>{voice_item}</ul>
     <h2>Scenes</h2><ul>{scene_items}</ul>
     <h2>Timecoded structural warnings</h2><ul>{warning_items}</ul>
     <h2>Structural blockers</h2><ul>{error_items}</ul>

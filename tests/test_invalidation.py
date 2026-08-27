@@ -35,6 +35,42 @@ class InvalidationTests(unittest.TestCase):
         self.assertIn("storyboard-v1", stale)
         self.assertIn("timeline-v1", stale)
 
+    def test_voice_profile_change_invalidates_audio_and_timing_consumers(self):
+        """Catches a profile revision leaving generated audio or its consumers fresh."""
+        artifacts = [
+            {"artifact_id": "voice-profile-v1", "type": "voice-profile", "parents": []},
+            {"artifact_id": "voiceover-v1", "type": "voiceover", "parents": ["voice-profile-v1"]},
+            {"artifact_id": "voice-timing-v1", "type": "voice-timing", "parents": ["voiceover-v1"]},
+            {"artifact_id": "beats-v1", "type": "semantic-beats", "parents": ["voice-timing-v1"]},
+            {"artifact_id": "storyboard-v1", "type": "storyboard", "parents": ["beats-v1"]},
+            {"artifact_id": "timeline-v1", "type": "timeline", "parents": ["storyboard-v1"]},
+            {"artifact_id": "review-v1", "type": "review-pack", "parents": ["timeline-v1"]},
+        ]
+
+        self.assertEqual(
+            {
+                "voiceover-v1",
+                "voice-timing-v1",
+                "beats-v1",
+                "storyboard-v1",
+                "timeline-v1",
+                "review-v1",
+            },
+            invalidate_descendants(artifacts, "voice-profile-v1", self.rules),
+        )
+
+    def test_style_change_does_not_invalidate_unchanged_voiceover(self):
+        """Catches visual-only invalidation crossing into an independent voice branch."""
+        artifacts = [
+            {"artifact_id": "style-v1", "type": "style-pack", "parents": []},
+            {"artifact_id": "voiceover-v1", "type": "voiceover", "parents": []},
+            {"artifact_id": "scene-S01-v1", "type": "media", "parents": ["style-v1"]},
+        ]
+
+        self.assertNotIn(
+            "voiceover-v1", invalidate_descendants(artifacts, "style-v1", self.rules)
+        )
+
     def test_disallowed_descendant_type_remains_fresh(self):
         """Catches DAG traversal ignoring the policy's explicit type boundary."""
         artifacts = [

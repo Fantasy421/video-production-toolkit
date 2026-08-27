@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import struct
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -56,6 +57,69 @@ class ReviewPackTests(unittest.TestCase):
     def tearDown(self):
         self.folder.cleanup()
 
+    def write_artifact(self, artifact_id, artifact_type, version, path, *, parents=None, **metadata):
+        destination = self.root / "artifacts" / artifact_type / f"{artifact_id}.json"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(
+            json.dumps(
+                {
+                    "artifact_id": artifact_id,
+                    "type": artifact_type,
+                    "version": version,
+                    "status": "approved",
+                    "parents": parents or [],
+                    "path": path,
+                    **metadata,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def write_wav_header(self, relative, duration_ms):
+        data_size = duration_ms * 2
+        (self.root / relative).write_bytes(
+            b"RIFF"
+            + struct.pack("<I", 36 + data_size)
+            + b"WAVEfmt "
+            + struct.pack("<IHHIIHH", 16, 1, 1, 1_000, 2_000, 2, 16)
+            + b"data"
+            + struct.pack("<I", data_size)
+            + (b"\x00" * data_size)
+        )
+
+    def write_voice_bundle(self, version):
+        narration_id = f"narration-v{version}"
+        profile_id = f"voice-profile-v{version}"
+        voiceover_id = f"voiceover-v{version}"
+        timing_id = f"voice-timing-v{version}"
+        self.write_artifact(
+            narration_id, "narration", version, f"metadata/{narration_id}.json",
+            parents=[] if version == 1 else ["narration-v1"],
+        )
+        self.write_artifact(
+            f"voice-source-v{version}", "voice-source-decision", version,
+            f"metadata/voice-source-v{version}.json", narration_id=narration_id,
+            mode="tts", decision="approved",
+        )
+        self.write_artifact(
+            profile_id, "voice-profile", version, f"metadata/{profile_id}.json",
+            mode="tts", language="zh-CN", provider="chatcut", voice_id="narrator-1",
+            speaking_rate=1.0, emotion="calm", pronunciations=[], approved=True,
+        )
+        self.write_artifact(
+            voiceover_id, "voiceover", version, f"media/{voiceover_id}.wav",
+            parents=[narration_id, profile_id], narration_id=narration_id,
+            profile_id=profile_id, media_path=f"media/{voiceover_id}.wav",
+            duration_ms=5_000, provenance="test-fixture",
+        )
+        self.write_wav_header(f"media/{voiceover_id}.wav", 5_000)
+        self.write_artifact(
+            timing_id, "voice-timing", version, f"metadata/{timing_id}.json",
+            parents=[voiceover_id], voiceover_id=voiceover_id, timing_kind="real",
+            duration_ms=5_000,
+            segments=[{"start_ms": 0, "end_ms": 5_000, "text": "voice timing"}],
+        )
+
     def test_review_pack_links_previews_and_decisions_without_embedding_media(self):
         path = build_review_pack(self.root, self.root / "review")
 
@@ -65,6 +129,23 @@ class ReviewPackTests(unittest.TestCase):
         self.assertNotIn("data:image/", html)
         self.assertIn("../previews/S01-preview.jpg", html)
         self.assertEqual("Representative slice and final draft", review["decision_requests"][0]["gate"])
+
+    def test_review_pack_links_only_current_voiceover(self):
+        """Catches a review pack exposing a superseded or payload-embedded voice recording."""
+        initialize_project(self.root, "review-voice", "knowledge-video")
+        self.write_voice_bundle(1)
+        self.write_voice_bundle(2)
+
+        path = build_review_pack(self.root, self.root / "review")
+        review = json.loads((path.parent / "review.json").read_text(encoding="utf-8"))
+        rendered = json.dumps(review)
+
+        self.assertEqual("voiceover-v2", review["voice"]["voiceover_id"])
+        self.assertEqual("tts", review["voice"]["source"]["mode"])
+        self.assertEqual(5_000, review["voice"]["duration_ms"])
+        self.assertEqual("voice-timing-v2", review["voice"]["timing"]["artifact_id"])
+        self.assertNotIn("voiceover-v1", rendered)
+        self.assertNotIn("data:audio", rendered)
 
     def test_review_pack_labels_only_effectively_approved_preview_artifacts(self):
         """Catches event-invalidated preview metadata still being presented as current."""

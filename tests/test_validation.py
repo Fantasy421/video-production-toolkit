@@ -199,6 +199,23 @@ class ValidationTests(unittest.TestCase):
                 ],
             )
 
+    def write_wav_header(self, relative, duration_ms):
+        """Write a PCM header whose duration is readable without decoding samples."""
+        sample_rate = 1_000
+        channels = 1
+        bytes_per_sample = 2
+        frame_count = duration_ms
+        data_size = frame_count * channels * bytes_per_sample
+        (self.root / relative).write_bytes(
+            b"RIFF"
+            + struct.pack("<I", 36 + data_size)
+            + b"WAVEfmt "
+            + struct.pack("<IHHIIHH", 16, 1, channels, sample_rate, sample_rate * channels * bytes_per_sample, channels * bytes_per_sample, 16)
+            + b"data"
+            + struct.pack("<I", data_size)
+            + (b"\x00" * data_size)
+        )
+
     def write_artifact(
         self, artifact_id, artifact_type, version, status, path, parents=None, **metadata
     ):
@@ -930,6 +947,42 @@ class ValidationTests(unittest.TestCase):
             "invalid-scene-contract",
             {item["code"] for item in result["errors"]},
         )
+
+    def test_voice_timing_beyond_audio_duration_is_structural_error(self):
+        """Catches metadata timing being trusted past the actual audio header duration."""
+        project_path = self.root / "project.json"
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project["schema_version"] = 2
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+        self.write_project_history(2)
+        self.write_voice_bundle()
+        self.write_wav_header("media/voiceover-v1.wav", 9_000)
+
+        result = validate_project(self.root)
+
+        self.assertIn(
+            "voice-timing-out-of-bounds",
+            {item["code"] for item in result["errors"]},
+        )
+
+    def test_voiceover_media_existence_duration_and_lineage_are_structural_issues(self):
+        """Catches current voice metadata that cannot safely produce a real audio reference."""
+        project_path = self.root / "project.json"
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project["schema_version"] = 2
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+        self.write_project_history(2)
+        self.write_voice_bundle()
+        voiceover_path = self.root / "artifacts" / "voiceover" / "voiceover-v1.json"
+        voiceover = json.loads(voiceover_path.read_text(encoding="utf-8"))
+        voiceover["parents"] = ["narration-v1"]
+        voiceover_path.write_text(json.dumps(voiceover), encoding="utf-8")
+
+        result = validate_project(self.root)
+
+        codes = {item["code"] for item in result["errors"]}
+        self.assertIn("voiceover-media-missing", codes)
+        self.assertIn("voiceover-lineage-mismatch", codes)
 
     def test_canonical_demo_contract_requires_a_lifecycle_record(self):
         """Catches lifecycle validation relying on a duplicate carrier field on the clip."""

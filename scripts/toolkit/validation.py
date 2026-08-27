@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import struct
 from typing import Any, Iterable, Optional, Union
+import wave
 import zlib
 
 from .contracts import validate_scene_contract
@@ -19,6 +20,7 @@ from .project_state import (
 from .invalidation import invalidated_artifact_ids
 from .packs import validate_layout_pack, validate_style_pack
 from .runtime_paths import project_path, project_root
+from .voice import validate_authoritative_voice_bundle
 
 
 ARTIFACT_REQUIRED_KEYS = ("artifact_id", "type", "version", "status", "parents", "path")
@@ -81,6 +83,7 @@ def validate_project(root: Path) -> dict[str, list[dict[str, Any]]]:
     }
     approvals = _read_approvals(root, errors)
     _check_artifact_graph(root, artifacts, errors)
+    _check_voice_lineage(root, project, schema_origin, artifacts, errors)
     _check_packs(root, artifacts, errors)
     _check_promoted_assets(root, artifacts, errors)
     _check_tasks(root, artifacts, errors)
@@ -100,6 +103,86 @@ def validate_project(root: Path) -> dict[str, list[dict[str, Any]]]:
         )
     _check_required_approvals(project, artifacts, approvals, errors)
     return {"errors": _sorted_issues(errors), "warnings": _sorted_issues(warnings)}
+
+
+def _check_voice_lineage(
+    root: Path,
+    project: dict[str, Any],
+    schema_origin: Optional[int],
+    artifacts: dict[str, dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> None:
+    """Check the current voice DAG and only the audio metadata needed to use it."""
+    if (
+        schema_origin == LEGACY_PROJECT_SCHEMA_VERSION
+        or project.get("phase") not in PHASES[PHASES.index("voice_ready") :]
+    ):
+        return
+    bundle = validate_authoritative_voice_bundle(artifacts.values())
+    errors.extend(bundle["issues"])
+    narration_id = bundle.get("narration_id")
+    if not isinstance(narration_id, str):
+        return
+    voiceover = _current_voiceover(artifacts.values(), narration_id)
+    if voiceover is None:
+        return
+    media_path = _safe_project_path(root, voiceover.get("media_path"))
+    if media_path is None or not media_path.is_file():
+        errors.append(_issue("voiceover-media-missing", artifact_id=voiceover["artifact_id"]))
+        return
+    actual_duration = _wave_duration_ms(media_path)
+    if actual_duration is None:
+        errors.append(_issue("voiceover-media-duration-unverifiable", artifact_id=voiceover["artifact_id"]))
+        return
+    if actual_duration != voiceover.get("duration_ms"):
+        errors.append(_issue("voiceover-duration-mismatch", artifact_id=voiceover["artifact_id"]))
+    timing = _current_voice_timing(artifacts.values(), voiceover["artifact_id"])
+    if timing is None:
+        return
+    if timing.get("duration_ms") != actual_duration or any(
+        isinstance(segment, dict) and segment.get("end_ms", 0) > actual_duration
+        for segment in timing.get("segments", [])
+    ):
+        errors.append(_issue("voice-timing-out-of-bounds", artifact_id=timing["artifact_id"]))
+
+
+def _current_voiceover(
+    artifacts: Iterable[dict[str, Any]], narration_id: str
+) -> Optional[dict[str, Any]]:
+    candidates = [
+        artifact
+        for artifact in artifacts
+        if artifact.get("type") == "voiceover"
+        and artifact.get("status") == "approved"
+        and artifact.get("narration_id") == narration_id
+    ]
+    return max(candidates, key=lambda item: (item["version"], item["artifact_id"])) if candidates else None
+
+
+def _current_voice_timing(
+    artifacts: Iterable[dict[str, Any]], voiceover_id: str
+) -> Optional[dict[str, Any]]:
+    candidates = [
+        artifact
+        for artifact in artifacts
+        if artifact.get("type") == "voice-timing"
+        and artifact.get("status") == "approved"
+        and artifact.get("voiceover_id") == voiceover_id
+    ]
+    return max(candidates, key=lambda item: (item["version"], item["artifact_id"])) if candidates else None
+
+
+def _wave_duration_ms(path: Path) -> Optional[int]:
+    """Read PCM container metadata without decoding or loading audio frames."""
+    try:
+        with wave.open(str(path), "rb") as source:
+            frame_rate = source.getframerate()
+            frames = source.getnframes()
+        if frame_rate <= 0 or frames < 0:
+            return None
+        return (frames * 1_000) // frame_rate
+    except (EOFError, OSError, wave.Error):
+        return None
 
 
 def _replayed_project_authority(
