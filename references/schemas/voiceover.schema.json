@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Video Production Toolkit Voiceover",
+  "type": "object",
+  "required": ["artifact_id", "narration_id", "profile_id", "media_path", "duration_ms", "provenance", "parents"],
+  "properties": {
+    "artifact_id": {"$ref": "#/$defs/safeId"},
+    "narration_id": {"$ref": "#/$defs/safeId"},
+    "profile_id": {"$ref": "#/$defs/safeId"},
+    "media_path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"},
+    "duration_ms": {"type": "integer", "minimum": 1},
+    "provenance": {"type": "string", "minLength": 1},
+    "parents": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"}
+  }
+}

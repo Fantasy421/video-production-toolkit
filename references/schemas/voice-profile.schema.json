@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Video Production Toolkit Voice Profile",
+  "type": "object",
+  "required": ["artifact_id", "mode", "language", "provider", "voice_id", "speaking_rate", "emotion", "pronunciations", "approved"],
+  "properties": {
+    "artifact_id": {"$ref": "#/$defs/safeId"},
+    "mode": {"enum": ["uploaded-voice", "tts"]},
+    "language": {"type": "string", "minLength": 1},
+    "provider": {"type": "string", "minLength": 1},
+    "voice_id": {"type": "string", "minLength": 1},
+    "speaking_rate": {"type": "number", "exclusiveMinimum": 0},
+    "emotion": {"type": "string", "minLength": 1},
+    "pronunciations": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "approved": {"const": true}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"}
+  }
+}

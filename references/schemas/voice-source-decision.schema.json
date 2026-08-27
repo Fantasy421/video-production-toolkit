@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Video Production Toolkit Voice Source Decision",
+  "type": "object",
+  "required": ["artifact_id", "narration_id", "mode", "decision"],
+  "properties": {
+    "artifact_id": {"$ref": "#/$defs/safeId"},
+    "narration_id": {"$ref": "#/$defs/safeId"},
+    "mode": {"enum": ["uploaded-voice", "tts"]},
+    "decision": {"const": "approved"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"}
+  }
+}
