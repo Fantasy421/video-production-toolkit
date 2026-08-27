@@ -1,4 +1,5 @@
 import json
+import struct
 import subprocess
 import sys
 import unittest
@@ -7,6 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from scripts.toolkit.artifacts import create_artifact
 from scripts.toolkit.project_state import (
     append_event,
     initialize_project,
@@ -85,9 +87,63 @@ class ProjectStateTests(unittest.TestCase):
         self.event_log = event_log
         self.original_events = event_log.read_bytes()
 
+    def seed_voice_bundle(self, *, write_audio=True):
+        records = (
+            {
+                "artifact_id": "narration-v1", "type": "narration", "version": 1,
+                "status": "approved", "parents": [], "path": "metadata/narration-v1.json",
+            },
+            {
+                "artifact_id": "source-v1", "type": "voice-source-decision", "version": 1,
+                "status": "approved", "parents": ["narration-v1"],
+                "path": "metadata/source-v1.json", "narration_id": "narration-v1",
+                "mode": "tts", "decision": "approved",
+                "decision_provenance": "user:source-v1",
+            },
+            {
+                "artifact_id": "profile-v1", "type": "voice-profile", "version": 1,
+                "status": "approved", "parents": ["narration-v1", "source-v1"],
+                "path": "metadata/profile-v1.json", "narration_id": "narration-v1",
+                "source_decision_id": "source-v1", "mode": "tts", "language": "zh-CN",
+                "provider": "chatcut", "voice_id": "narrator-1", "speaking_rate": 1.0,
+                "emotion": "calm", "pronunciations": [], "approved": True,
+                "consent_provenance": "user:consent-v1",
+                "profile_provenance": "user:profile-v1",
+            },
+            {
+                "artifact_id": "voiceover-v1", "type": "voiceover", "version": 1,
+                "status": "approved",
+                "parents": ["narration-v1", "source-v1", "profile-v1"],
+                "path": "metadata/voiceover-v1.json", "narration_id": "narration-v1",
+                "source_decision_id": "source-v1", "mode": "tts",
+                "profile_id": "profile-v1", "media_path": "media/voiceover-v1.wav",
+                "media_format": "wav", "duration_ms": 1_000,
+                "provenance": "chatcut:voice",
+            },
+            {
+                "artifact_id": "voice-timing-v1", "type": "voice-timing", "version": 1,
+                "status": "approved", "parents": ["voiceover-v1"],
+                "path": "metadata/voice-timing-v1.json", "voiceover_id": "voiceover-v1",
+                "timing_kind": "real", "duration_ms": 1_000,
+                "segments": [{"start_ms": 0, "end_ms": 1_000, "text": "voice"}],
+            },
+        )
+        for record in records:
+            create_artifact(self.root, record)
+        if write_audio:
+            sample_rate = 8_000
+            audio = b"\0\0" * sample_rate
+            (self.root / "media").mkdir(exist_ok=True)
+            (self.root / "media/voiceover-v1.wav").write_bytes(
+                b"RIFF" + struct.pack("<I", 36 + len(audio)) + b"WAVEfmt "
+                + struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, sample_rate * 2, 2, 16)
+                + b"data" + struct.pack("<I", len(audio)) + audio
+            )
+
     def test_direction_advances_to_voice_before_storyboard(self):
         """Catches a new project jumping from direction directly to storyboarding."""
         self.advance_to("direction_ready")
+        self.seed_voice_bundle()
 
         append_event(
             self.root,
@@ -106,6 +162,19 @@ class ProjectStateTests(unittest.TestCase):
                 self.root,
                 {"event": "project.phase_changed", "phase": "storyboard_ready"},
             )
+
+    def test_voice_ready_transition_rejects_metadata_without_header_verified_audio(self):
+        """Catches phase order alone authorizing metadata-only narration."""
+        self.advance_to("direction_ready")
+        self.seed_voice_bundle(write_audio=False)
+
+        with self.assertRaisesRegex(ValueError, "voice_ready.*audio|voice bundle"):
+            append_event(
+                self.root,
+                {"event": "project.phase_changed", "phase": "voice_ready"},
+            )
+
+        self.assertEqual("direction_ready", replay_events(self.root)["phase"])
 
     def test_v2_replay_rejects_a_tampered_direct_storyboard_transition(self):
         """Catches v2 replay incorrectly applying the v1 phase compatibility rule."""
@@ -153,6 +222,7 @@ class ProjectStateTests(unittest.TestCase):
     def test_legacy_direction_project_upgrades_by_appending_before_voice_ready(self):
         """Catches an old log producing a v2 snapshot without a replayable upgrade."""
         self.write_pre_voice_event_log(final_phase="direction_ready")
+        self.seed_voice_bundle()
 
         append_event(
             self.root,

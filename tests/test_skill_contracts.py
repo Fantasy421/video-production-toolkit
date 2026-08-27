@@ -61,6 +61,25 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("task-envelope.schema.json", text)
         self.assertIn("task-result.schema.json", text)
 
+    def test_voice_contract_documents_supported_formats_and_fail_closed_probing(self):
+        """Catches adapters promising formats the readiness verifier cannot prove."""
+        text = (ROOT / "skills/voiceover-producer/SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        manifest = json.loads(
+            (ROOT / "registries/adapters/chatcut.json").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(
+            ["wav", "mp3", "m4a", "aac", "flac"],
+            manifest["accepted_voice_media_formats"],
+        )
+        self.assertEqual("stdlib-wave-header", manifest["duration_probe"]["wav"])
+        self.assertEqual("ffprobe-required", manifest["duration_probe"]["compressed"])
+        self.assertEqual("fail-closed", manifest["duration_probe"]["failure_mode"])
+        for token in ("WAV", "MP3", "M4A", "AAC", "FLAC", "ffprobe", "fail closed"):
+            self.assertIn(token, text)
+
     def test_video_director_routes_voice_prepare_once(self):
         """Catches duplicate or absent voice routing in the one-action coordinator."""
         text = (ROOT / "skills/video-director/SKILL.md").read_text(encoding="utf-8")
@@ -68,6 +87,31 @@ class SkillContractTests(unittest.TestCase):
         self.assertEqual(1, text.count("`voice.prepare` → `voiceover-producer`"))
         self.assertIn("Do not generate media", text)
         self.assertIn("never synthesizes, imports, or analyzes audio", text)
+
+    def test_timeline_assembler_owns_secondary_caption_and_slice_routes(self):
+        """Catches accepted capabilities with no declared child-skill route."""
+        director = (ROOT / "skills/video-director/SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        assembler = (ROOT / "skills/timeline-assembler/SKILL.md").read_text(
+            encoding="utf-8"
+        )
+
+        for capability in ("captions.produce", "representative-slice.produce"):
+            route = f"`{capability}` → `timeline-assembler` (delegated secondary capability)"
+            declaration = f"Delegated secondary capability: `{capability}`"
+            self.assertEqual(1, director.count(route))
+            self.assertEqual(1, assembler.count(declaration))
+
+    def test_decision_policy_lists_caption_and_slice_phase_routes(self):
+        """Catches runtime phase rules drifting from the documented contract."""
+        text = (ROOT / "references/policies/decision-gates.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("`representative-slice.produce`", text)
+        self.assertIn("representative-slice `captions.produce`", text)
+        self.assertIn("full-production `captions.produce`", text)
 
     def test_video_director_never_handles_image_or_non_audio_media_payloads(self):
         """Catches image work or direct media handling leaking into the coordinator."""
@@ -100,13 +144,20 @@ class SkillContractTests(unittest.TestCase):
         for text in (scene, validator):
             self.assertIn("image-task-context.schema.json", text)
             self.assertIn("exactly one Scene Contract or one character-asset batch", text)
+            self.assertIn("scope_identity", text)
             self.assertIn("allowed_image_artifact_ids", text)
+            self.assertIn("at most 16", text)
+            self.assertIn("at most 8", text)
+            self.assertIn("32,768", text)
             self.assertIn("max_review_previews", text)
             self.assertIn("must not discover or load undeclared images", text)
             self.assertIn("must not return image bytes", text)
             self.assertIn("compact image handoff", text)
             self.assertIn("call `authorize_image_access`", text)
         self.assertIn("image generation", scene)
+        self.assertIn("continuity_exception", scene)
+        self.assertIn("must not appear in the ordinary image allowlist", scene)
+        self.assertIn("trimmed non-empty reason", scene)
         self.assertIn("image inspection", validator)
         self.assertIn("`image_operation: structure-only`", validator)
         self.assertIn("`image_operation: image-inspect`", validator)

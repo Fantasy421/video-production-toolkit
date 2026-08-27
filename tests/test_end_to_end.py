@@ -11,14 +11,24 @@ from tempfile import TemporaryDirectory
 
 from scripts.install_personal_plugin import install_personal_plugin
 from scripts.migration_audit import DISPOSITIONS
-from scripts.retire_legacy_skill import _distributable_hashes, retire_legacy_skill
+from scripts.retire_legacy_skill import (
+    _distributable_hashes,
+    _installed_plugin_candidate,
+    _run_installed_verifier,
+    retire_legacy_skill,
+)
 from scripts.toolkit.artifacts import approve_artifact, create_artifact
 from scripts.toolkit.orchestrator import (
     calculate_ready_tasks,
     invalidate_artifact_descendants,
     resume_project,
 )
-from scripts.toolkit.project_state import PHASES, append_event, initialize_project
+from scripts.toolkit.project_state import (
+    LEGACY_PHASES,
+    PHASES,
+    append_event,
+    initialize_project,
+)
 from scripts.toolkit.tasks import claim_task, complete_task, create_task
 from scripts.verify_installation import _run_resume_scenario, run_smoke, verify_installation
 
@@ -35,6 +45,37 @@ def advance_project(project, target_phase):
     """Advance a fixture through the same legal phase events used in production."""
     for phase in PHASES[1 : PHASES.index(target_phase) + 1]:
         append_event(project, {"event": "project.phase_changed", "phase": phase})
+
+
+def write_legacy_phase(project, target_phase):
+    """Replace a fixture's state with one genuine immutable v1 event history."""
+    events = [
+        {
+            "event": "project.initialized",
+            "schema_version": 1,
+            "project_id": "legacy-recovery-fixture",
+            "workflow": "knowledge-video",
+        },
+        *(
+            {"event": "project.phase_changed", "phase": phase}
+            for phase in LEGACY_PHASES[1 : LEGACY_PHASES.index(target_phase) + 1]
+        ),
+    ]
+    (Path(project) / "events" / "events.jsonl").write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+    (Path(project) / "project.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "project_id": "legacy-recovery-fixture",
+                "workflow": "knowledge-video",
+                "phase": target_phase,
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def activate_personal_plugin(home, source):
@@ -135,6 +176,25 @@ def add_cached_plugin_skill(
     return path
 
 
+def enable_retirement_chatcut(home, *, include_voice=True):
+    add_cached_plugin_skill(
+        home,
+        marketplace="chatcut-inc",
+        plugin="chatcut",
+        skill="chatcut-plugin-basics",
+        frontmatter_name="chatcut:chatcut-plugin-basics",
+        enabled=True,
+    )
+    if include_voice:
+        add_cached_plugin_skill(
+            home,
+            marketplace="chatcut-inc",
+            plugin="chatcut",
+            skill="voice",
+            frontmatter_name="chatcut:voice",
+        )
+
+
 def populate_auditable_legacy(repo, legacy):
     """Build an isolated legacy tree and matching baseline for retirement tests."""
     entries = []
@@ -204,6 +264,8 @@ def candidate(task_id, capability, inputs, gate, target_id, **constraints):
         "motion.preview",
         "motion.produce",
         "timeline.assemble",
+        "captions.produce",
+        "representative-slice.produce",
     }:
         voice_timing_id = constraints.setdefault(
             "voice_timing_id", "voice-timing-v1"
@@ -231,13 +293,18 @@ def voice_bundle(*, timing_id="voice-timing-v1", timing_status="approved"):
         artifact(
             "voice-source-v1",
             "voice-source-decision",
+            parents=["narration-v1"],
             narration_id="narration-v1",
             mode="tts",
             decision="approved",
+            decision_provenance="user:source-v1",
         ),
         artifact(
             "voice-profile-v1",
             "voice-profile",
+            parents=["narration-v1", "voice-source-v1"],
+            narration_id="narration-v1",
+            source_decision_id="voice-source-v1",
             mode="tts",
             language="zh-CN",
             provider="chatcut",
@@ -246,14 +313,19 @@ def voice_bundle(*, timing_id="voice-timing-v1", timing_status="approved"):
             emotion="calm",
             pronunciations=[],
             approved=True,
+            consent_provenance="user:consent-v1",
+            profile_provenance="user:profile-v1",
         ),
         artifact(
             "voiceover-v1",
             "voiceover",
-            parents=["narration-v1", "voice-profile-v1"],
+            parents=["narration-v1", "voice-source-v1", "voice-profile-v1"],
             narration_id="narration-v1",
+            source_decision_id="voice-source-v1",
+            mode="tts",
             profile_id="voice-profile-v1",
             media_path="media/voiceover-v1.wav",
+            media_format="wav",
             duration_ms=12000,
             provenance="chatcut:voice",
         ),
@@ -274,11 +346,39 @@ def voice_bundle(*, timing_id="voice-timing-v1", timing_status="approved"):
 
 
 def create_voice_bundle(project):
+    media = Path(project) / "media" / "voiceover-v1.wav"
+    media.parent.mkdir(parents=True, exist_ok=True)
+    media.write_bytes(synthetic_wav(12_000))
     for record in voice_bundle():
         create_artifact(project, record)
 
 
+def synthetic_wav(duration_ms, sample_rate=8_000):
+    sample_count = duration_ms * sample_rate // 1_000
+    audio = b"\0\0" * sample_count
+    return (
+        b"RIFF" + struct.pack("<I", 36 + len(audio)) + b"WAVEfmt "
+        + struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, sample_rate * 2, 2, 16)
+        + b"data" + struct.pack("<I", len(audio)) + audio
+    )
+
+
 class CoordinatorTests(unittest.TestCase):
+    def setUp(self):
+        self._routing_folder = TemporaryDirectory()
+        self.routing_root = Path(self._routing_folder.name)
+        media = self.routing_root / "media/voiceover-v1.wav"
+        media.parent.mkdir(parents=True)
+        media.write_bytes(synthetic_wav(12_000))
+
+    def tearDown(self):
+        self._routing_folder.cleanup()
+
+    def ready_tasks(self, state, artifacts, approvals):
+        return calculate_ready_tasks(
+            state, artifacts, approvals, root=self.routing_root
+        )
+
     def test_direction_ready_routes_voice_prepare_and_blocks_storyboard(self):
         """Catches direction approval dispatching storyboard before narration exists."""
         style = artifact("style-v1", "style-pack")
@@ -308,7 +408,7 @@ class CoordinatorTests(unittest.TestCase):
 
         self.assertEqual(
             ["voice.prepare"],
-            calculate_ready_tasks(
+            self.ready_tasks(
                 {
                     "phase": "direction_ready",
                     "candidate_tasks": [storyboard_task, voice_task],
@@ -332,9 +432,34 @@ class CoordinatorTests(unittest.TestCase):
 
         self.assertEqual(
             ["storyboard.plan"],
-            calculate_ready_tasks(
+            self.ready_tasks(
                 {"phase": "voice_ready", "candidate_tasks": [task]},
                 artifacts,
+                [
+                    {
+                        "target_id": "style-v1",
+                        "scope": "visual-direction",
+                        "decision": "approved",
+                    }
+                ],
+            ),
+        )
+
+    def test_voice_ready_routing_fails_closed_without_project_audio_authority(self):
+        """Catches metadata-only callers bypassing the project audio gate."""
+        task = candidate(
+            "storyboard-no-root",
+            "storyboard.plan",
+            ["style-v1", "voice-timing-v1"],
+            "visual-direction",
+            "style-v1",
+        )
+
+        self.assertEqual(
+            [],
+            calculate_ready_tasks(
+                {"phase": "voice_ready", "candidate_tasks": [task]},
+                [artifact("style-v1", "style-pack"), *voice_bundle()],
                 [
                     {
                         "target_id": "style-v1",
@@ -368,7 +493,7 @@ class CoordinatorTests(unittest.TestCase):
 
         self.assertEqual(
             [],
-            calculate_ready_tasks(
+            self.ready_tasks(
                 {"phase": "voice_ready", "candidate_tasks": [task]},
                 [artifact("style-v1", "style-pack"), *current_bundle, old_timing],
                 [
@@ -403,7 +528,7 @@ class CoordinatorTests(unittest.TestCase):
 
         self.assertEqual(
             [],
-            calculate_ready_tasks(
+            self.ready_tasks(
                 {"phase": "voice_ready", "candidate_tasks": [task]},
                 artifacts,
                 [
@@ -421,7 +546,7 @@ class CoordinatorTests(unittest.TestCase):
         with TemporaryDirectory() as folder:
             project = Path(folder) / "project"
             initialize_project(project, "kv-no-voice", "knowledge-video")
-            advance_project(project, "production_ready")
+            write_legacy_phase(project, "production_ready")
             event_log = project / "events" / "events.jsonl"
             original_events = event_log.read_bytes()
 
@@ -450,7 +575,7 @@ class CoordinatorTests(unittest.TestCase):
                     parents=["narration-v1"],
                 ),
             )
-            advance_project(project, "production_ready")
+            write_legacy_phase(project, "production_ready")
 
             resumed = resume_project(project)
 
@@ -482,7 +607,7 @@ class CoordinatorTests(unittest.TestCase):
 
         self.assertEqual(
             [],
-            calculate_ready_tasks(
+            self.ready_tasks(
                 {"phase": "initialized", "candidate_tasks": [task], "locked_task_ids": []},
                 artifacts,
                 approvals,
@@ -490,18 +615,92 @@ class CoordinatorTests(unittest.TestCase):
         )
         self.assertEqual(
             ["scene.produce:S01"],
-            calculate_ready_tasks(
+            self.ready_tasks(
                 {"phase": "storyboard_ready", "candidate_tasks": [task], "locked_task_ids": []},
                 artifacts,
                 approvals,
             ),
         )
         with self.assertRaises(ValueError):
-            calculate_ready_tasks(
+            self.ready_tasks(
                 {"phase": "not-a-phase", "candidate_tasks": [task], "locked_task_ids": []},
                 artifacts,
                 approvals,
             )
+
+    def test_coordinator_routes_captions_and_representative_slice_explicitly(self):
+        """Catches schema-valid timing consumers having no coordinator owner."""
+        storyboard = artifact("storyboard-v1", "storyboard")
+        approval = {
+            "target_id": "storyboard-v1",
+            "scope": "storyboard-and-cost",
+            "decision": "approved",
+        }
+        artifacts = [storyboard, *voice_bundle()]
+        cases = (
+            ("captions.produce", "captions.produce"),
+            ("representative-slice.produce", "representative-slice.produce"),
+        )
+        for capability, expected in cases:
+            with self.subTest(capability=capability):
+                task = candidate(
+                    f"{capability}-v1",
+                    capability,
+                    ["storyboard-v1"],
+                    "storyboard-and-cost",
+                    "storyboard-v1",
+                    production_scope="representative-slice",
+                )
+                self.assertEqual(
+                    [],
+                    self.ready_tasks(
+                        {"phase": "voice_ready", "candidate_tasks": [task]},
+                        artifacts,
+                        [approval],
+                    ),
+                )
+                self.assertEqual(
+                    [expected],
+                    self.ready_tasks(
+                        {"phase": "storyboard_ready", "candidate_tasks": [task]},
+                        artifacts,
+                        [approval],
+                    ),
+                )
+
+    def test_full_production_captions_route_only_at_production_ready(self):
+        """Catches expanded captions running in the representative-slice phase."""
+        task = candidate(
+            "captions-full-v1",
+            "captions.produce",
+            ["slice-v1"],
+            "representative-slice-and-final-draft",
+            "slice-v1",
+            production_scope="full-production",
+        )
+        artifacts = [artifact("slice-v1", "representative-slice"), *voice_bundle()]
+        approval = {
+            "target_id": "slice-v1",
+            "scope": "representative-slice-and-final-draft",
+            "decision": "approved",
+        }
+
+        self.assertEqual(
+            [],
+            self.ready_tasks(
+                {"phase": "storyboard_ready", "candidate_tasks": [task]},
+                artifacts,
+                [approval],
+            ),
+        )
+        self.assertEqual(
+            ["captions.produce"],
+            self.ready_tasks(
+                {"phase": "production_ready", "candidate_tasks": [task]},
+                artifacts,
+                [approval],
+            ),
+        )
 
     def test_all_four_gates_require_an_exact_durable_approval(self):
         """Catches wrong-scope, wrong-type, or unrelated approvals advancing work."""
@@ -547,10 +746,10 @@ class CoordinatorTests(unittest.TestCase):
                 artifacts = [artifact(target_id, target_type), *gate_voice]
                 state = {"candidate_tasks": [task], "locked_task_ids": []}
 
-                self.assertEqual([], calculate_ready_tasks(state, artifacts, []))
+                self.assertEqual([], self.ready_tasks(state, artifacts, []))
                 self.assertEqual(
                     [],
-                    calculate_ready_tasks(
+                    self.ready_tasks(
                         state,
                         artifacts,
                         [{"target_id": target_id, "scope": f"wrong-{gate}", "decision": "approved"}],
@@ -563,7 +762,7 @@ class CoordinatorTests(unittest.TestCase):
                 }
                 self.assertEqual(
                     [],
-                    calculate_ready_tasks(
+                    self.ready_tasks(
                         state,
                         [artifact(target_id, "unrelated-review-artifact"), *gate_voice],
                         [approval],
@@ -572,7 +771,7 @@ class CoordinatorTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     [capability],
-                    calculate_ready_tasks(
+                    self.ready_tasks(
                         state,
                         artifacts,
                         [approval],
@@ -594,7 +793,7 @@ class CoordinatorTests(unittest.TestCase):
                 }
                 self.assertEqual(
                     [],
-                    calculate_ready_tasks(
+                    self.ready_tasks(
                         unrelated_state,
                         [artifacts[0], artifact(descendant_id, "task-input"), *gate_voice],
                         [approval],
@@ -603,7 +802,7 @@ class CoordinatorTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     [capability],
-                    calculate_ready_tasks(
+                    self.ready_tasks(
                         unrelated_state,
                         [
                             artifacts[0],
@@ -634,7 +833,7 @@ class CoordinatorTests(unittest.TestCase):
 
         self.assertEqual(
             [],
-            calculate_ready_tasks(
+            self.ready_tasks(
                 state,
                 artifacts,
                 [{"target_id": "storyboard-v1", "scope": "storyboard-and-cost", "decision": "approved"}],
@@ -642,7 +841,7 @@ class CoordinatorTests(unittest.TestCase):
         )
         self.assertEqual(
             ["scene.produce:S01"],
-            calculate_ready_tasks(
+            self.ready_tasks(
                 state,
                 artifacts,
                 [
@@ -668,7 +867,7 @@ class CoordinatorTests(unittest.TestCase):
 
         self.assertEqual(
             ["timeline.assemble"],
-            calculate_ready_tasks(
+            self.ready_tasks(
                 {"candidate_tasks": [task], "locked_task_ids": []},
                 [artifact("storyboard-v1", "storyboard"), *voice_bundle()],
                 [
@@ -719,13 +918,13 @@ class CoordinatorTests(unittest.TestCase):
 
         self.assertEqual(
             ["scene.produce:S02"],
-            calculate_ready_tasks(
+            self.ready_tasks(
                 {"candidate_tasks": tasks, "locked_task_ids": []}, artifacts, approvals
             ),
         )
         self.assertEqual(
             [],
-            calculate_ready_tasks(
+            self.ready_tasks(
                 {"candidate_tasks": tasks, "locked_task_ids": ["produce-S02"]},
                 artifacts,
                 approvals,
@@ -745,7 +944,7 @@ class CoordinatorTests(unittest.TestCase):
         )
 
         with self.assertRaises(ValueError):
-            calculate_ready_tasks(
+            self.ready_tasks(
                 {"candidate_tasks": [task], "locked_task_ids": []},
                 [artifact("slice-v1", "representative-slice"), *voice_bundle()],
                 [{"target_id": "slice-v1", "scope": "storyboard-and-cost", "decision": "approved"}],
@@ -770,7 +969,7 @@ class CoordinatorTests(unittest.TestCase):
 
         self.assertEqual(
             [],
-            calculate_ready_tasks(
+            self.ready_tasks(
                 {"candidate_tasks": [task], "locked_task_ids": []},
                 [artifact("storyboard-v1", "storyboard"), *voice_bundle()],
                 [approval],
@@ -807,7 +1006,7 @@ class CoordinatorTests(unittest.TestCase):
 
         self.assertEqual(
             [],
-            calculate_ready_tasks(
+            self.ready_tasks(
                 {"candidate_tasks": [task], "locked_task_ids": []},
                 artifacts,
                 [approval],
@@ -818,7 +1017,7 @@ class CoordinatorTests(unittest.TestCase):
         approval["target_id"] = "slice-S01-v1"
         self.assertEqual(
             ["scene.produce:S01"],
-            calculate_ready_tasks(
+            self.ready_tasks(
                 {"candidate_tasks": [task], "locked_task_ids": []},
                 artifacts,
                 [approval],
@@ -849,7 +1048,7 @@ class CoordinatorTests(unittest.TestCase):
 
                 self.assertEqual(
                     [],
-                    calculate_ready_tasks(
+                    self.ready_tasks(
                         {"candidate_tasks": [task], "locked_task_ids": []},
                         artifacts,
                         [slice_approval],
@@ -860,7 +1059,7 @@ class CoordinatorTests(unittest.TestCase):
                 final_approval = {**slice_approval, "target_id": "final-v1"}
                 self.assertEqual(
                     ["review.package"],
-                    calculate_ready_tasks(
+                    self.ready_tasks(
                         {"candidate_tasks": [task], "locked_task_ids": []},
                         artifacts,
                         [final_approval],
@@ -959,7 +1158,10 @@ class CoordinatorTests(unittest.TestCase):
                 json.loads(scene_s02_path.read_text(encoding="utf-8"))["status"],
                 "invalidation must remain an event overlay, not rewrite immutable metadata",
             )
-            self.assertEqual([], list((project / "media").iterdir()))
+            self.assertEqual(
+                ["voiceover-v1.wav"],
+                sorted(path.name for path in (project / "media").iterdir()),
+            )
 
     def test_running_task_result_is_stale_after_event_overlay_invalidation(self):
         """Catches late work publishing after an input became stale in the event log."""
@@ -1160,25 +1362,32 @@ class SmokeAndInstallationTests(unittest.TestCase):
         """Catches real voice readiness trusting declared durations over the WAV header."""
         cases = (
             (
-                {"voiceover_duration_ms": 14_000},
-                "voiceover-duration-mismatch",
+                {
+                    "voiceover_duration_ms": 14_000,
+                    "voice_timing_duration_ms": 14_000,
+                },
+                {"voiceover-duration-mismatch", "voice-timing-out-of-bounds"},
             ),
             (
                 {"voice_timing_duration_ms": 14_000},
-                "voice-timing-out-of-bounds",
+                {"voice-timing-duration-mismatch"},
             ),
             (
                 {"voice_fixture": b"not-a-wave-file"},
-                "voiceover-media-duration-unverifiable",
+                {"voiceover-media-duration-unverifiable"},
             ),
         )
-        for overrides, expected_issue in cases:
+        for overrides, expected_issues in cases:
             with self.subTest(overrides=overrides):
                 result = _run_resume_scenario(**overrides)
 
-                self.assertIn(
-                    expected_issue,
-                    result["voice_timing_revision"]["voice_validation_issue_codes"],
+                self.assertLessEqual(
+                    expected_issues,
+                    set(
+                        result["voice_timing_revision"][
+                            "voice_validation_issue_codes"
+                        ]
+                    ),
                 )
 
     def test_resume_smoke_returns_the_post_timing_revision_recovery(self):
@@ -1237,7 +1446,7 @@ class SmokeAndInstallationTests(unittest.TestCase):
     def test_resume_smoke_exercises_gate_type_and_lineage_counterexamples(self):
         """Catches an installed smoke accepting any same-scope approval token."""
 
-        def weak_gate_router(state, artifacts, approvals):
+        def weak_gate_router(state, artifacts, approvals, *, root=None):
             if not approvals:
                 return []
             task = state["candidate_tasks"][0]
@@ -1499,7 +1708,7 @@ class SmokeAndInstallationTests(unittest.TestCase):
 
 
 class RetirementSafetyTests(unittest.TestCase):
-    def isolated_retirement_fixture(self, root):
+    def isolated_retirement_fixture(self, root, *, versioned=False, include_voice=True):
         repo = Path(root) / "repo"
         legacy = (
             Path(root)
@@ -1513,8 +1722,60 @@ class RetirementSafetyTests(unittest.TestCase):
             ignore=shutil.ignore_patterns(".git", "__pycache__"),
         )
         populate_auditable_legacy(repo, legacy)
-        installed = activate_personal_plugin(root, repo)
+        installed = (
+            activate_versioned_personal_plugin(root, repo)
+            if versioned
+            else activate_personal_plugin(root, repo)
+        )
+        enable_retirement_chatcut(root, include_voice=include_voice)
         return repo, legacy, installed
+
+    def test_retirement_discovers_the_manifest_versioned_installed_cache(self):
+        """Catches retirement hard-coding the obsolete literal local cache."""
+        with TemporaryDirectory() as folder:
+            home = Path(folder)
+            cache = activate_versioned_personal_plugin(home, ROOT)
+
+            self.assertEqual(cache.resolve(), _installed_plugin_candidate(home))
+
+    def test_installed_verifier_requires_chatcut_base_and_voice_capabilities(self):
+        """Catches retirement accepting smoke success without its voice provider."""
+        installed = ROOT.resolve()
+        fake = {
+            "ok": True,
+            "plugin": {
+                "root": str(installed),
+                "discovery": "host-installed",
+                "valid": True,
+            },
+            "resume_smoke": {
+                "ok": True,
+                "checks": {"migration_audit": "passed"},
+            },
+            "external_adapters": {
+                "chatcut": {
+                    "available": True,
+                    "capabilities": {
+                        "voice.synthesize": {
+                            "available": False,
+                            "installed_skill": "chatcut:voice",
+                        },
+                        "voice.time": {
+                            "available": False,
+                            "installed_skill": "chatcut:voice",
+                        },
+                    },
+                }
+            },
+            "errors": [],
+        }
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(fake), stderr=""
+        )
+
+        with patch("scripts.retire_legacy_skill.subprocess.run", return_value=completed):
+            with self.assertRaisesRegex(RuntimeError, "ChatCut Voice"):
+                _run_installed_verifier(installed, Path.home(), LEGACY)
 
     def test_retirement_runs_smoke_from_the_installed_plugin_in_isolation(self):
         """Catches repository imports masking a broken installed orchestrator."""
@@ -1626,14 +1887,21 @@ class RetirementSafetyTests(unittest.TestCase):
             "references/schemas/voice-timing.schema.json",
             "scripts/toolkit/voice.py",
             "scripts/toolkit/voice_tasks.py",
+            "scripts/toolkit/adapters.py",
+            "scripts/toolkit/validation.py",
+            "scripts/build_review_pack.py",
             "references/policies/decision-gates.md",
             "references/policies/invalidation.json",
             "scripts/toolkit/image_context.py",
             "references/policies/project-assets.md",
+            "references/schemas/image-task-context.schema.json",
+            "references/schemas/project.schema.json",
+            "references/schemas/event.schema.json",
             "references/schemas/task-envelope.schema.json",
             "references/schemas/task-result.schema.json",
             "skills/scene-producer/SKILL.md",
             "skills/structural-validator/SKILL.md",
+            "skills/timeline-assembler/SKILL.md",
             "registries/adapters/chatcut.json",
         )
         with TemporaryDirectory() as folder:
@@ -1696,6 +1964,7 @@ class RetirementSafetyTests(unittest.TestCase):
             shutil.copytree(ROOT, repo, ignore=shutil.ignore_patterns(".git", "__pycache__"))
             shutil.copytree(LEGACY, legacy)
             activate_personal_plugin(temp, repo)
+            enable_retirement_chatcut(temp)
             installed_snapshot = sorted(path.relative_to(LEGACY) for path in LEGACY.rglob("*") if path.is_file())
 
             dry_run = retire_legacy_skill(legacy, repo, confirmation=None, dry_run=True)
@@ -1748,6 +2017,7 @@ class RetirementSafetyTests(unittest.TestCase):
             shutil.copytree(ROOT, repo, ignore=shutil.ignore_patterns(".git", "__pycache__"))
             shutil.copytree(LEGACY, legacy)
             activate_personal_plugin(temp, repo)
+            enable_retirement_chatcut(temp)
             report = repo / "docs" / "migration" / "knowledge-video-visual-director.md"
             external = temp / "external-report.md"
             external.write_text(report.read_text(encoding="utf-8"), encoding="utf-8")
@@ -1774,6 +2044,7 @@ class RetirementSafetyTests(unittest.TestCase):
             shutil.copytree(ROOT, repo, ignore=shutil.ignore_patterns(".git", "__pycache__"))
             shutil.copytree(LEGACY, legacy)
             activate_personal_plugin(temp, repo)
+            enable_retirement_chatcut(temp)
             original_files = sorted(
                 path.relative_to(legacy) for path in legacy.rglob("*") if path.is_file()
             )

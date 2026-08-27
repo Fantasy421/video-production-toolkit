@@ -26,7 +26,6 @@ from scripts.toolkit.tasks import (
     active_claim_task_ids,
     voice_timing_input_is_current,
 )
-from scripts.toolkit.voice import validate_authoritative_voice_bundle
 
 
 GATES = (
@@ -45,6 +44,8 @@ _BASE_GATES = {
     "motion.preview": "storyboard-and-cost",
     "motion.produce": "storyboard-and-cost",
     "timeline.assemble": "storyboard-and-cost",
+    "captions.produce": "storyboard-and-cost",
+    "representative-slice.produce": "storyboard-and-cost",
     "structure.validate": "storyboard-and-cost",
     "review.package": "storyboard-and-cost",
 }
@@ -71,6 +72,8 @@ _CAPABILITY_PHASES = {
     "motion.preview": {"storyboard_ready"},
     "motion.produce": {"storyboard_ready", "production_ready"},
     "timeline.assemble": {"storyboard_ready", "production_ready"},
+    "captions.produce": {"storyboard_ready", "production_ready"},
+    "representative-slice.produce": {"storyboard_ready"},
     "structure.validate": {"assembled"},
     "review.package": {"review_ready"},
     "project.manage": set(PHASES),
@@ -81,6 +84,8 @@ def calculate_ready_tasks(
     state: Mapping[str, Any],
     artifacts: Union[Iterable[Mapping[str, Any]], Mapping[str, Mapping[str, Any]]],
     approvals: Iterable[Mapping[str, Any]],
+    *,
+    root: Optional[Path] = None,
 ) -> list[str]:
     """Return zero or one policy-authorized action from compact project data.
 
@@ -118,7 +123,7 @@ def calculate_ready_tasks(
             continue
         if not _parents_are_current(candidate["inputs"], by_id):
             continue
-        if not voice_timing_input_is_current(candidate, by_id):
+        if not voice_timing_input_is_current(candidate, by_id, root=root):
             continue
         gate = _required_gate(candidate)
         if gate is not None and not _has_gate_approval(
@@ -139,7 +144,12 @@ def _capability_is_legal_in_phase(candidate: Mapping[str, Any], phase: str) -> b
     if allowed is None:
         raise ValueError(f"unknown coordinator capability: {capability}")
     scope = candidate["constraints"].get("production_scope")
-    if capability in {"scene.produce", "motion.produce", "timeline.assemble"}:
+    if capability in {
+        "scene.produce",
+        "motion.produce",
+        "timeline.assemble",
+        "captions.produce",
+    }:
         if scope in _EXPANSION_SCOPES:
             return phase == "production_ready"
         return phase == "storyboard_ready"
@@ -178,11 +188,7 @@ def resume_project(root: Path) -> dict[str, Any]:
         {**item, "status": "stale"} if item["artifact_id"] in invalidated else item
         for item in artifacts
     ]
-    state = project_recovery_view(
-        root,
-        effective_artifacts,
-        has_current_voice_lineage=_has_current_voice_bundle,
-    )
+    state = project_recovery_view(root, effective_artifacts)
     candidate_tasks = _load_candidate_tasks(root)
     locked = active_claim_task_ids(root)
     completed = sorted(
@@ -196,7 +202,9 @@ def resume_project(root: Path) -> dict[str, Any]:
         "locked_task_ids": locked,
         "completed_task_ids": completed,
     }
-    ready = calculate_ready_tasks(coordinator_state, effective_artifacts, approvals)
+    ready = calculate_ready_tasks(
+        coordinator_state, effective_artifacts, approvals, root=root
+    )
     return {
         **state,
         "artifacts": effective_artifacts,
@@ -206,14 +214,6 @@ def resume_project(root: Path) -> dict[str, Any]:
         "completed_task_ids": completed,
         "ready_tasks": ready,
     }
-
-
-def _has_current_voice_bundle(artifacts: Iterable[Mapping[str, Any]]) -> bool:
-    """Use the authoritative validator behind project-state's dependency seam."""
-    try:
-        return validate_authoritative_voice_bundle(list(artifacts))["ok"]
-    except ValueError:
-        return False
 
 
 def _required_gate(candidate: Mapping[str, Any]) -> Optional[str]:

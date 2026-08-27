@@ -21,6 +21,8 @@ script, voice, or A-roll:
    - `motion.preview` → `motion-director`
    - `motion.produce` → `motion-director` (delegated secondary operation)
    - `timeline.assemble` → `timeline-assembler`
+   - `captions.produce` → `timeline-assembler` (delegated secondary capability)
+   - `representative-slice.produce` → `timeline-assembler` (delegated secondary capability)
    - `structure.validate` → `structural-validator`
    - `review.package` → `video-review-packager`
 

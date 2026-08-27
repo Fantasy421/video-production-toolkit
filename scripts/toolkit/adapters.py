@@ -9,6 +9,7 @@ _MANIFEST_KEYS = {
     "id", "version", "job", "preview", "renderer", "implementation_ref", "license",
     "capabilities", "accepts", "outputs", "editable", "installed_skill", "fallback",
     "license_mode", "capability_skills", "capability_implementation_refs",
+    "accepted_voice_media_formats", "duration_probe",
 }
 _REQUIREMENT_KEYS = {
     "adapter_preferences", "preferred_adapter", "installed_skills", "contract",

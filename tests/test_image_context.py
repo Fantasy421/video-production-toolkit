@@ -4,15 +4,30 @@ import json
 import unittest
 from pathlib import Path
 
-from scripts.toolkit.image_context import authorize_image_access, compact_image_result
+from scripts.toolkit.image_context import (
+    authorize_image_access,
+    compact_image_result,
+    validate_result_envelope,
+)
 
 
 ROOT = Path(__file__).parents[1]
 
 
 class ImageContextTests(unittest.TestCase):
-    def context(self, *, allowed=None, packs=None, max_previews=1, budget=4096, **extra):
+    def context(
+        self,
+        *,
+        allowed=None,
+        packs=None,
+        max_previews=1,
+        budget=4096,
+        scope=None,
+        **extra,
+    ):
         return {
+            "scope_identity": scope
+            or {"kind": "scene-contract", "id": "contract-S01-v1"},
             "allowed_image_artifact_ids": list(allowed or []),
             "allowed_character_pack_ids": list(packs or []),
             "forbidden_scene_image_access": True,
@@ -118,11 +133,12 @@ class ImageContextTests(unittest.TestCase):
     def test_current_access_is_exact_allowlist_or_one_user_continuity_exception(self):
         """Catches neighboring scene discovery or an implied continuity exception."""
         allowed = self.artifact("scene-image", artifact_id="S02-image-v3")
-        authorize_image_access(
-            self.context(allowed=[allowed["artifact_id"]]),
-            allowed,
-            historical=False,
-        )
+        with self.assertRaisesRegex(PermissionError, "continuity exception"):
+            authorize_image_access(
+                self.context(allowed=[allowed["artifact_id"]]),
+                allowed,
+                historical=False,
+            )
 
         exception = self.artifact("scene-image", artifact_id="S01-image-v2")
         authorize_image_access(
@@ -138,7 +154,7 @@ class ImageContextTests(unittest.TestCase):
         )
 
         neighbor = self.artifact("scene-image", artifact_id="S03-image-v1")
-        with self.assertRaisesRegex(PermissionError, "undeclared image"):
+        with self.assertRaisesRegex(PermissionError, "continuity exception"):
             authorize_image_access(
                 self.context(
                     continuity_exception={
@@ -175,6 +191,17 @@ class ImageContextTests(unittest.TestCase):
             (self.context(allowed=["same", "same"]), "duplicates"),
             (self.context(max_previews=2), "max_review_previews"),
             (self.context(budget=0), "positive integer"),
+            (self.context(budget=32_769), "context_budget"),
+            (self.context(allowed=[f"image-{index}" for index in range(17)]), "allowed_image"),
+            (self.context(packs=[f"pack-{index}" for index in range(9)]), "allowed_character"),
+            (
+                self.context(scope={"kind": "scene-contract", "id": "one", "extra": True}),
+                "scope_identity",
+            ),
+            (
+                self.context(scope={"kind": "unknown", "id": "one"}),
+                "scope_identity",
+            ),
             (
                 self.context(
                     continuity_exception={
@@ -185,11 +212,40 @@ class ImageContextTests(unittest.TestCase):
                 ),
                 "user_requested",
             ),
+            (
+                self.context(
+                    continuity_exception={
+                        "artifact_id": "S01-image-v2",
+                        "user_requested": True,
+                        "reason": " trailing whitespace ",
+                    }
+                ),
+                "trimmed",
+            ),
         )
         artifact = self.artifact("scene-image", artifact_id="asset-a")
         for context, message in cases:
             with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
                 authorize_image_access(context, artifact, historical=False)
+
+    def test_general_result_validator_scrubs_nested_leaks_and_bounds_json(self):
+        """Catches non-image result envelopes bypassing the shared payload scrub."""
+        with self.assertRaisesRegex(ValueError, "image payload"):
+            validate_result_envelope(
+                {"checks": [{"detail": "payload=data:image/png;base64,AAEC"}]}
+            )
+        with self.assertRaisesRegex(ValueError, "prompt history"):
+            validate_result_envelope(
+                {"warnings": [{"prompt_iteration_history": ["first", "second"]}]}
+            )
+        with self.assertRaisesRegex(ValueError, "result budget"):
+            validate_result_envelope({"checks": ["x" * 33_000]})
+
+        harmless = {
+            "checks": ["sha512=" + "0123456789abcdef" * 8],
+            "warnings": ["The exporter may mention base64 without embedding payloads."],
+        }
+        validate_result_envelope(harmless)
 
     def test_compact_result_rejects_payloads_data_urls_and_prompt_histories(self):
         """Catches image or generation transcript content escaping into the parent task."""
@@ -374,6 +430,7 @@ class ImageSchemaTests(unittest.TestCase):
         self.assertFalse(context["additionalProperties"])
         self.assertEqual(
             {
+                "scope_identity",
                 "allowed_image_artifact_ids",
                 "allowed_character_pack_ids",
                 "forbidden_scene_image_access",

@@ -141,6 +141,31 @@ class ValidationTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def write_upgraded_legacy_history(self):
+        events = [
+            {
+                "event": "project.initialized",
+                "schema_version": 1,
+                "project_id": "validation-test",
+                "workflow": "knowledge-video",
+            },
+            {"event": "project.phase_changed", "phase": "content_ready"},
+            {"event": "project.phase_changed", "phase": "direction_ready"},
+            {"event": "project.schema_upgraded", "schema_version": 2},
+            {"event": "project.phase_changed", "phase": "voice_ready"},
+            {"event": "project.phase_changed", "phase": "storyboard_ready"},
+            {"event": "project.phase_changed", "phase": "production_ready"},
+            {"event": "project.phase_changed", "phase": "assembled"},
+            {"event": "project.phase_changed", "phase": "review_ready"},
+        ]
+        (self.root / "events" / "events.jsonl").write_text(
+            "\n".join(json.dumps(event) for event in events) + "\n",
+            encoding="utf-8",
+        )
+        project = json.loads((self.root / "project.json").read_text(encoding="utf-8"))
+        project["schema_version"] = 2
+        (self.root / "project.json").write_text(json.dumps(project), encoding="utf-8")
+
     def write_voice_bundle(self, *, include_timing_v2=False):
         self.write_artifact(
             "narration-v1", "narration", 1, "approved", "metadata/narration-v1.json"
@@ -151,9 +176,11 @@ class ValidationTests(unittest.TestCase):
             1,
             "approved",
             "metadata/voice-source-v1.json",
+            parents=["narration-v1"],
             narration_id="narration-v1",
             mode="tts",
             decision="approved",
+            decision_provenance="user:source-v1",
         )
         self.write_artifact(
             "voice-profile-v1",
@@ -161,6 +188,9 @@ class ValidationTests(unittest.TestCase):
             1,
             "approved",
             "metadata/voice-profile-v1.json",
+            parents=["narration-v1", "voice-source-v1"],
+            narration_id="narration-v1",
+            source_decision_id="voice-source-v1",
             mode="tts",
             language="zh-CN",
             provider="chatcut",
@@ -169,6 +199,8 @@ class ValidationTests(unittest.TestCase):
             emotion="calm",
             pronunciations=[],
             approved=True,
+            consent_provenance="user:consent-v1",
+            profile_provenance="user:profile-v1",
         )
         self.write_artifact(
             "voiceover-v1",
@@ -176,10 +208,13 @@ class ValidationTests(unittest.TestCase):
             1,
             "approved",
             "media/voiceover-v1.wav",
-            parents=["narration-v1", "voice-profile-v1"],
+            parents=["narration-v1", "voice-source-v1", "voice-profile-v1"],
             narration_id="narration-v1",
+            source_decision_id="voice-source-v1",
+            mode="tts",
             profile_id="voice-profile-v1",
             media_path="media/voiceover-v1.wav",
+            media_format="wav",
             duration_ms=10_000,
             provenance="test-fixture",
         )
@@ -1103,6 +1138,35 @@ class ValidationTests(unittest.TestCase):
             {item["code"] for item in result["errors"]},
         )
 
+    def test_upgraded_legacy_origin_runs_canonical_file_backed_voice_validation(self):
+        """Catches schema-origin v1 permanently bypassing real audio authority."""
+        self.write_upgraded_legacy_history()
+        self.write_voice_bundle()
+        self.write_wav_header("media/voiceover-v1.wav", 9_000)
+
+        result = validate_project(self.root)
+
+        codes = {item["code"] for item in result["errors"]}
+        self.assertIn("voiceover-duration-mismatch", codes)
+        self.assertIn("voice-timing-out-of-bounds", codes)
+
+    def test_upgraded_legacy_origin_no_longer_relaxes_scene_timing_authority(self):
+        """Catches an upgraded v1 project retaining unresolved Scene Contract rules."""
+        self.write_upgraded_legacy_history()
+        self.write_voice_bundle()
+        self.write_wav_header("media/voiceover-v1.wav", 10_000)
+        contract_path = self.root / "contracts" / "S01.json"
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        contract["voice_timing_id"] = "legacy-estimate-v1"
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+
+        result = validate_project(self.root)
+
+        self.assertIn(
+            "invalid-scene-contract",
+            {item["code"] for item in result["errors"]},
+        )
+
     def test_voiceover_media_existence_duration_and_lineage_are_structural_issues(self):
         """Catches current voice metadata that cannot safely produce a real audio reference."""
         project_path = self.root / "project.json"
@@ -1111,6 +1175,13 @@ class ValidationTests(unittest.TestCase):
         project_path.write_text(json.dumps(project), encoding="utf-8")
         self.write_project_history(2)
         self.write_voice_bundle()
+
+        missing_result = validate_project(self.root)
+        self.assertIn(
+            "voiceover-media-missing",
+            {item["code"] for item in missing_result["errors"]},
+        )
+
         voiceover_path = self.root / "artifacts" / "voiceover" / "voiceover-v1.json"
         voiceover = json.loads(voiceover_path.read_text(encoding="utf-8"))
         voiceover["parents"] = ["narration-v1"]
@@ -1119,7 +1190,6 @@ class ValidationTests(unittest.TestCase):
         result = validate_project(self.root)
 
         codes = {item["code"] for item in result["errors"]}
-        self.assertIn("voiceover-media-missing", codes)
         self.assertIn("voiceover-lineage-mismatch", codes)
 
     def test_canonical_demo_contract_requires_a_lifecycle_record(self):

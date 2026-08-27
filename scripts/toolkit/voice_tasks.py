@@ -2,14 +2,14 @@
 
 from collections.abc import Iterable, Mapping
 import json
-import os
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any, Optional
 
 from .adapters import select_adapter
 from .runtime_paths import project_path, project_root
 from .tasks import _validate_envelope, _validate_result
-from .voice import validate_voice_bundle
+from .voice import probe_audio_duration_ms, validate_project_voice_bundle
 
 
 _CHATCUT_ADAPTER = "chatcut"
@@ -37,9 +37,8 @@ def prepare_voice_task(
     inputs = list(task["inputs"])
     output_ids = task["constraints"]["output_artifact_ids"]
     declared_records = _declared_records(records, [*inputs, *output_ids])
-    source = _current_source(
-        declared_records, task["constraints"]["voice_source_id"]
-    )
+    source_id = task["constraints"].get("voice_source_id")
+    source = _current_source(declared_records, source_id)
     if source is None:
         return _result(
             task,
@@ -59,10 +58,13 @@ def prepare_voice_task(
 
     mode = source["mode"]
     if mode == "uploaded-voice":
+        upload_id = task["constraints"].get("uploaded_audio_id")
         upload = _declared_upload(
             root,
             declared_records,
-            task["constraints"].get("uploaded_audio_id"),
+            upload_id,
+            narration_id,
+            source["artifact_id"],
         )
         if upload is None:
             return _result(
@@ -83,8 +85,9 @@ def prepare_voice_task(
             root,
             declared_records,
             narration_id,
-            task["constraints"]["voice_source_id"],
-            task["constraints"]["voice_profile_id"],
+            source["artifact_id"],
+            None,
+            upload_id,
             output_ids,
         )
         if complete is not None:
@@ -105,10 +108,9 @@ def prepare_voice_task(
             user_decision_request="Choose uploaded-voice or tts for the approved narration.",
         )
 
-    profile = _current_profile(
-        declared_records, task["constraints"]["voice_profile_id"]
-    )
-    if not _approved_tts_profile(profile):
+    profile_id = task["constraints"].get("voice_profile_id")
+    profile = _current_profile(declared_records, profile_id)
+    if not _approved_tts_profile(profile, narration_id, source["artifact_id"]):
         return _result(
             task,
             "waiting_user",
@@ -134,8 +136,9 @@ def prepare_voice_task(
         root,
         declared_records,
         narration_id,
-        task["constraints"]["voice_source_id"],
-        task["constraints"]["voice_profile_id"],
+        source["artifact_id"],
+        profile_id,
+        None,
         output_ids,
     )
     if complete is not None:
@@ -182,14 +185,20 @@ def _task_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(task["constraints"], Mapping):
         raise ValueError("task envelope constraints must be a mapping")
     task["constraints"] = dict(task["constraints"])
-    for field in ("worker_id", "claim_token", "voice_source_id", "voice_profile_id"):
+    for field in ("worker_id", "claim_token"):
         if not isinstance(task["constraints"].get(field), str) or not task["constraints"][field]:
             raise ValueError(f"voice task constraints must include {field}")
-    if (
-        task["constraints"]["voice_source_id"] not in task["inputs"]
-        or task["constraints"]["voice_profile_id"] not in task["inputs"]
+    for field in ("voice_source_id", "voice_profile_id", "uploaded_audio_id"):
+        value = task["constraints"].get(field)
+        if value is not None and (
+            not isinstance(value, str) or not value or value not in task["inputs"]
+        ):
+            raise ValueError(f"voice task {field} must be a declared input")
+    if task["constraints"].get("voice_source_id") is None and any(
+        task["constraints"].get(field) is not None
+        for field in ("voice_profile_id", "uploaded_audio_id")
     ):
-        raise ValueError("voice task source and profile IDs must be declared inputs")
+        raise ValueError("voice task dependent inputs require voice_source_id")
     output_ids = task["constraints"].get("output_artifact_ids")
     if (
         not isinstance(output_ids, list)
@@ -199,13 +208,6 @@ def _task_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
         or set(output_ids) & set(task["inputs"])
     ):
         raise ValueError("voice task constraints must include three distinct output_artifact_ids")
-    uploaded_audio_id = task["constraints"].get("uploaded_audio_id")
-    if uploaded_audio_id is not None and (
-        not isinstance(uploaded_audio_id, str)
-        or not uploaded_audio_id
-        or uploaded_audio_id not in task["inputs"]
-    ):
-        raise ValueError("voice task uploaded_audio_id must be a declared input")
     return task
 
 
@@ -248,8 +250,10 @@ def _installed_skills(installed_skills: Iterable[str]) -> list[str]:
 
 
 def _current_source(
-    records: list[dict[str, Any]], source_id: str
+    records: list[dict[str, Any]], source_id: Any
 ) -> Optional[dict[str, Any]]:
+    if not isinstance(source_id, str) or not source_id:
+        return None
     candidates = [
         record
         for record in records
@@ -260,8 +264,10 @@ def _current_source(
 
 
 def _current_profile(
-    records: list[dict[str, Any]], profile_id: str
+    records: list[dict[str, Any]], profile_id: Any
 ) -> Optional[dict[str, Any]]:
+    if not isinstance(profile_id, str) or not profile_id:
+        return None
     candidates = [
         record
         for record in records
@@ -289,10 +295,16 @@ def _approved_source(source: dict[str, Any], narration_id: Any, inputs: list[str
         and source.get("mode") in {"uploaded-voice", "tts"}
         and isinstance(narration_id, str)
         and narration_id in inputs
+        and source.get("parents") == [narration_id]
+        and isinstance(source.get("decision_provenance"), str)
+        and bool(source["decision_provenance"].strip())
     )
 
 
-def _approved_tts_profile(profile: Optional[dict[str, Any]]) -> bool:
+def _approved_tts_profile(
+    profile: Optional[dict[str, Any]], narration_id: Any, source_id: str
+) -> bool:
+    parents = profile.get("parents") if profile is not None else None
     return bool(
         profile
         and profile.get("status") == "approved"
@@ -302,11 +314,25 @@ def _approved_tts_profile(profile: Optional[dict[str, Any]]) -> bool:
         and profile["provider"]
         and isinstance(profile.get("voice_id"), str)
         and profile["voice_id"]
+        and profile.get("narration_id") == narration_id
+        and profile.get("source_decision_id") == source_id
+        and isinstance(parents, list)
+        and all(isinstance(parent, str) for parent in parents)
+        and len(parents) == 2
+        and set(parents) == {narration_id, source_id}
+        and isinstance(profile.get("consent_provenance"), str)
+        and bool(profile["consent_provenance"].strip())
+        and isinstance(profile.get("profile_provenance"), str)
+        and bool(profile["profile_provenance"].strip())
     )
 
 
 def _declared_upload(
-    root: Path, records: list[dict[str, Any]], uploaded_audio_id: Any
+    root: Path,
+    records: list[dict[str, Any]],
+    uploaded_audio_id: Any,
+    narration_id: Any,
+    source_id: str,
 ) -> Optional[dict[str, Any]]:
     if not isinstance(uploaded_audio_id, str) or not uploaded_audio_id:
         return None
@@ -315,6 +341,8 @@ def _declared_upload(
         upload is None
         or upload.get("type") not in _UPLOAD_TYPES
         or upload.get("status") != "approved"
+        or not isinstance(narration_id, str)
+        or upload.get("parents") != [narration_id, source_id]
     ):
         return None
     media_path = upload.get("media_path")
@@ -324,7 +352,14 @@ def _declared_upload(
         path = project_path(root, media_path)
     except ValueError:
         return None
-    return upload if path.is_file() and not path.is_symlink() else None
+    media_format = PurePosixPath(media_path).suffix.lower().lstrip(".")
+    return (
+        upload
+        if path.is_file()
+        and not path.is_symlink()
+        and probe_audio_duration_ms(path, media_format) is not None
+        else None
+    )
 
 
 def _completed_outputs(
@@ -332,20 +367,39 @@ def _completed_outputs(
     records: list[dict[str, Any]],
     narration_id: Any,
     source_id: str,
-    profile_id: str,
+    profile_id: Optional[str],
+    uploaded_audio_id: Optional[str],
     output_ids: list[str],
 ) -> tuple[Optional[list[str]], str]:
     if not isinstance(narration_id, str) or not narration_id:
         return None, "voice-artifacts-pending"
-    completion_records = _declared_records(
-        records, [source_id, profile_id, *output_ids]
-    )
-    voiceover = _record_by_id(completion_records, output_ids[0])
-    if voiceover is not None and not _safe_readable_voiceover(root, voiceover):
-        return None, "voiceover-media-unavailable"
-    bundle = validate_voice_bundle(completion_records, narration_id)
+    lineage_ids = [source_id, *output_ids]
+    if profile_id is not None:
+        lineage_ids.append(profile_id)
+    if uploaded_audio_id is not None:
+        lineage_ids.append(uploaded_audio_id)
+    narration_records = [
+        record for record in records if record.get("artifact_id") == narration_id
+    ]
+    completion_records = [
+        *narration_records,
+        *_declared_records(records, lineage_ids),
+    ]
+    bundle = validate_project_voice_bundle(root, completion_records, narration_id)
     if not bundle["ok"]:
-        return None, "voice-artifacts-pending"
+        media_codes = {
+            "unsafe-voiceover-media-path",
+            "voiceover-media-duration-unverifiable",
+            "voiceover-media-missing",
+            "voiceover-media-symlink",
+            "voiceover-media-unreadable",
+        }
+        codes = {issue["code"] for issue in bundle["issues"]}
+        return None, (
+            "voiceover-media-unavailable"
+            if codes & media_codes
+            else "voice-artifacts-pending"
+        )
     timing_id = bundle["voice_timing_id"]
     beats = _record_by_id(completion_records, output_ids[2])
     if (
@@ -364,19 +418,6 @@ def _completed_outputs(
 def _record_by_id(records: list[dict[str, Any]], artifact_id: str) -> Optional[dict[str, Any]]:
     matches = [record for record in records if record.get("artifact_id") == artifact_id]
     return matches[0] if len(matches) == 1 else None
-
-
-def _safe_readable_voiceover(root: Path, voiceover: dict[str, Any]) -> bool:
-    if voiceover.get("type") != "voiceover":
-        return False
-    media_path = voiceover.get("media_path")
-    if not isinstance(media_path, str) or not media_path:
-        return False
-    try:
-        path = project_path(root, media_path)
-    except ValueError:
-        return False
-    return path.is_file() and not path.is_symlink() and os.access(path, os.R_OK)
 
 
 def _select_chatcut(

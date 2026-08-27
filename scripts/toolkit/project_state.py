@@ -7,9 +7,10 @@ import os
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator, Mapping, Optional
+from typing import Any, Iterable, Iterator, Mapping, Optional
 
 from .runtime_paths import project_path, project_root, storage_directory
+from .voice import validate_project_authoritative_voice_bundle
 
 
 PHASES = (
@@ -110,6 +111,19 @@ def append_event(root: Path, event: dict[str, Any]) -> None:
     with _state_lock(root, exclusive=True):
         state = _replay_events_unlocked(root)
         _validate_event_contract(event)
+        if (
+            event.get("event") == "project.phase_changed"
+            and event.get("phase") == "voice_ready"
+        ):
+            voice = validate_project_authoritative_voice_bundle(root)
+            if not voice["ok"]:
+                codes = ",".join(
+                    sorted({issue["code"] for issue in voice["issues"]})
+                )
+                raise ValueError(
+                    "voice_ready requires an authoritative header-verified "
+                    f"voice bundle and readable audio: {codes}"
+                )
         upgrade = _schema_upgrade_for(event, state)
         if upgrade is not None:
             _validate_event(upgrade, state)
@@ -146,27 +160,16 @@ def replay_events(root: Path) -> dict[str, Any]:
 def project_recovery_view(
     root: Path,
     artifacts: Iterable[Mapping[str, Any]],
-    *,
-    has_current_voice_lineage: Optional[
-        Callable[[Iterable[Mapping[str, Any]]], bool]
-    ] = None,
 ) -> dict[str, Any]:
     """Return a non-persisted recovery view for projects predating voice gates.
 
-    The optional predicate is an intentional dependency boundary: the voice
-    artifact module can become authoritative without project-state importing it
-    and creating a cycle.  Until a caller supplies that validator, recovery is
-    conservative and does not infer voice readiness from arbitrary metadata.
+    Recovery uses the same authoritative file-backed verifier as a live phase
+    transition; callers cannot substitute a metadata-only predicate.
     """
     state = replay_events(root)
     if state["phase"] not in _VOICE_REQUIRED_RECOVERY_PHASES:
         return state
-    lineage_exists = (
-        has_current_voice_lineage(artifacts)
-        if has_current_voice_lineage is not None
-        else False
-    )
-    if lineage_exists:
+    if validate_project_authoritative_voice_bundle(root, artifacts)["ok"]:
         return state
     return {
         **state,

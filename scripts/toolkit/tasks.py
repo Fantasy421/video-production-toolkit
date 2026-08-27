@@ -20,10 +20,11 @@ from scripts.toolkit.image_context import (
     validate_image_result_envelope,
     validate_image_task_constraints,
     validate_media_artifact_metadata,
+    validate_result_envelope,
 )
 from scripts.toolkit.project_state import _state_lock
 from scripts.toolkit.runtime_paths import project_path, project_root, storage_directory
-from scripts.toolkit.voice import validate_authoritative_voice_bundle
+from scripts.toolkit.voice import validate_project_authoritative_voice_bundle
 
 
 CLAIM_LEASE_SECONDS = 300.0
@@ -95,7 +96,7 @@ def create_task(root: Path, envelope: dict[str, Any]) -> Path:
     storage_directory(root, "events", create=True)
     with _state_lock(root, exclusive=False):
         artifacts = _effective_artifacts_by_id(root)
-        if not voice_timing_input_is_current(envelope, artifacts):
+        if not voice_timing_input_is_current(envelope, artifacts, root=root):
             raise ValueError("task envelope requires the current real voice_timing_id")
         if not _artifact_inputs_are_current(envelope, artifacts):
             raise ValueError("task envelope requires current approved inputs")
@@ -107,7 +108,7 @@ def create_task(root: Path, envelope: dict[str, Any]) -> Path:
 
 
 def voice_timing_input_is_current(
-    envelope: dict[str, Any], artifacts: Any
+    envelope: dict[str, Any], artifacts: Any, *, root: Optional[Path] = None
 ) -> bool:
     """Return whether a timing consumer declares the exact current real timing.
 
@@ -118,6 +119,8 @@ def voice_timing_input_is_current(
     _validate_envelope(envelope)
     if envelope["capability"] not in VOICE_TIMING_CAPABILITIES:
         return True
+    if root is None:
+        return False
     records = _artifact_values(artifacts)
     timing_id = envelope["constraints"].get("voice_timing_id")
     if (
@@ -129,7 +132,7 @@ def voice_timing_input_is_current(
         or timing_id not in envelope["inputs"]
     ):
         return False
-    bundle = validate_authoritative_voice_bundle(records)
+    bundle = validate_project_authoritative_voice_bundle(root, records)
     return (
         bundle["ok"]
         and bundle["voice_timing_id"] == timing_id
@@ -186,7 +189,7 @@ def claim_task(root: Path, task_id: str, worker_id: str) -> dict[str, str]:
             with _state_lock(root, exclusive=False):
                 envelope = _read_envelope(root, task_id)
                 if not _task_inputs_are_current(
-                    envelope, _effective_artifacts_by_id(root)
+                    root, envelope, _effective_artifacts_by_id(root)
                 ):
                     raise ValueError("task inputs are no longer current")
         except BaseException:
@@ -200,6 +203,7 @@ def complete_task(root: Path, result: dict[str, Any]) -> str:
     root = project_root(root)
     storage_directory(root, "tasks")
     _validate_result(result)
+    validate_result_envelope(result)
     task_id = result["task_id"]
     handle = _hold_claim(_claim_path(root, task_id))
     destination: Optional[Path] = None
@@ -315,14 +319,16 @@ def active_claim_task_ids(root: Path) -> list[str]:
 def _is_current_result(root: Path, envelope: dict[str, Any], result: dict[str, Any]) -> bool:
     if result["inputs"] != envelope["inputs"]:
         return False
-    return _task_inputs_are_current(envelope, _effective_artifacts_by_id(root))
+    return _task_inputs_are_current(root, envelope, _effective_artifacts_by_id(root))
 
 
 def _task_inputs_are_current(
-    envelope: dict[str, Any], artifacts: dict[str, dict[str, Any]]
+    root: Path,
+    envelope: dict[str, Any],
+    artifacts: dict[str, dict[str, Any]],
 ) -> bool:
     return (
-        voice_timing_input_is_current(envelope, artifacts)
+        voice_timing_input_is_current(envelope, artifacts, root=root)
         and _artifact_inputs_are_current(envelope, artifacts)
         and _authorize_declared_image_inputs(envelope, artifacts)
     )

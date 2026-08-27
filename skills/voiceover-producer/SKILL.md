@@ -36,6 +36,11 @@ Decision and stop conditions:
   External providers cannot alter narration text, profile fields, user
   decisions, routing, or approvals.
 
+Media verification accepts WAV, MP3, M4A, AAC, and FLAC only. WAV duration is
+read from its container header. Compressed formats require a bounded local
+`ffprobe` duration probe; when the probe is missing, times out, or cannot prove
+the declared duration, fail closed and do not publish voice readiness.
+
 Success and result:
 
 - Publish immutable, project-contained `voiceover`, real voice-timing, and

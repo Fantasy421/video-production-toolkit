@@ -35,6 +35,8 @@ OPTIONAL_ENTRY_FIELDS = {
     "installed_skill",
     "capability_skills",
     "capability_implementation_refs",
+    "accepted_voice_media_formats",
+    "duration_probe",
     "fallback",
     "license_mode",
     "tokens",
@@ -171,6 +173,28 @@ def _validate_entry(entry: Any, path: Path, kind: str) -> None:
         _validate_capability_skills(entry, path)
     if "capability_implementation_refs" in entry:
         _validate_capability_implementation_refs(entry, path)
+    if "accepted_voice_media_formats" in entry:
+        _validate_string_list(
+            entry["accepted_voice_media_formats"],
+            "accepted_voice_media_formats",
+            path,
+        )
+    if "duration_probe" in entry:
+        probe = entry["duration_probe"]
+        if (
+            not isinstance(probe, Mapping)
+            or not probe
+            or any(
+                not isinstance(name, str)
+                or not name
+                or not isinstance(value, str)
+                or not value
+                for name, value in probe.items()
+            )
+        ):
+            raise ValueError(
+                f"registry duration_probe must be a non-empty string map: {path}"
+            )
     if "fallback" in entry and entry["fallback"] is not None:
         _validate_string(entry["fallback"], "fallback", path)
     if "license_mode" in entry and entry["license_mode"] != "external-reference":

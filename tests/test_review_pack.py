@@ -89,6 +89,7 @@ class ReviewPackTests(unittest.TestCase):
 
     def write_voice_bundle(self, version):
         narration_id = f"narration-v{version}"
+        source_id = f"voice-source-v{version}"
         profile_id = f"voice-profile-v{version}"
         voiceover_id = f"voiceover-v{version}"
         timing_id = f"voice-timing-v{version}"
@@ -97,19 +98,25 @@ class ReviewPackTests(unittest.TestCase):
             parents=[] if version == 1 else ["narration-v1"],
         )
         self.write_artifact(
-            f"voice-source-v{version}", "voice-source-decision", version,
-            f"metadata/voice-source-v{version}.json", narration_id=narration_id,
-            mode="tts", decision="approved",
+            source_id, "voice-source-decision", version,
+            f"metadata/{source_id}.json", parents=[narration_id],
+            narration_id=narration_id, mode="tts", decision="approved",
+            decision_provenance=f"user:{source_id}",
         )
         self.write_artifact(
             profile_id, "voice-profile", version, f"metadata/{profile_id}.json",
-            mode="tts", language="zh-CN", provider="chatcut", voice_id="narrator-1",
+            parents=[narration_id, source_id], narration_id=narration_id,
+            source_decision_id=source_id, mode="tts", language="zh-CN",
+            provider="chatcut", voice_id="narrator-1",
             speaking_rate=1.0, emotion="calm", pronunciations=[], approved=True,
+            consent_provenance=f"user:consent-v{version}",
+            profile_provenance=f"user:profile-v{version}",
         )
         self.write_artifact(
             voiceover_id, "voiceover", version, f"media/{voiceover_id}.wav",
-            parents=[narration_id, profile_id], narration_id=narration_id,
-            profile_id=profile_id, media_path=f"media/{voiceover_id}.wav",
+            parents=[narration_id, source_id, profile_id], narration_id=narration_id,
+            source_decision_id=source_id, mode="tts", profile_id=profile_id,
+            media_path=f"media/{voiceover_id}.wav", media_format="wav",
             duration_ms=5_000, provenance="test-fixture",
         )
         self.write_wav_header(f"media/{voiceover_id}.wav", 5_000)
@@ -118,6 +125,64 @@ class ReviewPackTests(unittest.TestCase):
             parents=[voiceover_id], voiceover_id=voiceover_id, timing_kind="real",
             duration_ms=5_000,
             segments=[{"start_ms": 0, "end_ms": 5_000, "text": "voice timing"}],
+        )
+
+    def write_uploaded_voice_bundle(self):
+        narration_id = "narration-upload-v1"
+        source_id = "voice-source-upload-v1"
+        upload_id = "uploaded-audio-v1"
+        voiceover_id = "voiceover-upload-v1"
+        self.write_artifact(
+            narration_id,
+            "narration",
+            1,
+            f"metadata/{narration_id}.json",
+        )
+        self.write_artifact(
+            source_id,
+            "voice-source-decision",
+            1,
+            f"metadata/{source_id}.json",
+            parents=[narration_id],
+            narration_id=narration_id,
+            mode="uploaded-voice",
+            decision="approved",
+            decision_provenance="user:uploaded-source-v1",
+        )
+        self.write_artifact(
+            upload_id,
+            "uploaded-audio",
+            1,
+            f"media/{upload_id}.wav",
+            parents=[narration_id, source_id],
+            media_path=f"media/{upload_id}.wav",
+        )
+        self.write_artifact(
+            voiceover_id,
+            "voiceover",
+            1,
+            f"media/{voiceover_id}.wav",
+            parents=[narration_id, source_id, upload_id],
+            narration_id=narration_id,
+            source_decision_id=source_id,
+            mode="uploaded-voice",
+            uploaded_audio_id=upload_id,
+            media_path=f"media/{voiceover_id}.wav",
+            media_format="wav",
+            duration_ms=5_000,
+            provenance="user-upload",
+        )
+        self.write_wav_header(f"media/{voiceover_id}.wav", 5_000)
+        self.write_artifact(
+            "voice-timing-upload-v1",
+            "voice-timing",
+            1,
+            "metadata/voice-timing-upload-v1.json",
+            parents=[voiceover_id],
+            voiceover_id=voiceover_id,
+            timing_kind="real",
+            duration_ms=5_000,
+            segments=[{"start_ms": 0, "end_ms": 5_000, "text": "uploaded voice"}],
         )
 
     def test_review_pack_links_previews_and_decisions_without_embedding_media(self):
@@ -146,6 +211,18 @@ class ReviewPackTests(unittest.TestCase):
         self.assertEqual("voice-timing-v2", review["voice"]["timing"]["artifact_id"])
         self.assertNotIn("voiceover-v1", rendered)
         self.assertNotIn("data:audio", rendered)
+
+    def test_review_pack_resolves_uploaded_voice_without_a_tts_profile(self):
+        """Catches uploaded narration disappearing because no profile exists."""
+        initialize_project(self.root, "review-uploaded-voice", "knowledge-video")
+        self.write_uploaded_voice_bundle()
+
+        path = build_review_pack(self.root, self.root / "review")
+        review = json.loads((path.parent / "review.json").read_text(encoding="utf-8"))
+
+        self.assertEqual("voiceover-upload-v1", review["voice"]["voiceover_id"])
+        self.assertEqual("uploaded-voice", review["voice"]["source"]["mode"])
+        self.assertIsNone(review["voice"]["profile"])
 
     def test_review_pack_labels_only_effectively_approved_preview_artifacts(self):
         """Catches event-invalidated preview metadata still being presented as current."""

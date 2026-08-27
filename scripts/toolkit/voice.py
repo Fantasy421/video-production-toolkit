@@ -1,8 +1,18 @@
 """Pure validation for immutable narration voice artifacts."""
 
 from collections.abc import Iterable, Mapping
+import json
+import math
 import re
+import shutil
+import subprocess
+import wave
+from pathlib import Path, PurePosixPath
 from typing import Any, Optional
+
+from .artifacts import _artifact_paths_by_id, _read_valid_artifact
+from .invalidation import invalidated_artifact_ids
+from .runtime_paths import project_path, project_root
 
 
 VOICE_SOURCE = "voice-source-decision"
@@ -14,6 +24,7 @@ PROJECT_PATH_PATTERN = r"^(?!/)(?![A-Za-z]:)(?!\.{1,2}(?:/|$))(?!.*\/\.{1,2}(?:/
 SAFE_ID_RE = re.compile(SAFE_ID_PATTERN)
 PROJECT_PATH_RE = re.compile(PROJECT_PATH_PATTERN)
 _VOICE_TYPES = frozenset({VOICE_SOURCE, VOICE_PROFILE, VOICEOVER, VOICE_TIMING})
+ACCEPTED_VOICE_MEDIA_FORMATS = frozenset({"wav", "mp3", "m4a", "aac", "flac"})
 _ARTIFACT_REQUIRED_FIELDS = (
     "artifact_id",
     "type",
@@ -24,9 +35,13 @@ _ARTIFACT_REQUIRED_FIELDS = (
 )
 _ARTIFACT_STATUSES = frozenset({"draft", "approved", "stale", "superseded", "invalid"})
 _VOICE_REQUIRED_FIELDS = {
-    VOICE_SOURCE: frozenset({"narration_id", "mode", "decision"}),
+    VOICE_SOURCE: frozenset(
+        {"narration_id", "mode", "decision", "decision_provenance"}
+    ),
     VOICE_PROFILE: frozenset(
         {
+            "narration_id",
+            "source_decision_id",
             "mode",
             "language",
             "provider",
@@ -35,13 +50,17 @@ _VOICE_REQUIRED_FIELDS = {
             "emotion",
             "pronunciations",
             "approved",
+            "consent_provenance",
+            "profile_provenance",
         }
     ),
     VOICEOVER: frozenset(
         {
             "narration_id",
-            "profile_id",
+            "source_decision_id",
+            "mode",
             "media_path",
+            "media_format",
             "duration_ms",
             "provenance",
         }
@@ -53,7 +72,11 @@ _VOICE_REQUIRED_FIELDS = {
 _VOICE_ALLOWED_FIELDS = {
     artifact_type: frozenset(_ARTIFACT_REQUIRED_FIELDS)
     | required_fields
-    | {"output_contract"}
+    | (
+        {"output_contract", "profile_id", "uploaded_audio_id"}
+        if artifact_type == VOICEOVER
+        else {"output_contract"}
+    )
     for artifact_type, required_fields in _VOICE_REQUIRED_FIELDS.items()
 }
 
@@ -74,11 +97,19 @@ def validate_voice_bundle(
 
     source = _current_source(records, narration_id, issues)
     voiceover = _current_voiceover(records, narration_id, issues)
-    profile = _profile_for_voiceover(records, voiceover, issues)
+    profile = _current_profile(records, source, narration_id, issues)
     timing = _timing_for_voiceover(records, voiceover, issues)
 
-    _validate_source_and_profile(source, profile, narration_id, issues)
-    _validate_voiceover(voiceover, narration_id, profile, issues)
+    _validate_source(source, narration_id, issues)
+    _validate_profile(profile, source, narration_id, issues)
+    _validate_voiceover(
+        voiceover,
+        narration_id,
+        source,
+        profile,
+        raw_records,
+        issues,
+    )
     _validate_timing(timing, voiceover, issues)
 
     sorted_issues = _sorted_unique_issues(issues)
@@ -127,6 +158,160 @@ def validate_authoritative_voice_bundle(
     narration_id = narration["artifact_id"]
     result = validate_voice_bundle(records, narration_id)
     return {**result, "narration_id": narration_id}
+
+
+def validate_project_voice_bundle(
+    root: Path,
+    artifacts: Iterable[Mapping[str, Any]],
+    narration_id: str,
+) -> dict[str, Any]:
+    """Validate immutable lineage against the real project-contained audio.
+
+    This is the canonical readiness verifier used by transitions, routing,
+    task completion, structural QA, and installation smoke.  Metadata-only
+    validation remains available for diagnostics, but it cannot authorize a
+    production gate.
+    """
+    root = project_root(root)
+    records = _artifact_records(artifacts)
+    result = validate_voice_bundle(records, narration_id)
+    if not result["ok"]:
+        return result
+    voiceover = _record_with_id(records, result["voiceover_id"])
+    timing = _record_with_id(records, result["voice_timing_id"])
+    issues: list[dict[str, Any]] = []
+    if voiceover is None or timing is None:
+        _add_issue(issues, "voice-bundle-artifact-missing")
+        return _failed_bundle(result, issues)
+    media_path = voiceover.get("media_path")
+    try:
+        media = project_path(root, media_path)
+    except (TypeError, ValueError):
+        _add_issue(issues, "unsafe-voiceover-media-path", voiceover)
+        return _failed_bundle(result, issues)
+    if media.is_symlink():
+        _add_issue(issues, "voiceover-media-symlink", voiceover)
+        return _failed_bundle(result, issues)
+    if not media.is_file():
+        _add_issue(issues, "voiceover-media-missing", voiceover)
+        return _failed_bundle(result, issues)
+    try:
+        with media.open("rb") as stream:
+            stream.read(1)
+    except OSError:
+        _add_issue(issues, "voiceover-media-unreadable", voiceover)
+        return _failed_bundle(result, issues)
+    actual_duration = probe_audio_duration_ms(media, voiceover.get("media_format"))
+    if actual_duration is None:
+        _add_issue(issues, "voiceover-media-duration-unverifiable", voiceover)
+        return _failed_bundle(result, issues)
+    if actual_duration != voiceover.get("duration_ms"):
+        _add_issue(issues, "voiceover-duration-mismatch", voiceover)
+    if actual_duration != timing.get("duration_ms") or any(
+        isinstance(segment, Mapping)
+        and isinstance(segment.get("end_ms"), int)
+        and not isinstance(segment.get("end_ms"), bool)
+        and segment["end_ms"] > actual_duration
+        for segment in timing.get("segments", [])
+        if isinstance(timing.get("segments"), list)
+    ):
+        _add_issue(issues, "voice-timing-out-of-bounds", timing)
+    if issues:
+        return _failed_bundle(result, issues)
+    return {**result, "audio_duration_ms": actual_duration}
+
+
+def validate_project_authoritative_voice_bundle(
+    root: Path,
+    artifacts: Optional[Iterable[Mapping[str, Any]]] = None,
+) -> dict[str, Any]:
+    """Validate the one authoritative narration and its real audio file."""
+    root = project_root(root)
+    records = (
+        _load_effective_project_artifacts(root)
+        if artifacts is None
+        else _artifact_records(artifacts)
+    )
+    authoritative = validate_authoritative_voice_bundle(records)
+    narration_id = authoritative.get("narration_id")
+    if not authoritative["ok"] or not isinstance(narration_id, str):
+        return authoritative
+    result = validate_project_voice_bundle(root, records, narration_id)
+    return {**result, "narration_id": narration_id}
+
+
+def probe_audio_duration_ms(path: Path, media_format: Any) -> Optional[int]:
+    """Return header/probe-derived duration for one accepted voice format.
+
+    PCM WAV is always supported through the Python standard library.  MP3,
+    M4A, AAC, and FLAC are accepted only when a local ``ffprobe`` executable is
+    available; absence, malformed output, or timeout fails closed.
+    """
+    source = Path(path)
+    if (
+        not isinstance(media_format, str)
+        or media_format not in ACCEPTED_VOICE_MEDIA_FORMATS
+        or source.suffix.lower() != f".{media_format}"
+    ):
+        return None
+    if media_format == "wav":
+        try:
+            with wave.open(str(source), "rb") as audio:
+                frame_rate = audio.getframerate()
+                frame_count = audio.getnframes()
+            if frame_rate <= 0 or frame_count < 0:
+                return None
+            return round(frame_count * 1_000 / frame_rate)
+        except (EOFError, OSError, wave.Error):
+            return None
+    executable = shutil.which("ffprobe")
+    if executable is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [
+                executable,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration:stream=duration",
+                "-of",
+                "json",
+                str(source),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    try:
+        payload = json.loads(completed.stdout)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    candidates: list[Any] = []
+    if isinstance(payload, Mapping):
+        format_record = payload.get("format")
+        if isinstance(format_record, Mapping):
+            candidates.append(format_record.get("duration"))
+        streams = payload.get("streams")
+        if isinstance(streams, list):
+            candidates.extend(
+                stream.get("duration")
+                for stream in streams
+                if isinstance(stream, Mapping)
+            )
+    for candidate in candidates:
+        try:
+            seconds = float(candidate)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(seconds) and seconds > 0:
+            return round(seconds * 1_000)
+    return None
 
 
 def has_current_voice_lineage(
@@ -265,8 +450,21 @@ def _valid_voice_record(record: Mapping[str, Any]) -> bool:
         return False
     if artifact_type == VOICE_SOURCE:
         return _safe_id(record["narration_id"])
+    if artifact_type == VOICE_PROFILE:
+        return (
+            _safe_id(record["narration_id"])
+            and _safe_id(record["source_decision_id"])
+        )
     if artifact_type == VOICEOVER:
-        return _safe_id(record["narration_id"]) and _safe_id(record["profile_id"])
+        if not (
+            _safe_id(record["narration_id"])
+            and _safe_id(record["source_decision_id"])
+            and record.get("mode") in {"uploaded-voice", "tts"}
+        ):
+            return False
+        if record["mode"] == "tts":
+            return _safe_id(record.get("profile_id")) and "uploaded_audio_id" not in record
+        return _safe_id(record.get("uploaded_audio_id")) and "profile_id" not in record
     if artifact_type == VOICE_TIMING:
         return _safe_id(record["voiceover_id"])
     return True
@@ -311,19 +509,20 @@ def _current_voiceover(
     return current
 
 
-def _profile_for_voiceover(
+def _current_profile(
     records: list[dict[str, Any]],
-    voiceover: Optional[dict[str, Any]],
+    source: Optional[dict[str, Any]],
+    narration_id: str,
     issues: list[dict[str, Any]],
 ) -> Optional[dict[str, Any]]:
-    if voiceover is None:
-        _add_issue(issues, "voice-profile-missing")
+    if source is None or source.get("mode") != "tts":
         return None
-    profile_id = voiceover.get("profile_id")
     profiles = [
         item
         for item in records
-        if item.get("type") == VOICE_PROFILE and item.get("artifact_id") == profile_id
+        if item.get("type") == VOICE_PROFILE
+        and item.get("narration_id") == narration_id
+        and item.get("source_decision_id") == source.get("artifact_id")
     ]
     current = _latest_approved(profiles)
     if current is None:
@@ -367,9 +566,8 @@ def _version(artifact: Mapping[str, Any]) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
-def _validate_source_and_profile(
+def _validate_source(
     source: Optional[dict[str, Any]],
-    profile: Optional[dict[str, Any]],
     narration_id: str,
     issues: list[dict[str, Any]],
 ) -> None:
@@ -380,43 +578,89 @@ def _validate_source_and_profile(
             _add_issue(issues, "voice-source-decision-invalid-mode", source)
         if source.get("decision") != "approved":
             _add_issue(issues, "voice-source-decision-unapproved", source)
-    if profile is not None:
-        if not _valid_mode(profile.get("mode")):
-            _add_issue(issues, "voice-profile-invalid-mode", profile)
-        if profile.get("approved") is not True:
-            _add_issue(issues, "voice-profile-unapproved", profile)
-        for field in ("language", "provider", "emotion"):
-            if not _nonempty_text(profile.get(field)):
-                _add_issue(issues, "invalid-voice-profile", profile)
-                break
-        if not _safe_id(profile.get("voice_id")):
+        if source.get("parents") != [narration_id]:
+            _add_issue(issues, "voice-source-decision-lineage-mismatch", source)
+        if not _nonempty_text(source.get("decision_provenance")):
+            _add_issue(issues, "voice-source-decision-provenance-missing", source)
+
+
+def _validate_profile(
+    profile: Optional[dict[str, Any]],
+    source: Optional[dict[str, Any]],
+    narration_id: str,
+    issues: list[dict[str, Any]],
+) -> None:
+    if profile is None:
+        return
+    if profile.get("mode") != "tts":
+        _add_issue(issues, "voice-profile-invalid-mode", profile)
+    if profile.get("approved") is not True:
+        _add_issue(issues, "voice-profile-unapproved", profile)
+    source_id = source.get("artifact_id") if source is not None else None
+    if (
+        profile.get("narration_id") != narration_id
+        or profile.get("source_decision_id") != source_id
+        or set(profile.get("parents", [])) != {narration_id, source_id}
+        or len(profile.get("parents", [])) != 2
+    ):
+        _add_issue(issues, "voice-profile-lineage-mismatch", profile)
+    for field in (
+        "language",
+        "provider",
+        "emotion",
+        "consent_provenance",
+        "profile_provenance",
+    ):
+        if not _nonempty_text(profile.get(field)):
             _add_issue(issues, "invalid-voice-profile", profile)
-        rate = profile.get("speaking_rate")
-        if isinstance(rate, bool) or not isinstance(rate, (int, float)) or rate <= 0:
-            _add_issue(issues, "invalid-voice-profile", profile)
-        pronunciations = profile.get("pronunciations")
-        if not isinstance(pronunciations, list) or not all(
-            _nonempty_text(item) for item in pronunciations
-        ) or len(pronunciations) != len(set(pronunciations)):
-            _add_issue(issues, "invalid-voice-profile", profile)
-        if source is not None and profile.get("mode") != source.get("mode"):
-            _add_issue(issues, "voice-profile-lineage-mismatch", profile)
+            break
+    if not _safe_id(profile.get("voice_id")):
+        _add_issue(issues, "invalid-voice-profile", profile)
+    rate = profile.get("speaking_rate")
+    if isinstance(rate, bool) or not isinstance(rate, (int, float)) or rate <= 0:
+        _add_issue(issues, "invalid-voice-profile", profile)
+    pronunciations = profile.get("pronunciations")
+    if not isinstance(pronunciations, list) or not all(
+        _nonempty_text(item) for item in pronunciations
+    ) or len(pronunciations) != len(set(pronunciations)):
+        _add_issue(issues, "invalid-voice-profile", profile)
 
 
 def _validate_voiceover(
     voiceover: Optional[dict[str, Any]],
     narration_id: str,
+    source: Optional[dict[str, Any]],
     profile: Optional[dict[str, Any]],
+    all_records: list[dict[str, Any]],
     issues: list[dict[str, Any]],
 ) -> None:
     if voiceover is None:
         return
     if voiceover.get("narration_id") != narration_id:
         _add_issue(issues, "voiceover-lineage-mismatch", voiceover)
-    profile_id = profile.get("artifact_id") if profile is not None else None
-    if voiceover.get("profile_id") != profile_id:
+    source_id = source.get("artifact_id") if source is not None else None
+    mode = source.get("mode") if source is not None else None
+    if (
+        voiceover.get("source_decision_id") != source_id
+        or voiceover.get("mode") != mode
+    ):
         _add_issue(issues, "voiceover-lineage-mismatch", voiceover)
-    expected_parents = {narration_id, profile_id}
+    profile_id = profile.get("artifact_id") if profile is not None else None
+    expected_parents: set[Any]
+    if mode == "tts":
+        if voiceover.get("profile_id") != profile_id or "uploaded_audio_id" in voiceover:
+            _add_issue(issues, "voiceover-lineage-mismatch", voiceover)
+        expected_parents = {narration_id, source_id, profile_id}
+    elif mode == "uploaded-voice":
+        upload_id = voiceover.get("uploaded_audio_id")
+        upload = _record_with_id(all_records, upload_id)
+        if "profile_id" in voiceover or not _valid_uploaded_audio(
+            upload, narration_id, source_id
+        ):
+            _add_issue(issues, "voiceover-upload-lineage-mismatch", voiceover)
+        expected_parents = {narration_id, source_id, upload_id}
+    else:
+        expected_parents = {narration_id, source_id}
     parents = voiceover.get("parents")
     if (
         not isinstance(parents, list)
@@ -426,6 +670,17 @@ def _validate_voiceover(
         _add_issue(issues, "voiceover-lineage-mismatch", voiceover)
     if not _safe_project_relative_path(voiceover.get("media_path")):
         _add_issue(issues, "unsafe-voiceover-media-path", voiceover)
+    media_format = voiceover.get("media_format")
+    suffix = (
+        PurePosixPath(voiceover["media_path"]).suffix.lower()
+        if isinstance(voiceover.get("media_path"), str)
+        else ""
+    )
+    if (
+        media_format not in ACCEPTED_VOICE_MEDIA_FORMATS
+        or suffix != f".{media_format}"
+    ):
+        _add_issue(issues, "voiceover-media-format-mismatch", voiceover)
     if not _positive_milliseconds(voiceover.get("duration_ms")):
         _add_issue(issues, "invalid-voiceover-duration", voiceover)
     if not _nonempty_text(voiceover.get("provenance")):
@@ -488,6 +743,59 @@ def _validate_segments(
             _add_issue(issues, "voice-timing-overlap", timing)
         previous_start = start
         previous_end = end
+
+
+def _valid_uploaded_audio(
+    record: Optional[Mapping[str, Any]],
+    narration_id: str,
+    source_id: Any,
+) -> bool:
+    if record is None:
+        return False
+    return (
+        record.get("type") in {"audio", "audio-asset", "uploaded-audio"}
+        and record.get("status") == "approved"
+        and _safe_id(record.get("artifact_id"))
+        and _safe_project_relative_path(record.get("media_path"))
+        and _safe_id_list(record.get("parents"))
+        and len(record["parents"]) == 2
+        and set(record["parents"]) == {narration_id, source_id}
+    )
+
+
+def _record_with_id(
+    records: Iterable[Mapping[str, Any]], artifact_id: Any
+) -> Optional[dict[str, Any]]:
+    if not _safe_id(artifact_id):
+        return None
+    matches = [dict(record) for record in records if record.get("artifact_id") == artifact_id]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _failed_bundle(
+    valid_result: Mapping[str, Any], issues: list[dict[str, Any]]
+) -> dict[str, Any]:
+    return {
+        **dict(valid_result),
+        "ok": False,
+        "voiceover_id": None,
+        "voice_timing_id": None,
+        "issues": _sorted_unique_issues(issues),
+    }
+
+
+def _load_effective_project_artifacts(root: Path) -> list[dict[str, Any]]:
+    paths = _artifact_paths_by_id(root / "artifacts")
+    invalidated = invalidated_artifact_ids(root)
+    records: list[dict[str, Any]] = []
+    for artifact_id, path in sorted(paths.items()):
+        record = _read_valid_artifact(path)
+        if record is None or record.get("artifact_id") != artifact_id:
+            raise ValueError(f"invalid artifact metadata: {path}")
+        if artifact_id in invalidated:
+            record = {**record, "status": "stale"}
+        records.append(record)
+    return records
 
 
 def _safe_project_relative_path(value: Any) -> bool:

@@ -1,9 +1,11 @@
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import struct
 import unittest
 
 from scripts.toolkit import tasks
+from scripts.toolkit.artifacts import create_artifact
 from scripts.toolkit.voice_tasks import prepare_voice_task
 
 
@@ -41,31 +43,40 @@ class PrepareVoiceTaskTests(unittest.TestCase):
             self.artifact(
                 "source-v2",
                 "voice-source-decision",
+                parents=["narration-v2"],
                 narration_id="narration-v2",
                 mode=mode,
                 decision="approved",
-            ),
-            self.artifact(
-                "profile-v2",
-                "voice-profile",
-                mode=mode,
-                language="zh-CN",
-                provider="chatcut",
-                voice_id="narrator-1",
-                speaking_rate=1.0,
-                emotion="calm",
-                pronunciations=[],
-                approved=profile_approved,
+                decision_provenance="user:source-v2",
             ),
         ]
+        if mode == "tts":
+            records.append(
+                self.artifact(
+                    "profile-v2",
+                    "voice-profile",
+                    parents=["narration-v2", "source-v2"],
+                    narration_id="narration-v2",
+                    source_decision_id="source-v2",
+                    mode="tts",
+                    language="zh-CN",
+                    provider="chatcut",
+                    voice_id="narrator-1",
+                    speaking_rate=1.0,
+                    emotion="calm",
+                    pronunciations=[],
+                    approved=profile_approved,
+                    consent_provenance="user:consent-v2",
+                    profile_provenance="user:profile-v2",
+                )
+            )
         if include_upload:
-            audio_path = self.root / "media" / "upload-v2.wav"
-            audio_path.parent.mkdir()
-            audio_path.write_bytes(b"RIFF")
+            self.write_audio("media/upload-v2.wav")
             records.append(
                 self.artifact(
                     "upload-v2",
                     "uploaded-audio",
+                    parents=["narration-v2", "source-v2"],
                     media_path="media/upload-v2.wav",
                 )
             )
@@ -98,6 +109,69 @@ class PrepareVoiceTaskTests(unittest.TestCase):
         self.assertEqual(envelope["inputs"], result["inputs"])
         tasks._validate_result(result)
 
+    def test_missing_source_choice_is_a_persistable_waiting_user_task(self):
+        """Catches immutable task creation requiring an invented source input."""
+        envelope = self.envelope()
+        envelope["inputs"] = ["narration-v2", "style-v2"]
+        envelope["constraints"].pop("voice_source_id")
+        envelope["constraints"].pop("voice_profile_id")
+
+        result = prepare_voice_task(
+            self.root,
+            envelope,
+            self.artifacts(),
+            ["chatcut:voice"],
+        )
+
+        self.assertEqual("waiting_user", result["status"])
+        self.assertEqual(["voice-source-decision-required"], result["warnings"])
+        self.assertEqual(envelope["inputs"], result["inputs"])
+
+    def test_create_task_persists_voice_wait_without_optional_artifact_ids(self):
+        """Catches durable dispatch inventing source, profile, or upload identities."""
+        for artifact in self.artifacts()[:2]:
+            create_artifact(self.root, artifact)
+        envelope = self.envelope()
+        envelope["inputs"] = ["narration-v2", "style-v2"]
+        for field in ("voice_source_id", "voice_profile_id", "uploaded_audio_id"):
+            envelope["constraints"].pop(field, None)
+
+        path = tasks.create_task(self.root, envelope)
+
+        self.assertEqual(envelope, json.loads(path.read_text(encoding="utf-8")))
+
+    def test_tts_missing_profile_is_a_persistable_waiting_user_task(self):
+        """Catches TTS task creation requiring a fictional profile ID."""
+        envelope = self.envelope()
+        envelope["inputs"].remove("profile-v2")
+        envelope["constraints"].pop("voice_profile_id")
+
+        result = prepare_voice_task(
+            self.root,
+            envelope,
+            self.artifacts(),
+            ["chatcut:voice"],
+        )
+
+        self.assertEqual("waiting_user", result["status"])
+        self.assertEqual(["voice-profile-approval-required"], result["warnings"])
+
+    def test_uploaded_mode_never_requires_a_voice_profile(self):
+        """Catches uploaded narration inheriting the TTS profile prerequisite."""
+        envelope = self.envelope()
+        envelope["inputs"].remove("profile-v2")
+        envelope["constraints"].pop("voice_profile_id")
+
+        result = prepare_voice_task(
+            self.root,
+            envelope,
+            self.artifacts(mode="uploaded-voice"),
+            ["chatcut:voice"],
+        )
+
+        self.assertEqual("waiting_user", result["status"])
+        self.assertEqual(["voice-upload-required"], result["warnings"])
+
     def test_uploaded_mode_submits_only_the_declared_safe_audio_for_timing(self):
         """Catches external timing work starting before its immutable upload input exists."""
         envelope = self.envelope()
@@ -124,7 +198,11 @@ class PrepareVoiceTaskTests(unittest.TestCase):
         self.write_audio("media/upload-v3.wav")
         artifacts.append(
             self.artifact(
-                "upload-v3", "uploaded-audio", version=3, media_path="media/upload-v3.wav"
+                "upload-v3",
+                "uploaded-audio",
+                version=3,
+                parents=["narration-v2", "source-v2"],
+                media_path="media/upload-v3.wav",
             )
         )
 
@@ -139,6 +217,22 @@ class PrepareVoiceTaskTests(unittest.TestCase):
             self.root,
             self.envelope(),
             self.artifacts(profile_approved=False),
+            ["chatcut:voice"],
+        )
+
+        self.assertEqual("waiting_user", result["status"])
+        self.assertEqual(["voice-profile-approval-required"], result["warnings"])
+        tasks._validate_result(result)
+
+    def test_tts_mode_treats_unhashable_profile_parents_as_unapproved(self):
+        """Catches malformed persisted profile lineage crashing task preparation."""
+        artifacts = self.artifacts()
+        artifacts[-1]["parents"] = [["narration-v2"], "source-v2"]
+
+        result = prepare_voice_task(
+            self.root,
+            self.envelope(),
+            artifacts,
             ["chatcut:voice"],
         )
 
@@ -183,10 +277,13 @@ class PrepareVoiceTaskTests(unittest.TestCase):
                 self.artifact(
                     "voiceover-v2",
                     "voiceover",
-                    parents=["narration-v2", "profile-v2"],
+                    parents=["narration-v2", "source-v2", "profile-v2"],
                     narration_id="narration-v2",
+                    source_decision_id="source-v2",
+                    mode="tts",
                     profile_id="profile-v2",
                     media_path="media/voiceover-v2.wav",
+                    media_format="wav",
                     duration_ms=1000,
                     provenance="chatcut:voice",
                     output_contract="voiceover-v1",
@@ -284,6 +381,9 @@ class PrepareVoiceTaskTests(unittest.TestCase):
                     "profile-v3",
                     "voice-profile",
                     version=3,
+                    parents=["narration-v2", "source-v2"],
+                    narration_id="narration-v2",
+                    source_decision_id="source-v2",
                     mode="tts",
                     language="zh-CN",
                     provider="unapproved-provider",
@@ -292,15 +392,20 @@ class PrepareVoiceTaskTests(unittest.TestCase):
                     emotion="calm",
                     pronunciations=[],
                     approved=True,
+                    consent_provenance="user:consent-v3",
+                    profile_provenance="user:profile-v3",
                 ),
                 self.artifact(
                     "voiceover-v3",
                     "voiceover",
                     version=3,
-                    parents=["narration-v2", "profile-v3"],
+                    parents=["narration-v2", "source-v2", "profile-v3"],
                     narration_id="narration-v2",
+                    source_decision_id="source-v2",
+                    mode="tts",
                     profile_id="profile-v3",
                     media_path="media/voiceover-v3.wav",
+                    media_format="wav",
                     duration_ms=1000,
                     provenance="unapproved:voice",
                     output_contract="voiceover-v1",
@@ -344,14 +449,19 @@ class PrepareVoiceTaskTests(unittest.TestCase):
                     "source-v3",
                     "voice-source-decision",
                     version=3,
+                    parents=["narration-v2"],
                     narration_id="narration-v2",
                     mode="tts",
                     decision="approved",
+                    decision_provenance="user:source-v3",
                 ),
                 self.artifact(
                     "profile-v3",
                     "voice-profile",
                     version=3,
+                    parents=["narration-v2", "source-v3"],
+                    narration_id="narration-v2",
+                    source_decision_id="source-v3",
                     mode="tts",
                     language="zh-CN",
                     provider="chatcut",
@@ -360,11 +470,15 @@ class PrepareVoiceTaskTests(unittest.TestCase):
                     emotion="calm",
                     pronunciations=[],
                     approved=True,
+                    consent_provenance="user:consent-v3",
+                    profile_provenance="user:profile-v3",
                 ),
             ]
         )
         artifacts[-5].update(
-            parents=["narration-v2", "profile-v3"], profile_id="profile-v3"
+            parents=["narration-v2", "source-v3", "profile-v3"],
+            source_decision_id="source-v3",
+            profile_id="profile-v3",
         )
         self.write_audio("media/voiceover-v2.wav")
 
@@ -400,10 +514,13 @@ class PrepareVoiceTaskTests(unittest.TestCase):
                 self.artifact(
                     "voiceover-v2",
                     "voiceover",
-                    parents=["narration-v2", "profile-v2"],
+                    parents=["narration-v2", "source-v2", "profile-v2"],
                     narration_id="narration-v2",
+                    source_decision_id="source-v2",
+                    mode="tts",
                     profile_id="profile-v2",
                     media_path=media_path,
+                    media_format="wav",
                     duration_ms=1000,
                     provenance="chatcut:voice",
                     output_contract="voiceover-v1",
@@ -432,7 +549,17 @@ class PrepareVoiceTaskTests(unittest.TestCase):
     def write_audio(self, relative_path):
         path = self.root / relative_path
         path.parent.mkdir(exist_ok=True)
-        path.write_bytes(b"RIFF")
+        sample_rate = 8_000
+        audio = b"\0\0" * sample_rate
+        path.write_bytes(
+            b"RIFF"
+            + struct.pack("<I", 36 + len(audio))
+            + b"WAVEfmt "
+            + struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, sample_rate * 2, 2, 16)
+            + b"data"
+            + struct.pack("<I", len(audio))
+            + audio
+        )
 
 
 if __name__ == "__main__":

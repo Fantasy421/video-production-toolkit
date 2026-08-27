@@ -1,6 +1,8 @@
+import base64
 import json
 import os
 import shutil
+import struct
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -22,14 +24,19 @@ class TaskTests(unittest.TestCase):
             "voice-source-v1",
             "voice-source-decision",
             1,
+            parents=["narration-v1"],
             narration_id="narration-v1",
             mode="tts",
             decision="approved",
+            decision_provenance="user:source-v1",
         )
         self.create_artifact(
             "voice-profile-v1",
             "voice-profile",
             1,
+            parents=["narration-v1", "voice-source-v1"],
+            narration_id="narration-v1",
+            source_decision_id="voice-source-v1",
             mode="tts",
             language="zh-CN",
             provider="chatcut",
@@ -38,17 +45,30 @@ class TaskTests(unittest.TestCase):
             emotion="calm",
             pronunciations=[],
             approved=True,
+            consent_provenance="user:consent-v1",
+            profile_provenance="user:profile-v1",
         )
         self.create_artifact(
             "voiceover-v1",
             "voiceover",
             1,
-            parents=["narration-v1", "voice-profile-v1"],
+            parents=["narration-v1", "voice-source-v1", "voice-profile-v1"],
             narration_id="narration-v1",
+            source_decision_id="voice-source-v1",
+            mode="tts",
             profile_id="voice-profile-v1",
             media_path="media/voiceover-v1.wav",
+            media_format="wav",
             duration_ms=12000,
             provenance="chatcut:voice",
+        )
+        sample_rate = 8_000
+        audio = b"\0\0" * (12 * sample_rate)
+        (self.root / "media").mkdir(exist_ok=True)
+        (self.root / "media/voiceover-v1.wav").write_bytes(
+            b"RIFF" + struct.pack("<I", 36 + len(audio)) + b"WAVEfmt "
+            + struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, sample_rate * 2, 2, 16)
+            + b"data" + struct.pack("<I", len(audio)) + audio
         )
         self.inputs = [
             self.create_artifact("scene-contract-S03-v4", "scene-contract", 4),
@@ -120,12 +140,66 @@ class TaskTests(unittest.TestCase):
 
     def image_context(self):
         return {
-            "allowed_image_artifact_ids": ["scene-S03-v1"],
+            "scope_identity": {
+                "kind": "scene-contract",
+                "id": "scene-contract-S03-v4",
+            },
+            "allowed_image_artifact_ids": [],
             "allowed_character_pack_ids": ["host-pack-v1"],
             "forbidden_scene_image_access": True,
             "max_review_previews": 1,
             "context_budget": 4096,
+            "continuity_exception": {
+                "artifact_id": "scene-S03-v1",
+                "user_requested": True,
+                "reason": "Inspect the exact scene image named by the user.",
+            },
         }
+
+    def test_every_result_rejects_payloads_histories_and_oversized_envelopes(self):
+        """Catches non-image task results bypassing the shared result scrub."""
+        leaks = (
+            ("checks", ["embedded=data:image/png;base64,AAEC"], "image payload"),
+            ("warnings", ["preview=https://example.invalid/scene.png"], "image payload"),
+            ("error", "prompt history: first, second", "prompt history"),
+            (
+                "warnings",
+                [
+                    base64.b64encode(
+                        b"RIFF" + b"\0" * 4 + b"WAVE" + b"\0" * 128
+                    ).decode("ascii")
+                ],
+                "image payload",
+            ),
+            ("checks", ["x" * 33_000], "result budget"),
+        )
+        for index, (field, value, message) in enumerate(leaks, 1):
+            task_id = f"non-image-result-leak-{index}"
+            envelope = {**self.envelope, "task_id": task_id}
+            create_task(self.root, envelope)
+            claim = claim_task(self.root, task_id, "worker-a")
+            result = {
+                **self.result_for(claim),
+                "task_id": task_id,
+                field: value,
+            }
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, message):
+                complete_task(self.root, result)
+
+    def test_general_result_scrub_preserves_harmless_digest_metadata(self):
+        """Catches the payload heuristic rejecting hashes or ordinary base64 prose."""
+        task_id = "non-image-result-harmless-metadata"
+        envelope = {**self.envelope, "task_id": task_id}
+        create_task(self.root, envelope)
+        claim = claim_task(self.root, task_id, "worker-a")
+        result = {
+            **self.result_for(claim),
+            "task_id": task_id,
+            "checks": ["sha512=" + "0123456789abcdef" * 8],
+            "warnings": ["The exporter may mention base64 without embedding payloads."],
+        }
+
+        self.assertEqual("completed", complete_task(self.root, result))
 
     def create_image_context_artifacts(self, *, historical=False, image_type="scene-image"):
         self.create_artifact(
@@ -490,10 +564,15 @@ class TaskTests(unittest.TestCase):
                 "image_context": {
                     **self.image_context(),
                     "allowed_image_artifact_ids": [],
+                    "continuity_exception": {
+                        "artifact_id": "scene-S02-v1",
+                        "user_requested": True,
+                        "reason": "Inspect only the other explicitly named scene.",
+                    },
                 },
             },
         }
-        with self.assertRaisesRegex(PermissionError, "undeclared image"):
+        with self.assertRaisesRegex(PermissionError, "undeclared image|continuity exception"):
             create_task(self.root, empty_allowlist)
 
     def test_scene_production_requires_an_explicit_visual_operation(self):
@@ -863,6 +942,10 @@ class TaskTests(unittest.TestCase):
             )
 
         generation_context = {
+            "scope_identity": {
+                "kind": "scene-contract",
+                "id": "scene-contract-S03-v4",
+            },
             "allowed_image_artifact_ids": [],
             "allowed_character_pack_ids": [],
             "forbidden_scene_image_access": True,
@@ -1097,6 +1180,7 @@ class TaskTests(unittest.TestCase):
             with self.subTest(status=status), TemporaryDirectory() as folder:
                 root = Path(folder)
                 shutil.copytree(self.root / "artifacts", root / "artifacts")
+                shutil.copytree(self.root / "media", root / "media")
                 create_task(root, self.envelope)
                 claim = claim_task(root, "preview-S03-v2", "worker-a")
                 checkpoint = self.result_for(

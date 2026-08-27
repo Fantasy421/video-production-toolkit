@@ -19,6 +19,12 @@
     "voice.synthesize": "external:chatcut-voice",
     "voice.time": "external:chatcut-voice"
   },
+  "accepted_voice_media_formats": ["wav", "mp3", "m4a", "aac", "flac"],
+  "duration_probe": {
+    "wav": "stdlib-wave-header",
+    "compressed": "ffprobe-required",
+    "failure_mode": "fail-closed"
+  },
   "fallback": null,
   "license_mode": "external-reference"
 }

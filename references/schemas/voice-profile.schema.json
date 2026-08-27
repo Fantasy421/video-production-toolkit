@@ -1,12 +1,39 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Video Production Toolkit Voice Profile Artifact",
+  "title": "Video Production Toolkit Approved TTS Voice Profile Artifact",
   "type": "object",
-  "required": ["artifact_id", "type", "version", "status", "parents", "path", "mode", "language", "provider", "voice_id", "speaking_rate", "emotion", "pronunciations", "approved"],
+  "required": [
+    "artifact_id", "type", "version", "status", "parents", "path",
+    "narration_id", "source_decision_id", "mode", "language", "provider",
+    "voice_id", "speaking_rate", "emotion", "pronunciations", "approved",
+    "consent_provenance", "profile_provenance"
+  ],
   "properties": {
-    "artifact_id": {"$ref": "#/$defs/safeId"}, "type": {"const": "voice-profile"}, "version": {"type": "integer", "minimum": 1}, "status": {"enum": ["draft", "approved", "stale", "superseded", "invalid"]}, "parents": {"$ref": "#/$defs/parents"}, "path": {"$ref": "#/$defs/projectPath"}, "output_contract": {"type": "string", "minLength": 1},
-    "mode": {"enum": ["uploaded-voice", "tts"]}, "language": {"type": "string", "minLength": 1}, "provider": {"type": "string", "minLength": 1}, "voice_id": {"$ref": "#/$defs/safeId"}, "speaking_rate": {"type": "number", "exclusiveMinimum": 0}, "emotion": {"type": "string", "minLength": 1}, "pronunciations": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}, "approved": {"const": true}
+    "artifact_id": {"$ref": "#/$defs/safeId"},
+    "type": {"const": "voice-profile"},
+    "version": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["draft", "approved", "stale", "superseded", "invalid"]},
+    "parents": {"$ref": "#/$defs/parents"},
+    "path": {"$ref": "#/$defs/projectPath"},
+    "output_contract": {"type": "string", "minLength": 1},
+    "narration_id": {"$ref": "#/$defs/safeId"},
+    "source_decision_id": {"$ref": "#/$defs/safeId"},
+    "mode": {"const": "tts"},
+    "language": {"$ref": "#/$defs/nonEmptyText"},
+    "provider": {"$ref": "#/$defs/nonEmptyText"},
+    "voice_id": {"$ref": "#/$defs/safeId"},
+    "speaking_rate": {"type": "number", "exclusiveMinimum": 0},
+    "emotion": {"$ref": "#/$defs/nonEmptyText"},
+    "pronunciations": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/nonEmptyText"}, "uniqueItems": true},
+    "approved": {"const": true},
+    "consent_provenance": {"$ref": "#/$defs/nonEmptyText"},
+    "profile_provenance": {"$ref": "#/$defs/nonEmptyText"}
   },
   "additionalProperties": false,
-  "$defs": {"safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"}, "parents": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true}, "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"}}
+  "$defs": {
+    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"},
+    "parents": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
+    "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"},
+    "nonEmptyText": {"type": "string", "minLength": 1, "maxLength": 500}
+  }
 }

@@ -165,6 +165,11 @@ class MigrationAuditTests(unittest.TestCase):
         self.assertIn("Undisposed executable scripts: 0", report)
         self.assertIn("Content hash mismatches: 0", report)
         self.assertIn("Source SHA-256", report)
+        self.assertIn("manifest-versioned host cache", report)
+        self.assertIn("external Skill discovery", report)
+        self.assertIn("ChatCut base Skill", report)
+        self.assertIn("voice.synthesize", report)
+        self.assertIn("voice.time", report)
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
     def test_report_refuses_a_symlinked_output_directory(self):

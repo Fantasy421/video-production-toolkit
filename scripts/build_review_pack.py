@@ -14,11 +14,11 @@ from uuid import uuid4
 try:
     from scripts.toolkit.runtime_paths import project_path, project_root
     from scripts.toolkit.validation import read_effective_artifacts, resolve_active_timeline, validate_project
-    from scripts.toolkit.voice import validate_authoritative_voice_bundle
+    from scripts.toolkit.voice import validate_project_authoritative_voice_bundle
 except ModuleNotFoundError:
     from toolkit.runtime_paths import project_path, project_root
     from toolkit.validation import read_effective_artifacts, resolve_active_timeline, validate_project
-    from toolkit.voice import validate_authoritative_voice_bundle
+    from toolkit.voice import validate_project_authoritative_voice_bundle
 
 
 PREVIEW_SUFFIXES = {".html", ".htm", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".webm", ".wav", ".mp3"}
@@ -75,7 +75,7 @@ def build_review_pack(root: Path, output: Path) -> Path:
 def _voice_review_data(root: Path, output: Path) -> Optional[dict[str, Any]]:
     """Summarize only the current effective voice metadata and link its audio file."""
     artifacts = read_effective_artifacts(root)
-    bundle = validate_authoritative_voice_bundle(artifacts.values())
+    bundle = validate_project_authoritative_voice_bundle(root, artifacts.values())
     if not bundle["ok"]:
         return None
     voiceover = artifacts.get(bundle["voiceover_id"])
@@ -92,9 +92,19 @@ def _voice_review_data(root: Path, output: Path) -> Optional[dict[str, Any]]:
     source = _latest_effective(
         artifacts.values(), "voice-source-decision", narration_id, "narration_id"
     )
-    profile = artifacts.get(voiceover.get("profile_id"))
-    if source is None or profile is None or profile.get("status") != "approved":
+    if source is None:
         return None
+    profile_data: Optional[dict[str, str]] = None
+    if source.get("mode") == "tts":
+        profile = artifacts.get(voiceover.get("profile_id"))
+        if profile is None or profile.get("status") != "approved":
+            return None
+        profile_data = {
+            "artifact_id": profile["artifact_id"],
+            "provider": profile["provider"],
+            "voice_id": profile["voice_id"],
+            "language": profile["language"],
+        }
     beats = sorted(
         artifact["artifact_id"]
         for artifact in artifacts.values()
@@ -107,12 +117,7 @@ def _voice_review_data(root: Path, output: Path) -> Optional[dict[str, Any]]:
         "audio_href": os.path.relpath(audio_path, output).replace(os.sep, "/"),
         "duration_ms": voiceover["duration_ms"],
         "source": {"artifact_id": source["artifact_id"], "mode": source["mode"]},
-        "profile": {
-            "artifact_id": profile["artifact_id"],
-            "provider": profile["provider"],
-            "voice_id": profile["voice_id"],
-            "language": profile["language"],
-        },
+        "profile": profile_data,
         "timing": {
             "artifact_id": timing["artifact_id"],
             "duration_ms": timing["duration_ms"],
@@ -216,11 +221,19 @@ def _render_html(previews: list[dict[str, str]], voice: Optional[dict[str, Any]]
     warning_items = "\n".join(f"<li>{html.escape(item['code'])}</li>" for item in validation["warnings"]) or "<li>None</li>"
     error_items = "\n".join(f"<li>{html.escape(item['code'])}</li>" for item in validation["errors"]) or "<li>None</li>"
     decision_items = "\n".join(f"<li><strong>{html.escape(item['gate'])}</strong>: {html.escape(item['request'])}</li>" for item in decision_requests)
-    voice_item = (
-        f'<li>{html.escape(voice["source"]["mode"])} · {html.escape(voice["profile"]["provider"])} / {html.escape(voice["profile"]["voice_id"])} · {voice["duration_ms"]} ms · <a href="{html.escape(voice["audio_href"], quote=True)}">voiceover</a></li>'
-        if voice is not None
-        else "<li>No current voiceover is available.</li>"
-    )
+    if voice is None:
+        voice_item = "<li>No current voiceover is available.</li>"
+    else:
+        profile = voice["profile"]
+        profile_label = (
+            f'{html.escape(profile["provider"])} / {html.escape(profile["voice_id"])}'
+            if isinstance(profile, dict)
+            else "user-uploaded audio"
+        )
+        voice_item = (
+            f'<li>{html.escape(voice["source"]["mode"])} · {profile_label} · '
+            f'{voice["duration_ms"]} ms · <a href="{html.escape(voice["audio_href"], quote=True)}">voiceover</a></li>'
+        )
     return f"""<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Video review pack</title></head>

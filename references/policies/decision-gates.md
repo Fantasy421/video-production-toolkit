@@ -54,8 +54,8 @@ phase/scope combinations:
 | `content_ready` | `visual.preview` |
 | `direction_ready` | `voice.prepare` |
 | `voice_ready` | `storyboard.plan` |
-| `storyboard_ready` | representative-slice `scene.produce`, `motion.preview`, `motion.produce`, or `timeline.assemble` |
-| `production_ready` | full-production `scene.produce`, `motion.produce`, or `timeline.assemble` |
+| `storyboard_ready` | representative-slice `scene.produce`, `motion.preview`, `motion.produce`, or `timeline.assemble`; representative-slice `captions.produce`; `representative-slice.produce` |
+| `production_ready` | full-production `scene.produce`, `motion.produce`, or `timeline.assemble`; full-production `captions.produce` |
 | `assembled` | `structure.validate` |
 | `review_ready` | `review.package` |
 | any valid phase | `project.manage` |

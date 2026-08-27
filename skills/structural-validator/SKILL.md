@@ -20,9 +20,9 @@ inspection. `image_operation: image-inspect` requires the closed `image_context`
 omitted or inferred from input paths or output contracts.
 
 All image inspection and image QA are isolated child operations. Each one handles exactly one Scene Contract or one character-asset batch with a closed
-`image_context`. Enforce `allowed_image_artifact_ids`,
-`allowed_character_pack_ids`, `forbidden_scene_image_access`,
-`max_review_previews`, and `context_budget`; the worker must not discover or load undeclared images. Historical scene/storyboard/B-roll/Motion Graphics or
+`image_context`. Its closed `scope_identity` names that one scope. Enforce at most 16
+`allowed_image_artifact_ids` and at most 8 `allowed_character_pack_ids`, plus `forbidden_scene_image_access`,
+`max_review_previews`, and a maximum 32,768-byte `context_budget`; the worker must not discover or load undeclared images. Historical scene/storyboard/B-roll/Motion Graphics or
 scene-preview imagery remains forbidden even when it contains the same
 character. Aesthetic acceptance remains a user decision.
 Immediately before every image read or image-tool invocation, resolve the

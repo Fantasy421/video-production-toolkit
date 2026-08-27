@@ -19,6 +19,7 @@ if __package__ in {None, ""}:
 
 from scripts.migration_audit import REPORT_PATH, audit_legacy
 from scripts.validate_package import validate_package
+from scripts.verify_installation import discover_host_installed_plugin
 
 
 EXPECTED_BASENAME = "knowledge-video-visual-director"
@@ -31,14 +32,18 @@ _DISTRIBUTABLE_REQUIRED = {
     "skills/video-director/SKILL.md",
     "skills/voiceover-producer/SKILL.md",
     "scripts/verify_installation.py",
+    "scripts/build_review_pack.py",
     "scripts/migration_audit.py",
     "scripts/validate_package.py",
     "scripts/plan_representative_slice.py",
+    "scripts/toolkit/adapters.py",
     "scripts/toolkit/artifacts.py",
+    "scripts/toolkit/contracts.py",
     "scripts/toolkit/invalidation.py",
     "scripts/toolkit/orchestrator.py",
     "scripts/toolkit/project_state.py",
     "scripts/toolkit/tasks.py",
+    "scripts/toolkit/validation.py",
     "scripts/toolkit/voice.py",
     "scripts/toolkit/voice_tasks.py",
     "scripts/toolkit/image_context.py",
@@ -46,6 +51,10 @@ _DISTRIBUTABLE_REQUIRED = {
     "references/policies/invalidation.json",
     "references/policies/knowledge-video-visual-director-baseline.json",
     "references/policies/project-assets.md",
+    "references/schemas/event.schema.json",
+    "references/schemas/image-task-context.schema.json",
+    "references/schemas/project.schema.json",
+    "references/schemas/scene-contract.schema.json",
     "references/schemas/voice-source-decision.schema.json",
     "references/schemas/voice-profile.schema.json",
     "references/schemas/voiceover.schema.json",
@@ -55,6 +64,7 @@ _DISTRIBUTABLE_REQUIRED = {
     "registries/adapters/chatcut.json",
     "skills/scene-producer/SKILL.md",
     "skills/structural-validator/SKILL.md",
+    "skills/timeline-assembler/SKILL.md",
     "tests/fixtures/knowledge-video-minimal/scene-contracts.json",
     "docs/migration/knowledge-video-visual-director.md",
 }
@@ -112,9 +122,13 @@ def retire_legacy_skill(
     installed = _installed_plugin_candidate(personal_home)
     package_issues = validate_package(repo)
     if package_issues:
-        raise RuntimeError(
-            "replacement repository package is invalid: " + ", ".join(package_issues)
+        missing = [issue for issue in package_issues if issue.startswith("missing:")]
+        label = (
+            "replacement repository is missing required runtime files"
+            if missing
+            else "replacement repository package is invalid"
         )
+        raise RuntimeError(f"{label}: " + ", ".join(package_issues))
     _require_matching_runtime_packages(repo, installed)
 
     try:
@@ -218,41 +232,12 @@ def _restore_report(report: Path, payload: bytes) -> None:
 
 
 def _installed_plugin_candidate(home: Path) -> Path:
-    marketplace = home / ".agents" / "plugins" / "marketplace.json"
-    if marketplace.is_symlink() or not marketplace.is_file():
-        raise RuntimeError("replacement plugin is not host-installed: marketplace is missing")
     try:
-        catalog = json.loads(marketplace.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise RuntimeError("replacement plugin is not host-installed: marketplace is invalid") from error
-    plugins = catalog.get("plugins") if isinstance(catalog, dict) else None
-    matches = (
-        [item for item in plugins if isinstance(item, dict) and item.get("name") == PLUGIN_ID]
-        if isinstance(plugins, list)
-        else []
-    )
-    marketplace_name = catalog.get("name") if isinstance(catalog, dict) else None
-    if len(matches) != 1 or not _safe_component(marketplace_name):
-        raise RuntimeError("replacement plugin is not host-installed: marketplace entry is invalid")
-    candidate = (
-        home
-        / ".codex"
-        / "plugins"
-        / "cache"
-        / marketplace_name
-        / PLUGIN_ID
-        / "local"
-    )
-    if candidate.is_symlink():
-        raise RuntimeError("replacement plugin is not host-installed: cache is unsafe")
-    try:
-        installed = candidate.resolve(strict=True)
-        installed.relative_to(home.resolve())
-    except (FileNotFoundError, OSError, ValueError) as error:
-        raise RuntimeError("replacement plugin is not host-installed: cache is missing") from error
-    if not installed.is_dir():
-        raise RuntimeError("replacement plugin is not host-installed: cache is invalid")
-    return installed
+        return discover_host_installed_plugin(home, PLUGIN_ID)
+    except ValueError as error:
+        raise RuntimeError(
+            f"replacement plugin is not host-installed: {error}"
+        ) from error
 
 
 def _require_matching_runtime_packages(repo: Path, installed: Path) -> None:
@@ -354,6 +339,7 @@ def _run_installed_verifier(
         "--require-skill",
         "video-director",
         "--require-resume-smoke",
+        "--check-external-skills",
     ]
     try:
         with tempfile.TemporaryDirectory() as folder:
@@ -384,6 +370,20 @@ def _run_installed_verifier(
     except (OSError, TypeError):
         root_matches = False
     smoke_checks = smoke.get("checks") if isinstance(smoke, dict) else None
+    external = result.get("external_adapters")
+    chatcut = external.get("chatcut") if isinstance(external, dict) else None
+    capabilities = chatcut.get("capabilities") if isinstance(chatcut, dict) else None
+    chatcut_base_available = (
+        isinstance(chatcut, dict)
+        and chatcut.get("available") is True
+        and chatcut.get("installed_skill") == "chatcut:chatcut-plugin-basics"
+    )
+    chatcut_voice_available = isinstance(capabilities, dict) and all(
+        isinstance(capabilities.get(capability), dict)
+        and capabilities[capability].get("installed_skill") == "chatcut:voice"
+        and capabilities[capability].get("available") is True
+        for capability in ("voice.synthesize", "voice.time")
+    )
     if (
         completed.returncode != 0
         or result.get("ok") is not True
@@ -395,21 +395,19 @@ def _run_installed_verifier(
         or smoke.get("ok") is not True
         or not isinstance(smoke_checks, dict)
         or smoke_checks.get("migration_audit") != "passed"
+        or not chatcut_base_available
+        or not chatcut_voice_available
     ):
+        if not chatcut_base_available or not chatcut_voice_available:
+            raise RuntimeError(
+                "installed verifier blocked retirement: ChatCut base skill and "
+                "ChatCut Voice capabilities voice.synthesize/voice.time are required"
+            )
         raise RuntimeError(
             "installed verifier blocked retirement: "
             + repr(result.get("errors") or smoke or result)
         )
     return result
-
-
-def _safe_component(value: Any) -> bool:
-    return (
-        isinstance(value, str)
-        and value not in {"", ".", ".."}
-        and "/" not in value
-        and "\\" not in value
-    )
 
 
 def _existing_repo(value: Path) -> Path:

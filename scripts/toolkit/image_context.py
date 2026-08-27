@@ -20,6 +20,7 @@ SAFE_ID_RE = re.compile(SAFE_ID_PATTERN)
 
 CONTEXT_REQUIRED_FIELDS = frozenset(
     {
+        "scope_identity",
         "allowed_image_artifact_ids",
         "allowed_character_pack_ids",
         "forbidden_scene_image_access",
@@ -28,6 +29,10 @@ CONTEXT_REQUIRED_FIELDS = frozenset(
     }
 )
 CONTEXT_OPTIONAL_FIELDS = frozenset({"continuity_exception"})
+MAX_ALLOWED_IMAGE_ARTIFACT_IDS = 16
+MAX_ALLOWED_CHARACTER_PACK_IDS = 8
+MAX_CONTEXT_BUDGET_BYTES = 32_768
+MAX_PERSISTED_RESULT_BYTES = 32_768
 
 INDEPENDENT_CHARACTER_ASSET_TYPES = frozenset(
     {
@@ -55,7 +60,9 @@ HISTORICAL_SCENE_IMAGE_TYPES = frozenset(
         "scene-preview",
     }
 )
-CURRENT_SCENE_IMAGE_TYPES = frozenset({"scene-image"})
+CURRENT_SCENE_IMAGE_TYPES = frozenset(
+    {"scene-image", "scene-preview", "scene-render"}
+)
 IMAGE_FILE_SUFFIXES = frozenset(
     {
         ".apng",
@@ -238,9 +245,19 @@ def authorize_image_access(
             )
         return
 
-    if artifact_id == continuity_id and artifact_type not in CURRENT_SCENE_IMAGE_TYPES:
+    if artifact_type in CURRENT_SCENE_IMAGE_TYPES:
+        if artifact_id in declared_ids:
+            raise PermissionError(
+                "current scene image requires an exact continuity exception"
+            )
+        if artifact_id != continuity_id:
+            raise PermissionError(
+                "current scene image requires an exact continuity exception"
+            )
+        return
+    if artifact_id == continuity_id:
         raise PermissionError("continuity exception must name one current scene image")
-    if artifact_id not in declared_ids and artifact_id != continuity_id:
+    if artifact_id not in declared_ids:
         raise PermissionError("undeclared image access is forbidden")
 
 
@@ -331,6 +348,24 @@ def validate_image_result_envelope(
         raise ValueError("image task result must be compact JSON metadata") from error
     if len(serialized) > normalized_context["context_budget"]:
         raise ValueError("image task result exceeds the declared context budget")
+
+
+def validate_result_envelope(result: Mapping[str, Any]) -> None:
+    """Reject payload leaks and oversized JSON in every persisted task result."""
+    if not isinstance(result, Mapping):
+        raise ValueError("task result must be an object")
+    _reject_leaking_content(result)
+    try:
+        serialized = json.dumps(
+            result,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise ValueError("task result must be bounded JSON metadata") from error
+    if len(serialized) > MAX_PERSISTED_RESULT_BYTES:
+        raise ValueError("task result exceeds the fixed result budget")
 
 
 def validate_image_task_constraints(
@@ -424,6 +459,21 @@ def validate_declared_image_inputs(
         if visible_image_ids or explicitly_image_capable:
             raise PermissionError("image-bearing task inputs require image_context")
         return True
+
+    scope = context["scope_identity"]
+    scope_id = scope["id"]
+    if scope_id not in declared_inputs:
+        raise PermissionError("image scope identity must be a declared task input")
+    scope_artifact = artifacts.get(scope_id)
+    expected_scope_types = {
+        "scene-contract": {"scene-contract"},
+        "character-asset-batch": {"character-asset-batch", "character-pack"},
+    }
+    if (
+        scope_artifact is None
+        or scope_artifact.get("type") not in expected_scope_types[scope["kind"]]
+    ):
+        raise PermissionError("image scope identity does not match its artifact")
 
     pack_ids = context["allowed_character_pack_ids"]
     for pack_id in pack_ids:
@@ -553,8 +603,25 @@ def validate_image_context(context: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("image context has unknown fields: " + ", ".join(sorted(unknown)))
 
     normalized = dict(context)
-    images = _id_list(normalized["allowed_image_artifact_ids"], "allowed_image_artifact_ids")
-    packs = _id_list(normalized["allowed_character_pack_ids"], "allowed_character_pack_ids")
+    scope = normalized["scope_identity"]
+    if (
+        not isinstance(scope, Mapping)
+        or set(scope) != {"kind", "id"}
+        or scope.get("kind") not in {"scene-contract", "character-asset-batch"}
+        or not _safe_id(scope.get("id"))
+    ):
+        raise ValueError("scope_identity must name one closed task scope")
+    normalized["scope_identity"] = dict(scope)
+    images = _id_list(
+        normalized["allowed_image_artifact_ids"],
+        "allowed_image_artifact_ids",
+        max_items=MAX_ALLOWED_IMAGE_ARTIFACT_IDS,
+    )
+    packs = _id_list(
+        normalized["allowed_character_pack_ids"],
+        "allowed_character_pack_ids",
+        max_items=MAX_ALLOWED_CHARACTER_PACK_IDS,
+    )
     if set(images) & set(packs):
         raise ValueError("image context allowlists contain duplicates")
     if not isinstance(normalized["forbidden_scene_image_access"], bool):
@@ -563,8 +630,14 @@ def validate_image_context(context: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(max_previews, bool) or not isinstance(max_previews, int) or not 0 <= max_previews <= 1:
         raise ValueError("max_review_previews must be an integer from 0 to 1")
     budget = normalized["context_budget"]
-    if isinstance(budget, bool) or not isinstance(budget, int) or budget < 1:
-        raise ValueError("context_budget must be a positive integer")
+    if (
+        isinstance(budget, bool)
+        or not isinstance(budget, int)
+        or not 1 <= budget <= MAX_CONTEXT_BUDGET_BYTES
+    ):
+        raise ValueError(
+            f"context_budget must be a positive integer no greater than {MAX_CONTEXT_BUDGET_BYTES}"
+        )
 
     continuity = normalized.get("continuity_exception")
     if continuity is not None:
@@ -576,7 +649,14 @@ def validate_image_context(context: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError("continuity_exception artifact_id must be safe")
         if continuity.get("user_requested") is not True:
             raise ValueError("continuity_exception user_requested must be true")
-        _require_short_text(continuity.get("reason"), "continuity_exception reason")
+        reason = continuity.get("reason")
+        _require_short_text(reason, "continuity_exception reason")
+        if reason != reason.strip():
+            raise ValueError("continuity_exception reason must be trimmed")
+        if continuity["artifact_id"] in images:
+            raise ValueError(
+                "continuity_exception artifact_id must not be in the ordinary image allowlist"
+            )
         normalized["continuity_exception"] = dict(continuity)
 
     normalized["allowed_image_artifact_ids"] = images
@@ -584,13 +664,17 @@ def validate_image_context(context: Mapping[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def _id_list(value: Any, label: str) -> list[str]:
+def _id_list(
+    value: Any, label: str, *, max_items: Optional[int] = None
+) -> list[str]:
     if not isinstance(value, list):
         raise ValueError(f"{label} must be a list")
     if not all(_safe_id(item) for item in value):
         raise ValueError(f"{label} must contain safe artifact IDs")
     if len(set(value)) != len(value):
         raise ValueError(f"{label} must not contain duplicates")
+    if max_items is not None and len(value) > max_items:
+        raise ValueError(f"{label} exceeds its {max_items}-item limit")
     return list(value)
 
 

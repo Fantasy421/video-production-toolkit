@@ -71,6 +71,44 @@ class InvalidationTests(unittest.TestCase):
             "voiceover-v1", invalidate_descendants(artifacts, "style-v1", self.rules)
         )
 
+    def test_uploaded_audio_replacement_invalidates_exact_voice_descendants(self):
+        """Catches uploaded narration replacement leaving derived timing current."""
+        for uploaded_type in ("audio", "audio-asset", "uploaded-audio"):
+            with self.subTest(uploaded_type=uploaded_type):
+                artifacts = [
+                    {"artifact_id": "upload-v1", "type": uploaded_type, "parents": []},
+                    {
+                        "artifact_id": "voiceover-v1",
+                        "type": "voiceover",
+                        "parents": ["upload-v1"],
+                    },
+                    {
+                        "artifact_id": "voice-timing-v1",
+                        "type": "voice-timing",
+                        "parents": ["voiceover-v1"],
+                    },
+                    {
+                        "artifact_id": "captions-v1",
+                        "type": "captions",
+                        "parents": ["voice-timing-v1"],
+                    },
+                    {
+                        "artifact_id": "timeline-v1",
+                        "type": "timeline",
+                        "parents": ["captions-v1"],
+                    },
+                ]
+
+                self.assertEqual(
+                    {
+                        "voiceover-v1",
+                        "voice-timing-v1",
+                        "captions-v1",
+                        "timeline-v1",
+                    },
+                    invalidate_descendants(artifacts, "upload-v1", self.rules),
+                )
+
     def test_disallowed_descendant_type_remains_fresh(self):
         """Catches DAG traversal ignoring the policy's explicit type boundary."""
         artifacts = [

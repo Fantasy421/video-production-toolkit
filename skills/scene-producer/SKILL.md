@@ -18,14 +18,17 @@ and the closed `image_context`. The discriminator may never be omitted or
 inferred from a generic output contract.
 
 All image generation is an isolated child operation. It handles exactly one Scene Contract or one character-asset batch and receives a closed
-`image_context` under task constraints. Enforce `allowed_image_artifact_ids`,
-`allowed_character_pack_ids`, `forbidden_scene_image_access`,
-`max_review_previews`, and `context_budget`; the worker must not discover or load undeclared images. Historical access is limited to declared approved
+`image_context` under task constraints. Its closed `scope_identity` names that
+one Scene Contract or character-asset batch. Enforce at most 16
+`allowed_image_artifact_ids`, at most 8 `allowed_character_pack_ids`,
+`forbidden_scene_image_access`, `max_review_previews`, and a maximum 32,768-byte
+`context_budget`; the worker must not discover or load undeclared images. Historical access is limited to declared approved
 independent character assets and identity metadata. Historical Scene,
 Storyboard, B-roll, Motion Graphics, and scene-preview imagery is forbidden,
-including imagery containing the same character. A current Scene image is
-available only by exact allowlist or one exact user-requested continuity
-exception.
+including imagery containing the same character. A current Scene image must not appear in the ordinary image allowlist.
+It is available only through one
+exact `continuity_exception` recording its Artifact ID, `user_requested: true`,
+and a trimmed non-empty reason.
 Immediately before every image read or image-tool invocation, resolve the
 declared Artifact metadata and call `authorize_image_access`; a denial is a
 contract error and cannot broaden the context.

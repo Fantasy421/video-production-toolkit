@@ -3,6 +3,7 @@
   "title": "Video Production Toolkit Image Task Context",
   "type": "object",
   "required": [
+    "scope_identity",
     "allowed_image_artifact_ids",
     "allowed_character_pack_ids",
     "forbidden_scene_image_access",
@@ -10,18 +11,45 @@
     "context_budget"
   ],
   "properties": {
-    "allowed_image_artifact_ids": {"$ref": "#/$defs/uniqueSafeIds"},
-    "allowed_character_pack_ids": {"$ref": "#/$defs/uniqueSafeIds"},
+    "scope_identity": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "id"],
+          "properties": {
+            "kind": {"const": "scene-contract"},
+            "id": {"$ref": "#/$defs/safeId"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "id"],
+          "properties": {
+            "kind": {"const": "character-asset-batch"},
+            "id": {"$ref": "#/$defs/safeId"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "allowed_image_artifact_ids": {"$ref": "#/$defs/uniqueSafeImageIds"},
+    "allowed_character_pack_ids": {"$ref": "#/$defs/uniqueSafePackIds"},
     "forbidden_scene_image_access": {"type": "boolean"},
     "max_review_previews": {"type": "integer", "minimum": 0, "maximum": 1, "default": 1},
-    "context_budget": {"type": "integer", "minimum": 1},
+    "context_budget": {"type": "integer", "minimum": 1, "maximum": 32768},
     "continuity_exception": {
       "type": "object",
       "required": ["artifact_id", "user_requested", "reason"],
       "properties": {
         "artifact_id": {"$ref": "#/$defs/safeId"},
         "user_requested": {"const": true},
-        "reason": {"type": "string", "minLength": 1, "maxLength": 500}
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "^\\S(?:.*\\S)?$"
+        }
       },
       "additionalProperties": false
     }
@@ -29,6 +57,17 @@
   "additionalProperties": false,
   "$defs": {
     "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"},
-    "uniqueSafeIds": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true}
+    "uniqueSafeImageIds": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/safeId"},
+      "uniqueItems": true,
+      "maxItems": 16
+    },
+    "uniqueSafePackIds": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/safeId"},
+      "uniqueItems": true,
+      "maxItems": 8
+    }
   }
 }

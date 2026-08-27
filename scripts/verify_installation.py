@@ -24,7 +24,10 @@ from scripts.toolkit.orchestrator import (
 from scripts.toolkit.project_state import append_event, initialize_project
 from scripts.toolkit.tasks import create_task
 from scripts.toolkit.validation import validate_project
-from scripts.toolkit.voice import validate_authoritative_voice_bundle
+from scripts.toolkit.voice import (
+    validate_authoritative_voice_bundle,
+    validate_project_authoritative_voice_bundle,
+)
 from scripts.validate_package import validate_package
 
 
@@ -431,66 +434,78 @@ def _check_four_gates() -> bool:
             {"production_scope": "full-production"},
         ),
     )
-    for index, (capability, gate, target_type, extra) in enumerate(cases, 1):
-        target_id = f"gate-{index}"
-        task = _candidate(
-            f"gate-task-{index}", capability, [target_id], gate, target_id, **extra
-        )
-        gate_voice = (
-            _voice_bundle()
-            if capability
-            in {
-                "storyboard.plan",
-                "scene.produce",
-                "motion.preview",
-                "motion.produce",
-                "timeline.assemble",
+    with TemporaryDirectory() as folder:
+        routing_root = Path(folder)
+        media = routing_root / "media" / "voiceover-v1.wav"
+        media.parent.mkdir(parents=True)
+        media.write_bytes(_voice_fixture_wav(duration_ms=15_000))
+        for index, (capability, gate, target_type, extra) in enumerate(cases, 1):
+            target_id = f"gate-{index}"
+            task = _candidate(
+                f"gate-task-{index}", capability, [target_id], gate, target_id, **extra
+            )
+            gate_voice = (
+                _voice_bundle()
+                if capability
+                in {
+                    "storyboard.plan",
+                    "scene.produce",
+                    "motion.preview",
+                    "motion.produce",
+                    "timeline.assemble",
+                    "captions.produce",
+                    "representative-slice.produce",
+                }
+                else []
+            )
+            artifacts = [_artifact(target_id, target_type), *gate_voice]
+            state = {"candidate_tasks": [task], "locked_task_ids": []}
+            if calculate_ready_tasks(state, artifacts, [], root=routing_root):
+                return False
+            approval = {"target_id": target_id, "scope": gate, "decision": "approved"}
+            if calculate_ready_tasks(
+                state,
+                [_artifact(target_id, "unrelated-review-artifact"), *gate_voice],
+                [approval],
+                root=routing_root,
+            ):
+                return False
+            if calculate_ready_tasks(
+                state, artifacts, [approval], root=routing_root
+            ) != [capability]:
+                return False
+            descendant_id = f"gate-input-{index}"
+            unrelated_task = _candidate(
+                f"unrelated-gate-task-{index}",
+                capability,
+                [descendant_id],
+                gate,
+                target_id,
+                **extra,
+            )
+            unrelated_state = {
+                "candidate_tasks": [unrelated_task],
+                "locked_task_ids": [],
             }
-            else []
-        )
-        artifacts = [_artifact(target_id, target_type), *gate_voice]
-        state = {"candidate_tasks": [task], "locked_task_ids": []}
-        if calculate_ready_tasks(state, artifacts, []):
-            return False
-        approval = {"target_id": target_id, "scope": gate, "decision": "approved"}
-        if calculate_ready_tasks(
-            state,
-            [_artifact(target_id, "unrelated-review-artifact"), *gate_voice],
-            [approval],
-        ):
-            return False
-        if calculate_ready_tasks(state, artifacts, [approval]) != [capability]:
-            return False
-        descendant_id = f"gate-input-{index}"
-        unrelated_task = _candidate(
-            f"unrelated-gate-task-{index}",
-            capability,
-            [descendant_id],
-            gate,
-            target_id,
-            **extra,
-        )
-        unrelated_state = {
-            "candidate_tasks": [unrelated_task],
-            "locked_task_ids": [],
-        }
-        if calculate_ready_tasks(
-            unrelated_state,
-            [artifacts[0], _artifact(descendant_id, "task-input"), *gate_voice],
-            [approval],
-        ):
-            return False
-        related_artifacts = [
-            artifacts[0],
-            _artifact(descendant_id, "task-input", parents=[target_id]),
-            *gate_voice,
-        ]
-        if calculate_ready_tasks(
-            unrelated_state,
-            related_artifacts,
-            [approval],
-        ) != [capability]:
-            return False
+            if calculate_ready_tasks(
+                unrelated_state,
+                [artifacts[0], _artifact(descendant_id, "task-input"), *gate_voice],
+                [approval],
+                root=routing_root,
+            ):
+                return False
+            related_artifacts = [
+                artifacts[0],
+                _artifact(descendant_id, "task-input", parents=[target_id]),
+                *gate_voice,
+            ]
+            if calculate_ready_tasks(
+                unrelated_state,
+                related_artifacts,
+                [approval],
+                root=routing_root,
+            ) != [capability]:
+                return False
     return True
 
 
@@ -560,13 +575,26 @@ def _run_resume_scenario(
             {"phase": "direction_ready", "candidate_tasks": [storyboard_task, scene_task]},
             [_artifact("style-v1", "style-pack"), *voice_artifacts],
             [direction_approval],
+            root=project,
         )
+        preflight_voice = validate_project_authoritative_voice_bundle(
+            project, voice_artifacts
+        )
+        if not preflight_voice["ok"]:
+            return {
+                "voice_timing_revision": {
+                    "voice_validation_issue_codes": sorted(
+                        {issue["code"] for issue in preflight_voice["issues"]}
+                    )
+                }
+            }
         append_event(project, {"event": "project.phase_changed", "phase": "voice_ready"})
         voice_ready_phase = "voice_ready"
         voice_ready_actions = calculate_ready_tasks(
             {"phase": voice_ready_phase, "candidate_tasks": [storyboard_task, scene_task]},
             [_artifact("style-v1", "style-pack"), *voice_artifacts],
             [direction_approval],
+            root=project,
         )
         for item in (
             _artifact("storyboard-v1", "storyboard", parents=["voice-timing-v1"]),
@@ -991,6 +1019,8 @@ def _candidate(
         "motion.preview",
         "motion.produce",
         "timeline.assemble",
+        "captions.produce",
+        "representative-slice.produce",
     }:
         voice_timing_id = constraints.setdefault(
             "voice_timing_id", "voice-timing-v1"
@@ -1028,13 +1058,18 @@ def _voice_bundle(
         _artifact(
             "voice-source-v1",
             "voice-source-decision",
+            parents=["narration-v1"],
             narration_id="narration-v1",
             mode="tts",
             decision="approved",
+            decision_provenance="smoke:user-source-v1",
         ),
         _artifact(
             "voice-profile-v1",
             "voice-profile",
+            parents=["narration-v1", "voice-source-v1"],
+            narration_id="narration-v1",
+            source_decision_id="voice-source-v1",
             mode="tts",
             language="zh-CN",
             provider="chatcut",
@@ -1043,14 +1078,19 @@ def _voice_bundle(
             emotion="calm",
             pronunciations=[],
             approved=True,
+            consent_provenance="smoke:user-consent-v1",
+            profile_provenance="smoke:user-profile-v1",
         ),
         _artifact(
             "voiceover-v1",
             "voiceover",
-            parents=["narration-v1", "voice-profile-v1"],
+            parents=["narration-v1", "voice-source-v1", "voice-profile-v1"],
             narration_id="narration-v1",
+            source_decision_id="voice-source-v1",
+            mode="tts",
             profile_id="voice-profile-v1",
             media_path="media/voiceover-v1.wav",
+            media_format="wav",
             duration_ms=voiceover_duration_ms,
             provenance="smoke-fixture",
         ),

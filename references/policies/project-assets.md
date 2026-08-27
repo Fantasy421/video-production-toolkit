@@ -75,9 +75,10 @@ owns deliberate cross-project reuse; the user owns subjective acceptance.
 
 Image generation, editing, and inspection run only in an isolated child task
 handling exactly one Scene Contract or one character-asset batch. The closed
-task context declares exact image Artifact IDs, exact Character Pack IDs, a
+task context declares a closed `scope_identity` for that one scope, at most 16
+exact image Artifact IDs, at most 8 exact Character Pack IDs, a
 hard historical-scene ban, a zero-or-one review-preview limit, and a positive
-serialized-result byte budget. That budget covers the entire persisted
+serialized-result byte budget no greater than 32,768 bytes. That budget covers the entire persisted
 task-result envelope, including checks, warnings, errors, decision requests,
 and the compact image handoff. Every field is recursively scrubbed for image
 URLs, data URLs, base64 or binary payloads, and prompt history. Workers must not
@@ -91,10 +92,12 @@ Motion Graphics screenshots or previews, and Scene previews are always
 forbidden. Character identity within one of those scene classes never converts
 it into a reusable character asset.
 
-Current-project image access also requires an exact allowlist entry. The only
-exception is one current Scene Artifact explicitly named by the user for
-continuity; its exact Artifact ID, `user_requested: true`, and non-empty reason
-must be persisted in the image context. It authorizes no other image.
+Current-project non-scene image access requires an exact allowlist entry. A
+current Scene Artifact must not appear in that ordinary allowlist. Its only
+access path is one exact `continuity_exception` explicitly requested by the
+user for continuity; the context persists its exact Artifact ID,
+`user_requested: true`, and a trimmed non-empty reason. It authorizes no other
+image.
 
 The child returns a compact image handoff only: Artifact IDs, project-contained
 paths, structural metadata, a short summary, stable issue codes, user-decision

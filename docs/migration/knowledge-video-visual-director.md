@@ -65,14 +65,16 @@ baseline, so a same-path content change blocks this auditable retirement gate.
 
 This audit only establishes disposition coverage. It does not authorize removal
 or modification of the installed legacy skill. Retirement remains blocked until
-the replacement plugin is host-installed and enabled, its complete distributable file
+the replacement plugin is host-installed and enabled from its manifest-versioned host cache,
+its complete distributable file
 inventory and content hashes match the reviewed repository, and required project and
 review-pack templates are present. Only generated test/cache and Git scratch are excluded
-from that identity check. Its own verifier then runs in an isolated Python subprocess and
+from that identity check. Its own verifier then runs in an isolated Python subprocess with
+external Skill discovery enabled and
 must pass the live migration audit, recovery,
 four-gate type and lineage counterexamples, a persisted voice-source decision,
 current real voice-timing, voice-timing descendant invalidation, and
 representative-slice timing-provenance smoke tests before the user gives
-execution-time approval for the exact legacy directory. The verifier also reports
-capability-scoped external adapters, including ChatCut Voice when it is available;
-availability alone does not authorize an undeclared provider fallback.
+execution-time approval for the exact legacy directory. Retirement additionally requires
+the ChatCut base Skill plus available `voice.synthesize` and `voice.time` capabilities
+owned by ChatCut Voice. Availability alone does not authorize an undeclared provider fallback.

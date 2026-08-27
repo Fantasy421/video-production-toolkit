@@ -11,8 +11,13 @@ asset, contract, timing, or placement issues instead of redesigning them.
 
 Owned capability: `timeline.assemble`
 
+Delegated secondary capability: `captions.produce`
+
+Delegated secondary capability: `representative-slice.produce`
+
 Allowed inputs: accept only one claimed task-envelope with capability
-`timeline.assemble` and its declared approved artifact IDs and timings.
+`timeline.assemble`, `captions.produce`, or `representative-slice.produce` and
+its declared approved artifact IDs and current real voice timing.
 
 Required output: Return a task-result envelope with editable timeline artifact
 IDs, objective placement checks, warnings, and an explicit blocker or decision

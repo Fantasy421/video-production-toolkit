@@ -1,12 +1,45 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Video Production Toolkit Voiceover Artifact",
+  "title": "Video Production Toolkit Verified Voiceover Artifact",
   "type": "object",
-  "required": ["artifact_id", "type", "version", "status", "parents", "path", "narration_id", "profile_id", "media_path", "duration_ms", "provenance"],
+  "required": [
+    "artifact_id", "type", "version", "status", "parents", "path",
+    "narration_id", "source_decision_id", "mode", "media_path",
+    "media_format", "duration_ms", "provenance"
+  ],
   "properties": {
-    "artifact_id": {"$ref": "#/$defs/safeId"}, "type": {"const": "voiceover"}, "version": {"type": "integer", "minimum": 1}, "status": {"enum": ["draft", "approved", "stale", "superseded", "invalid"]}, "parents": {"$ref": "#/$defs/parents"}, "path": {"$ref": "#/$defs/projectPath"}, "output_contract": {"type": "string", "minLength": 1},
-    "narration_id": {"$ref": "#/$defs/safeId"}, "profile_id": {"$ref": "#/$defs/safeId"}, "media_path": {"$ref": "#/$defs/projectPath"}, "duration_ms": {"type": "integer", "minimum": 1}, "provenance": {"type": "string", "minLength": 1}
+    "artifact_id": {"$ref": "#/$defs/safeId"},
+    "type": {"const": "voiceover"},
+    "version": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["draft", "approved", "stale", "superseded", "invalid"]},
+    "parents": {"$ref": "#/$defs/parents"},
+    "path": {"$ref": "#/$defs/projectPath"},
+    "output_contract": {"type": "string", "minLength": 1},
+    "narration_id": {"$ref": "#/$defs/safeId"},
+    "source_decision_id": {"$ref": "#/$defs/safeId"},
+    "mode": {"enum": ["uploaded-voice", "tts"]},
+    "profile_id": {"$ref": "#/$defs/safeId"},
+    "uploaded_audio_id": {"$ref": "#/$defs/safeId"},
+    "media_path": {"$ref": "#/$defs/projectPath"},
+    "media_format": {"enum": ["wav", "mp3", "m4a", "aac", "flac"]},
+    "duration_ms": {"type": "integer", "minimum": 1},
+    "provenance": {"$ref": "#/$defs/nonEmptyText"}
   },
+  "allOf": [
+    {
+      "if": {"properties": {"mode": {"const": "tts"}}, "required": ["mode"]},
+      "then": {"required": ["profile_id"], "not": {"required": ["uploaded_audio_id"]}}
+    },
+    {
+      "if": {"properties": {"mode": {"const": "uploaded-voice"}}, "required": ["mode"]},
+      "then": {"required": ["uploaded_audio_id"], "not": {"required": ["profile_id"]}}
+    }
+  ],
   "additionalProperties": false,
-  "$defs": {"safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"}, "parents": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true}, "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"}}
+  "$defs": {
+    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"},
+    "parents": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
+    "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"},
+    "nonEmptyText": {"type": "string", "minLength": 1, "maxLength": 500}
+  }
 }
