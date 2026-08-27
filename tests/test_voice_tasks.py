@@ -28,6 +28,9 @@ class PrepareVoiceTaskTests(unittest.TestCase):
             "constraints": {
                 "worker_id": "voiceover-producer",
                 "claim_token": "claim-v2",
+                "voice_source_id": "source-v2",
+                "voice_profile_id": "profile-v2",
+                "output_artifact_ids": ["voiceover-v2", "voice-timing-v2", "beats-v2"],
             },
         }
 
@@ -188,12 +191,128 @@ class PrepareVoiceTaskTests(unittest.TestCase):
                 ),
             ]
         )
+        self.write_audio("media/voiceover-v2.wav")
 
         result = prepare_voice_task(self.root, self.envelope(), artifacts, ["chatcut:voice"])
 
         self.assertEqual("succeeded", result["status"])
         self.assertEqual(["voiceover-v2", "voice-timing-v2", "beats-v2"], result["artifacts"])
         tasks._validate_result(result)
+
+    def test_published_bundle_requires_a_readable_project_contained_voiceover_file(self):
+        """Catches metadata-only, redirected, or missing media being reported as produced audio."""
+        for media_path, make_fixture in (
+            ("media/voiceover-v2.wav", False),
+            ("../voiceover-v2.wav", True),
+        ):
+            with self.subTest(media_path=media_path):
+                artifacts = self.published_bundle(media_path=media_path)
+                if make_fixture:
+                    self.write_audio("media/voiceover-v2.wav")
+
+                result = prepare_voice_task(
+                    self.root, self.envelope(), artifacts, ["chatcut:voice"]
+                )
+
+                self.assertEqual("waiting_external", result["status"])
+                self.assertEqual(["voiceover-media-unavailable"], result["warnings"])
+
+    def test_tts_does_not_succeed_before_declared_chatcut_voice_is_available(self):
+        """Catches published-looking audio bypassing the declared provider availability gate."""
+        artifacts = self.published_bundle()
+        self.write_audio("media/voiceover-v2.wav")
+
+        result = prepare_voice_task(self.root, self.envelope(), artifacts, [])
+
+        self.assertEqual("waiting_external", result["status"])
+        self.assertEqual(["chatcut-voice-unavailable"], result["warnings"])
+
+    def test_symlinked_voiceover_media_cannot_satisfy_success(self):
+        """Catches an artifact path following a project-local link to non-immutable audio."""
+        artifacts = self.published_bundle()
+        outside = self.root / "outside.wav"
+        outside.write_bytes(b"RIFF")
+        media = self.root / "media" / "voiceover-v2.wav"
+        media.parent.mkdir(exist_ok=True)
+        media.symlink_to(outside)
+
+        result = prepare_voice_task(
+            self.root, self.envelope(), artifacts, ["chatcut:voice"]
+        )
+
+        self.assertEqual("waiting_external", result["status"])
+        self.assertEqual(["voiceover-media-unavailable"], result["warnings"])
+
+    def test_mismatched_declared_timing_duration_cannot_satisfy_success(self):
+        """Catches a real file overriding inconsistent immutable duration metadata."""
+        artifacts = self.published_bundle()
+        artifacts[-2]["duration_ms"] = 999
+        self.write_audio("media/voiceover-v2.wav")
+
+        result = prepare_voice_task(
+            self.root, self.envelope(), artifacts, ["chatcut:voice"]
+        )
+
+        self.assertEqual("waiting_external", result["status"])
+        self.assertEqual(["voice-artifacts-pending"], result["warnings"])
+
+    def test_undeclared_higher_version_bundle_cannot_satisfy_this_task(self):
+        """Catches scanning arbitrary project artifacts and silently substituting profile/provider lineage."""
+        artifacts = self.artifacts()
+        artifacts.extend(
+            [
+                self.artifact(
+                    "profile-v3",
+                    "voice-profile",
+                    version=3,
+                    mode="tts",
+                    language="zh-CN",
+                    provider="unapproved-provider",
+                    voice_id="other-voice",
+                    speaking_rate=1.0,
+                    emotion="calm",
+                    pronunciations=[],
+                    approved=True,
+                ),
+                self.artifact(
+                    "voiceover-v3",
+                    "voiceover",
+                    version=3,
+                    parents=["narration-v2", "profile-v3"],
+                    narration_id="narration-v2",
+                    profile_id="profile-v3",
+                    media_path="media/voiceover-v3.wav",
+                    duration_ms=1000,
+                    provenance="unapproved:voice",
+                    output_contract="voiceover-v1",
+                ),
+                self.artifact(
+                    "voice-timing-v3",
+                    "voice-timing",
+                    version=3,
+                    parents=["voiceover-v3"],
+                    voiceover_id="voiceover-v3",
+                    timing_kind="real",
+                    duration_ms=1000,
+                    segments=[{"start_ms": 0, "end_ms": 1000, "text": "旁白"}],
+                    output_contract="voiceover-v1",
+                ),
+                self.artifact(
+                    "beats-v3",
+                    "semantic-beats",
+                    version=3,
+                    parents=["voice-timing-v3"],
+                    voice_timing_id="voice-timing-v3",
+                    output_contract="voiceover-v1",
+                ),
+            ]
+        )
+        self.write_audio("media/voiceover-v3.wav")
+
+        result = prepare_voice_task(self.root, self.envelope(), artifacts, ["chatcut:voice"])
+
+        self.assertEqual("waiting_external", result["status"])
+        self.assertEqual(["voice-artifacts-pending"], result["warnings"])
 
     def test_result_uses_only_the_persisted_task_result_schema_keys(self):
         """Catches provider bookkeeping leaking into the closed result envelope."""
@@ -214,6 +333,47 @@ class PrepareVoiceTaskTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "safe"):
             prepare_voice_task(self.root, envelope, self.artifacts(), ["chatcut:voice"])
+
+    def published_bundle(self, *, media_path="media/voiceover-v2.wav"):
+        artifacts = self.artifacts()
+        artifacts.extend(
+            [
+                self.artifact(
+                    "voiceover-v2",
+                    "voiceover",
+                    parents=["narration-v2", "profile-v2"],
+                    narration_id="narration-v2",
+                    profile_id="profile-v2",
+                    media_path=media_path,
+                    duration_ms=1000,
+                    provenance="chatcut:voice",
+                    output_contract="voiceover-v1",
+                ),
+                self.artifact(
+                    "voice-timing-v2",
+                    "voice-timing",
+                    parents=["voiceover-v2"],
+                    voiceover_id="voiceover-v2",
+                    timing_kind="real",
+                    duration_ms=1000,
+                    segments=[{"start_ms": 0, "end_ms": 1000, "text": "旁白"}],
+                    output_contract="voiceover-v1",
+                ),
+                self.artifact(
+                    "beats-v2",
+                    "semantic-beats",
+                    parents=["voice-timing-v2"],
+                    voice_timing_id="voice-timing-v2",
+                    output_contract="voiceover-v1",
+                ),
+            ]
+        )
+        return artifacts
+
+    def write_audio(self, relative_path):
+        path = self.root / relative_path
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(b"RIFF")
 
 
 if __name__ == "__main__":
