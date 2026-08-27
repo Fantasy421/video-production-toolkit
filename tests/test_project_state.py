@@ -99,12 +99,46 @@ class ProjectStateTests(unittest.TestCase):
     def test_direction_cannot_skip_voice_ready(self):
         """Catches a new phase event using the pre-voice transition order."""
         self.advance_to("direction_ready")
+        self.assertEqual(2, replay_events(self.root)["schema_version"])
 
         with self.assertRaisesRegex(ValueError, "illegal project phase transition"):
             append_event(
                 self.root,
                 {"event": "project.phase_changed", "phase": "storyboard_ready"},
             )
+
+    def test_v2_replay_rejects_a_tampered_direct_storyboard_transition(self):
+        """Catches v2 replay incorrectly applying the v1 phase compatibility rule."""
+        event_log = self.root / "events" / "events.jsonl"
+        event_log.parent.mkdir(parents=True)
+        event_log.write_text(
+            "\n".join(
+                (
+                    json.dumps(
+                        {
+                            "event": "project.initialized",
+                            "schema_version": 2,
+                            "project_id": "kv-current",
+                            "workflow": "knowledge-video",
+                        }
+                    ),
+                    json.dumps(
+                        {"event": "project.phase_changed", "phase": "content_ready"}
+                    ),
+                    json.dumps(
+                        {"event": "project.phase_changed", "phase": "direction_ready"}
+                    ),
+                    json.dumps(
+                        {"event": "project.phase_changed", "phase": "storyboard_ready"}
+                    ),
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "illegal project phase transition"):
+            replay_events(self.root)
 
     def test_legacy_production_snapshot_without_voice_projects_to_direction_ready(self):
         """Catches recovery treating a legacy late-phase snapshot as voice-ready."""
@@ -180,7 +214,7 @@ class ProjectStateTests(unittest.TestCase):
 
             self.assertEqual(
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "project_id": "kv-001",
                     "workflow": "knowledge-video",
                     "phase": "initialized",
@@ -192,7 +226,7 @@ class ProjectStateTests(unittest.TestCase):
             self.assertEqual(
                 {
                     "event": "project.initialized",
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "project_id": "kv-001",
                     "workflow": "knowledge-video",
                 },

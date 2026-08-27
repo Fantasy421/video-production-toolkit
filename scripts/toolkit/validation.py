@@ -9,7 +9,7 @@ from typing import Any, Iterable, Optional, Union
 import zlib
 
 from .contracts import validate_scene_contract
-from .project_state import PHASES
+from .project_state import PHASES, PROJECT_SCHEMA_VERSIONS
 from .invalidation import invalidated_artifact_ids
 from .packs import validate_layout_pack, validate_style_pack
 from .runtime_paths import project_path, project_root
@@ -109,7 +109,11 @@ def _read_project(root: Path, errors: list[dict[str, Any]]) -> dict[str, Any]:
         return {}
     required = {"schema_version", "project_id", "workflow", "phase"}
     allowed = required | {"active_timeline_id"}
-    if not required.issubset(project) or not set(project).issubset(allowed) or project.get("schema_version") != 1:
+    if (
+        not required.issubset(project)
+        or not set(project).issubset(allowed)
+        or project.get("schema_version") not in PROJECT_SCHEMA_VERSIONS
+    ):
         errors.append(_issue("invalid-project-state", path="project.json"))
         return {}
     if not all(isinstance(project.get(key), str) and project[key] for key in ("project_id", "workflow", "phase")):

@@ -1,14 +1,27 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Video Production Toolkit Event",
-  "description": "Version-one pre-voice phase logs remain readable through a non-mutating recovery compatibility projection. Newly appended phase events use the voice_ready order.",
+  "description": "Version-one pre-voice logs remain readable through a non-mutating recovery compatibility projection. Newly initialized version-two projects use the voice_ready order; phase-event legality is evaluated against the initialization event during replay.",
   "oneOf": [
     {
       "type": "object",
+      "description": "Legacy version-one initialization retained for immutable event-log replay.",
       "required": ["event", "schema_version", "project_id", "workflow"],
       "properties": {
         "event": {"const": "project.initialized"},
         "schema_version": {"const": 1},
+        "project_id": {"type": "string", "minLength": 1},
+        "workflow": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Current version-two initialization for newly created projects.",
+      "type": "object",
+      "required": ["event", "schema_version", "project_id", "workflow"],
+      "properties": {
+        "event": {"const": "project.initialized"},
+        "schema_version": {"const": 2},
         "project_id": {"type": "string", "minLength": 1},
         "workflow": {"type": "string", "minLength": 1}
       },

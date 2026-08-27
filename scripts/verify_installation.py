@@ -403,6 +403,7 @@ def _run_resume_scenario() -> dict[str, Any]:
         for phase in (
             "content_ready",
             "direction_ready",
+            "voice_ready",
             "storyboard_ready",
         ):
             append_event(

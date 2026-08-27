@@ -24,6 +24,12 @@ PHASES = (
     "handoff_ready",
 )
 
+LEGACY_PROJECT_SCHEMA_VERSION = 1
+CURRENT_PROJECT_SCHEMA_VERSION = 2
+PROJECT_SCHEMA_VERSIONS = frozenset(
+    {LEGACY_PROJECT_SCHEMA_VERSION, CURRENT_PROJECT_SCHEMA_VERSION}
+)
+
 # Version-one event logs predate ``voice_ready``.  They remain replayable only
 # through the replay compatibility path below; append_event always uses PHASES.
 _LEGACY_PHASES = (
@@ -36,7 +42,7 @@ _LEGACY_PHASES = (
     "review_ready",
     "handoff_ready",
 )
-_LEGACY_COMPATIBLE_SCHEMA_VERSIONS = frozenset({1})
+_LEGACY_COMPATIBLE_SCHEMA_VERSIONS = frozenset({LEGACY_PROJECT_SCHEMA_VERSION})
 _VOICE_REQUIRED_RECOVERY_PHASES = frozenset(
     {
         "storyboard_ready",
@@ -86,7 +92,7 @@ def initialize_project(target: Path, project_id: str, workflow: str) -> dict[str
             storage_directory(root, directory, create=True)
         event = {
             "event": "project.initialized",
-            "schema_version": 1,
+            "schema_version": CURRENT_PROJECT_SCHEMA_VERSION,
             "project_id": project_id,
             "workflow": workflow,
         }
@@ -204,7 +210,7 @@ def _validate_event(event: Any, state: dict[str, Any]) -> None:
     if event_name == "project.initialized":
         if state:
             raise ValueError("project.initialized must be the first event")
-        if event["schema_version"] != 1:
+        if event["schema_version"] not in PROJECT_SCHEMA_VERSIONS:
             raise ValueError("unsupported project schema version")
         for field in ("project_id", "workflow"):
             if not _nonempty_text(event[field]):
