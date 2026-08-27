@@ -81,6 +81,7 @@ MEDIA_SUFFIX_RULES = {
     ".apng": ("image", frozenset({"image/apng"})),
     ".avif": ("image", frozenset({"image/avif"})),
     ".bmp": ("image", frozenset({"image/bmp"})),
+    ".csv": ("data", frozenset({"text/csv"})),
     ".flac": ("audio", frozenset({"audio/flac"})),
     ".gif": ("image", frozenset({"image/gif"})),
     ".heic": ("image", frozenset({"image/heic"})),
@@ -91,16 +92,21 @@ MEDIA_SUFFIX_RULES = {
     ),
     ".jpeg": ("image", frozenset({"image/jpeg"})),
     ".jpg": ("image", frozenset({"image/jpeg"})),
+    ".json": ("data", frozenset({"application/json"})),
     ".jxl": ("image", frozenset({"image/jxl"})),
     ".m4a": ("audio", frozenset({"audio/mp4", "audio/x-m4a"})),
     ".mkv": ("video", frozenset({"video/x-matroska"})),
+    ".md": ("document", frozenset({"text/markdown"})),
     ".mov": ("video", frozenset({"video/quicktime"})),
     ".mp3": ("audio", frozenset({"audio/mpeg"})),
     ".mp4": ("video", frozenset({"video/mp4"})),
+    ".pdf": ("document", frozenset({"application/pdf"})),
     ".png": ("image", frozenset({"image/png"})),
     ".svg": ("image", frozenset({"image/svg+xml"})),
     ".tif": ("image", frozenset({"image/tiff"})),
     ".tiff": ("image", frozenset({"image/tiff"})),
+    ".tsv": ("data", frozenset({"text/tab-separated-values"})),
+    ".txt": ("document", frozenset({"text/plain"})),
     ".wav": (
         "audio",
         frozenset({"audio/wav", "audio/wave", "audio/x-wav"}),
@@ -117,6 +123,11 @@ KNOWN_MIME_SUFFIXES = {
     for _, mime_types in MEDIA_SUFFIX_RULES.values()
     for mime_type in mime_types
 }
+KNOWN_MIME_KINDS = {
+    mime_type: media_kind
+    for media_kind, mime_types in MEDIA_SUFFIX_RULES.values()
+    for mime_type in mime_types
+}
 MIME_TYPE_RE = re.compile(
     r"[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*"
 )
@@ -124,7 +135,7 @@ URI_SCHEME_RE = re.compile(r"[a-z][a-z0-9+.-]*://", re.IGNORECASE)
 DATA_IMAGE_URL_RE = re.compile(r"data\s*:\s*image\s*/", re.IGNORECASE)
 BASE64_TOKEN_RE = re.compile(
     r"(?<![A-Za-z0-9+/=])"
-    r"([A-Za-z0-9+/]{4,}(?:[ \t\r\n]+[A-Za-z0-9+/]{4,})*={0,2})"
+    r"([A-Za-z0-9+/]+(?:[ \t\r\n]+[A-Za-z0-9+/]+)*={0,2})"
     r"(?![A-Za-z0-9+/=])"
 )
 PROMOTED_CHARACTER_ASSET_KINDS = frozenset(
@@ -496,10 +507,11 @@ def validate_media_artifact_metadata(artifact: Mapping[str, Any]) -> None:
         if not isinstance(mime_type, str) or MIME_TYPE_RE.fullmatch(mime_type) is None:
             raise ValueError("media input requires canonical mime_type")
         mime_top_level = mime_type.split("/", 1)[0]
-        mime_kind = (
+        mime_kind = KNOWN_MIME_KINDS.get(
+            mime_type,
             mime_top_level
             if mime_top_level in {"audio", "image", "video"}
-            else "document"
+            else "document",
         )
     if media_kind is None:
         if mime_kind is None:

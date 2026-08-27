@@ -241,6 +241,23 @@ class ImageContextTests(unittest.TestCase):
 
         self.assertEqual(raw, compact_image_result(self.context(), raw))
 
+    def test_compact_result_rejects_media_base64_at_any_wrap_width(self):
+        """Catches base64 detection depending on whitespace-delimited chunk width."""
+        png_payload = (
+            "iVBORw0KGgoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        )
+        self.assertEqual(128, len(png_payload))
+        for width in (1, 2, 3, 5):
+            wrapped = " \n".join(
+                png_payload[index : index + width]
+                for index in range(0, len(png_payload), width)
+            )
+            with self.subTest(width=width), self.assertRaisesRegex(
+                ValueError, "image payload"
+            ):
+                compact_image_result(self.context(), {"metadata": {"digest": wrapped}})
+
     def test_compact_result_requires_media_evidence_before_rejecting_base64_text(self):
         """Catches hashes or harmless base64 prose being treated as media payloads."""
         cases = (

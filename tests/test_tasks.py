@@ -655,6 +655,38 @@ class TaskTests(unittest.TestCase):
             create_task(self.root, valid),
         )
 
+    def test_declared_data_and_document_media_kinds_have_closed_mappings(self):
+        """Catches fail-closed media validation making declared non-AV kinds unusable."""
+        valid = (
+            ("pdf-document", "media/brief.pdf", "document", "application/pdf"),
+            ("text-document", "media/notes.txt", "document", "text/plain"),
+            ("markdown-document", "media/outline.md", "document", "text/markdown"),
+            ("json-data", "media/manifest.json", "data", "application/json"),
+            ("csv-data", "media/cues.csv", "data", "text/csv"),
+            ("tsv-data", "media/cues.tsv", "data", "text/tab-separated-values"),
+        )
+        for artifact_id, path, media_kind, mime_type in valid:
+            self.create_artifact(
+                artifact_id,
+                "media",
+                1,
+                path=path,
+                media_kind=media_kind,
+                mime_type=mime_type,
+            )
+            with self.subTest(artifact_id=artifact_id):
+                self.assertEqual(
+                    self.root / "tasks" / f"task-{artifact_id}.json",
+                    create_task(
+                        self.root,
+                        {
+                            **self.envelope,
+                            "task_id": f"task-{artifact_id}",
+                            "inputs": [*self.envelope["inputs"], artifact_id],
+                        },
+                    ),
+                )
+
     def test_image_result_requires_one_validated_compact_handoff(self):
         """Catches image payloads or absent handoffs crossing the task boundary."""
         self.create_image_context_artifacts()
