@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Video Production Toolkit Layout Pack",
+  "type": "object",
+  "required": [
+    "id", "version", "job", "preview", "renderer", "implementation_ref", "license",
+    "canvas", "regions", "density", "media_compatibility"
+  ],
+  "properties": {
+    "id": {"$ref": "#/$defs/text"},
+    "version": {"$ref": "#/$defs/text"},
+    "job": {"$ref": "#/$defs/text"},
+    "preview": {"$ref": "#/$defs/text"},
+    "renderer": {"$ref": "#/$defs/text"},
+    "implementation_ref": {"$ref": "#/$defs/text"},
+    "license": {"$ref": "#/$defs/text"},
+    "mechanism": {"$ref": "#/$defs/text"},
+    "participants": {"$ref": "#/$defs/stringArray"},
+    "canvas": {"$ref": "#/$defs/stringArray"},
+    "regions": {
+      "type": "object", "required": ["subject", "information", "subtitle", "platform_safe"],
+      "properties": {
+        "subject": {"$ref": "#/$defs/region"},
+        "information": {"$ref": "#/$defs/region"},
+        "subtitle": {"$ref": "#/$defs/region"},
+        "platform_safe": {"$ref": "#/$defs/region"}
+      },
+      "additionalProperties": false
+    },
+    "density": {"enum": ["low", "medium", "high"]},
+    "media_compatibility": {"$ref": "#/$defs/stringArray"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "text": {"type": "string", "minLength": 1},
+    "stringArray": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+    "region": {
+      "type": "object", "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": {"type": "number", "minimum": 0, "maximum": 1},
+        "y": {"type": "number", "minimum": 0, "maximum": 1},
+        "width": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "height": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}
+      },
+      "additionalProperties": false
+    }
+  }
+}

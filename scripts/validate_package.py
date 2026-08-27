@@ -7,6 +7,12 @@ REQUIRED = (
     "agents/openai.yaml",
     "assets/project-template/project.json",
     "assets/project-template/review-pack/index.html",
+    "previews/styles/editorial-clean-v1.html",
+    "previews/layouts/talking-head-left-explainer-right-v1.html",
+    "references/schemas/style-pack.schema.json",
+    "references/schemas/layout-pack.schema.json",
+    "registries/styles/editorial-clean/v1/manifest.json",
+    "registries/layouts/talking-head-left-explainer-right/v1/manifest.json",
     "skills/video-director/SKILL.md",
 )
 

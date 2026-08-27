@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import shutil
 import struct
 from tempfile import TemporaryDirectory
 import unittest
@@ -13,7 +14,7 @@ class ValidationTests(unittest.TestCase):
         self.folder = TemporaryDirectory()
         self.root = Path(self.folder.name)
         (self.root / "artifacts" / "timeline").mkdir(parents=True)
-        (self.root / "artifacts" / "scene-media").mkdir(parents=True)
+        (self.root / "artifacts" / "media").mkdir(parents=True)
         (self.root / "artifacts" / "scene-contract").mkdir(parents=True)
         (self.root / "timeline").mkdir()
         (self.root / "media").mkdir()
@@ -53,13 +54,16 @@ class ValidationTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.write_artifact(
-            "scene-S01-v1", "scene-media", 1, "approved", "media/scene-S01.mp4"
+            "scene-S01-v1", "media", 1, "approved", "media/scene-S01.mp4"
         )
         (self.root / "contracts" / "S01.json").write_text(
             json.dumps(
                 {
                     "scene_id": "S01",
-                    "semantic_beats": [{"beat_id": "B01", "primary_carrier": "Scene"}],
+                    "start_ms": 0,
+                    "end_ms": 10_000,
+                    "primary_carrier": "scene",
+                    "purpose": "show the concrete cause",
                 }
             ),
             encoding="utf-8",
@@ -564,7 +568,7 @@ class ValidationTests(unittest.TestCase):
     def test_stale_artifact_on_active_timeline_is_error(self):
         self.write_artifact(
             "scene-S01-v2",
-            "scene-media",
+            "media",
             2,
             "stale",
             "media/scene-S01-v2.mp4",
@@ -574,6 +578,38 @@ class ValidationTests(unittest.TestCase):
         timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
         timeline["tracks"][0]["clips"][0]["artifact_id"] = "scene-S01-v2"
         timeline_path.write_text(json.dumps(timeline), encoding="utf-8")
+
+        result = validate_project(self.root)
+
+        self.assertIn("stale-active-artifact", {item["code"] for item in result["errors"]})
+
+    def test_event_overlay_invalidation_is_applied_before_structural_review(self):
+        """Catches immutable artifact metadata hiding a newer invalidation event."""
+        events = self.root / "events"
+        events.mkdir()
+        (events / "events.jsonl").write_text(
+            "\n".join(
+                (
+                    json.dumps(
+                        {
+                            "event": "project.initialized",
+                            "schema_version": 1,
+                            "project_id": "validation-test",
+                            "workflow": "knowledge-video",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "event": "artifacts.invalidated",
+                            "changed_id": "scene-S01-v1",
+                            "artifact_ids": ["scene-S01-v1"],
+                        }
+                    ),
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
         result = validate_project(self.root)
 
@@ -601,7 +637,7 @@ class ValidationTests(unittest.TestCase):
         self.assertIn("missing-caption-safe-region", codes)
 
     def test_absolute_artifact_path_is_rejected_even_when_it_points_inside_project(self):
-        artifact_path = self.root / "artifacts" / "scene-media" / "scene-S01-v1.json"
+        artifact_path = self.root / "artifacts" / "media" / "scene-S01-v1.json"
         artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
         artifact["path"] = str(self.root / "media" / "scene-S01.mp4")
         artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
@@ -609,6 +645,72 @@ class ValidationTests(unittest.TestCase):
         result = validate_project(self.root)
 
         self.assertIn("unsafe-artifact-path", {item["code"] for item in result["errors"]})
+
+    def test_validator_rejects_symlinked_runtime_storage_outside_project(self):
+        """Catches structural validation reading attacker-controlled artifacts outside root."""
+        with TemporaryDirectory() as outside_folder:
+            outside = Path(outside_folder) / "artifacts"
+            shutil.copytree(self.root / "artifacts", outside)
+            shutil.rmtree(self.root / "artifacts")
+            (self.root / "artifacts").symlink_to(outside, target_is_directory=True)
+
+            result = validate_project(self.root)
+
+        self.assertIn("unsafe-runtime-storage", {item["code"] for item in result["errors"]})
+
+    def test_validator_rejects_symlinked_approval_and_task_records(self):
+        """Catches validation ingesting foreign records from otherwise local storage."""
+        (self.root / "tasks").mkdir()
+        with TemporaryDirectory() as outside_folder:
+            outside = Path(outside_folder)
+            approval_id = "approval-outside"
+            (outside / f"{approval_id}.json").write_text(
+                json.dumps(
+                    {
+                        "approval_id": approval_id,
+                        "target_id": "timeline-v1",
+                        "scope": "whole-project",
+                        "decision": "approved",
+                        "notes": "foreign",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            task_id = "task-outside"
+            (outside / f"{task_id}.json").write_text(
+                json.dumps(
+                    {
+                        "task_id": task_id,
+                        "capability": "project.manage",
+                        "inputs": [],
+                        "adapter_preferences": ["chatcut"],
+                        "output_contract": "task-result-v1",
+                        "constraints": {"required_gate": None},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (self.root / "approvals" / f"{approval_id}.json").symlink_to(
+                outside / f"{approval_id}.json"
+            )
+            (self.root / "tasks" / f"{task_id}.json").symlink_to(
+                outside / f"{task_id}.json"
+            )
+
+            result = validate_project(self.root)
+
+        unsafe = {
+            item["storage"]
+            for item in result["errors"]
+            if item["code"] == "unsafe-runtime-storage"
+        }
+        self.assertTrue(
+            {
+                f"approvals/{approval_id}.json",
+                f"tasks/{task_id}.json",
+            }
+            <= unsafe
+        )
 
     def test_malformed_mixed_timing_emits_an_issue_without_crashing(self):
         timeline_path = self.root / "timeline" / "timeline-v1.json"
@@ -623,7 +725,7 @@ class ValidationTests(unittest.TestCase):
         self.assertIn("invalid-timeline-clip", {item["code"] for item in result["errors"]})
 
     def test_artifact_parent_cycle_is_an_error(self):
-        scene_path = self.root / "artifacts" / "scene-media" / "scene-S01-v1.json"
+        scene_path = self.root / "artifacts" / "media" / "scene-S01-v1.json"
         scene = json.loads(scene_path.read_text(encoding="utf-8"))
         scene["parents"] = ["timeline-v1"]
         scene_path.write_text(json.dumps(scene), encoding="utf-8")
@@ -657,7 +759,7 @@ class ValidationTests(unittest.TestCase):
 
         self.assertIn("invalid-primary-track-count", {item["code"] for item in result["errors"]})
 
-    def test_active_clips_require_a_contract_and_its_beat_coverage(self):
+    def test_active_clips_require_a_canonical_scene_contract(self):
         timeline_path = self.root / "timeline" / "timeline-v1.json"
         timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
         timeline["tracks"][0]["clips"][0].pop("contract_id")
@@ -669,10 +771,97 @@ class ValidationTests(unittest.TestCase):
         timeline["tracks"][0]["clips"][0]["contract_id"] = "scene-contract-S01-v1"
         timeline_path.write_text(json.dumps(timeline), encoding="utf-8")
         contract_path = self.root / "contracts" / "S01.json"
-        contract_path.write_text(json.dumps({"scene_id": "S01", "semantic_beats": []}), encoding="utf-8")
+        contract_path.write_text(
+            json.dumps(
+                {
+                    "scene_id": "S01",
+                    "start_ms": 0,
+                    "end_ms": 10_000,
+                    "primary_carrier": "Scene",
+                    "purpose": "wrong vocabulary",
+                }
+            ),
+            encoding="utf-8",
+        )
 
         coverage_result = validate_project(self.root)
-        self.assertIn("missing-contract-coverage", {item["code"] for item in coverage_result["errors"]})
+        self.assertIn("invalid-scene-contract", {item["code"] for item in coverage_result["errors"]})
+
+    def test_schema_valid_lowercase_scene_contract_is_accepted_by_structural_validation(self):
+        """Catches the validator requiring semantic_beats and title-case carrier aliases."""
+        result = validate_project(self.root)
+
+        self.assertNotIn(
+            "missing-contract-coverage",
+            {item["code"] for item in result["errors"]},
+        )
+        self.assertNotIn(
+            "invalid-scene-contract",
+            {item["code"] for item in result["errors"]},
+        )
+
+    def test_project_snapshot_rejects_an_unknown_phase(self):
+        """Catches structural validation accepting a phase replay cannot produce."""
+        project_path = self.root / "project.json"
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project["phase"] = "not-a-phase"
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+
+        result = validate_project(self.root)
+
+        self.assertIn("invalid-project-state", {item["code"] for item in result["errors"]})
+
+    def test_style_pack_requires_structural_font_evidence(self):
+        """Catches approved style packs naming a bundled font that is not present."""
+        pack_dir = self.root / "packs"
+        pack_dir.mkdir()
+        preview = self.root / "previews" / "style.html"
+        preview.parent.mkdir()
+        preview.write_text("preview", encoding="utf-8")
+        source = json.loads(
+            (
+                Path(__file__).parents[1]
+                / "registries/styles/editorial-clean/v1/manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+        source["preview"] = "previews/style.html"
+        source["previews"] = ["previews/style.html"]
+        source["required_fonts"] = [
+            {"family": "Toolkit Sans", "source": "bundled", "path": "fonts/missing.otf"}
+        ]
+        (pack_dir / "style.json").write_text(json.dumps(source), encoding="utf-8")
+        self.write_artifact(
+            "style-v1", "style-pack", 1, "approved", "packs/style.json"
+        )
+
+        result = validate_project(self.root)
+
+        self.assertIn("missing-required-font", {item["code"] for item in result["errors"]})
+
+    def test_layout_pack_rejects_regions_outside_the_normalized_canvas(self):
+        """Catches a schema-shaped layout whose region extends beyond the frame."""
+        pack_dir = self.root / "packs"
+        pack_dir.mkdir()
+        source = json.loads(
+            (
+                Path(__file__).parents[1]
+                / "registries/layouts/talking-head-left-explainer-right/v1/manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+        source["regions"]["subject"] = {
+            "x": 0.9,
+            "y": 0.0,
+            "width": 0.2,
+            "height": 0.5,
+        }
+        (pack_dir / "layout.json").write_text(json.dumps(source), encoding="utf-8")
+        self.write_artifact(
+            "layout-v1", "layout-pack", 1, "approved", "packs/layout.json"
+        )
+
+        result = validate_project(self.root)
+
+        self.assertIn("invalid-layout-pack", {item["code"] for item in result["errors"]})
 
     def test_nonvisual_tracks_are_exempt_from_scene_contracts_but_visual_tracks_are_not(self):
         timeline_path = self.root / "timeline" / "timeline-v1.json"

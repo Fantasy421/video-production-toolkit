@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
+from .packs import validate_layout_pack, validate_style_pack
+
 
 COMPACT_FIELDS = (
     "id",
@@ -33,6 +35,17 @@ OPTIONAL_ENTRY_FIELDS = {
     "installed_skill",
     "fallback",
     "license_mode",
+    "tokens",
+    "rules",
+    "previews",
+    "applicability",
+    "exclusions",
+    "required_fonts",
+    "compatibility",
+    "project_evidence",
+    "regions",
+    "density",
+    "media_compatibility",
 }
 
 
@@ -109,7 +122,7 @@ def _load_entries(root: Path, kind: str) -> list[dict[str, Any]]:
         except (OSError, json.JSONDecodeError) as error:
             raise ValueError(f"invalid registry JSON: {path}") from error
         for entry in _entries_from_payload(payload, kind, path):
-            _validate_entry(entry, path)
+            _validate_entry(entry, path, kind)
             entries.append(entry)
     return entries
 
@@ -127,7 +140,7 @@ def _entries_from_payload(payload: Any, kind: str, path: Path) -> list[dict[str,
     return entries
 
 
-def _validate_entry(entry: Any, path: Path) -> None:
+def _validate_entry(entry: Any, path: Path, kind: str) -> None:
     if not isinstance(entry, Mapping):
         raise ValueError(f"registry entry must be an object: {path}")
     allowed = set(REQUIRED_ENTRY_FIELDS) | OPTIONAL_ENTRY_FIELDS
@@ -156,6 +169,13 @@ def _validate_entry(entry: Any, path: Path) -> None:
         _validate_string(entry["fallback"], "fallback", path)
     if "license_mode" in entry and entry["license_mode"] != "external-reference":
         raise ValueError(f"registry license_mode must be external-reference: {path}")
+    try:
+        if kind == "styles":
+            validate_style_pack(entry)
+        elif kind == "layouts":
+            validate_layout_pack(entry)
+    except ValueError as error:
+        raise ValueError(f"invalid {kind} registry entry: {path}: {error}") from error
 
 
 def _validate_string(value: Any, field: str, path: Path) -> None:

@@ -20,7 +20,7 @@ from scripts.toolkit.orchestrator import (
     invalidate_artifact_descendants,
     resume_project,
 )
-from scripts.toolkit.project_state import initialize_project
+from scripts.toolkit.project_state import append_event, initialize_project
 from scripts.toolkit.tasks import create_task
 from scripts.validate_package import validate_package
 
@@ -385,10 +385,23 @@ def _run_resume_scenario() -> dict[str, Any]:
                 scene_id="S02",
             ),
         )
+        for phase in (
+            "content_ready",
+            "direction_ready",
+            "storyboard_ready",
+        ):
+            append_event(
+                project,
+                {"event": "project.phase_changed", "phase": phase},
+            )
         invalidate_artifact_descendants(
             project,
             "contract-S02-v1",
-            {"scene-contract": ["media", "timeline", "review-pack"]},
+            json.loads(
+                (Path(__file__).parents[1] / "references/policies/invalidation.json").read_text(
+                    encoding="utf-8"
+                )
+            ),
         )
         first = resume_project(project)
         second = resume_project(project)

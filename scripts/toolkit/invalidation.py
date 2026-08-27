@@ -5,6 +5,8 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, Union
 
+from .runtime_paths import project_path, project_root
+
 
 def invalidate_descendants(
     artifacts: Union[Iterable[dict[str, Any]], Mapping[str, dict[str, Any]]],
@@ -44,7 +46,13 @@ def invalidate_descendants(
 
 def invalidated_artifact_ids(root: Path) -> set[str]:
     """Project immutable metadata through append-only invalidation events."""
-    event_log = Path(root) / "events" / "events.jsonl"
+    root = project_root(root)
+    events_root = root / "events"
+    if events_root.is_symlink():
+        raise ValueError("event storage must not be a symlink")
+    if not events_root.exists():
+        return set()
+    event_log = project_path(root, "events/events.jsonl")
     if not event_log.is_file():
         return set()
     invalidated: set[str] = set()

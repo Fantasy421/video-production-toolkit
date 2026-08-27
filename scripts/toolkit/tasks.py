@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from scripts.toolkit.artifacts import _artifact_paths_by_id, _read_valid_artifact
 from scripts.toolkit.invalidation import invalidated_artifact_ids
+from scripts.toolkit.runtime_paths import project_path, project_root, storage_directory
 
 
 CLAIM_LEASE_SECONDS = 300.0
@@ -49,14 +50,17 @@ RESULT_KEYS = {
 def create_task(root: Path, envelope: dict[str, Any]) -> Path:
     """Persist one immutable, schema-shaped task envelope."""
     _validate_envelope(envelope)
-    destination = _task_path(Path(root), envelope["task_id"])
+    root = project_root(root)
+    storage_directory(root, "tasks", create=True)
+    destination = _task_path(root, envelope["task_id"])
     _publish_immutable_json(destination, _serialize_json(envelope))
     return destination
 
 
 def claim_task(root: Path, task_id: str, worker_id: str) -> dict[str, str]:
     """Exclusively assign a task and return its completion authority."""
-    root = Path(root)
+    root = project_root(root)
+    storage_directory(root, "tasks", create=True)
     _require_safe_id(task_id, "task_id")
     _require_nonempty_string(worker_id, "worker_id")
     if not _task_path(root, task_id).is_file():
@@ -89,8 +93,9 @@ def claim_task(root: Path, task_id: str, worker_id: str) -> dict[str, str]:
 
 
 def complete_task(root: Path, result: dict[str, Any]) -> str:
-    """Atomically validate and register an owner-authorized worker result."""
-    root = Path(root)
+    """Atomically register a terminal success or resumable worker checkpoint."""
+    root = project_root(root)
+    storage_directory(root, "tasks")
     _validate_result(result)
     task_id = result["task_id"]
     handle = _hold_claim(_claim_path(root, task_id))
@@ -98,17 +103,26 @@ def complete_task(root: Path, result: dict[str, Any]) -> str:
     try:
         _require_current_claim(handle, result)
         envelope = _read_envelope(root, task_id)
-        if _is_current_result(root, envelope, result):
+        _validate_result_artifacts(root, envelope, result)
+        if not _is_current_result(root, envelope, result):
+            destination = _stale_result_path(root, task_id)
+            status = "stale-result"
+        elif result["status"] == "succeeded":
             destination = _result_path(root, task_id)
             status = "completed"
         else:
-            destination = _stale_result_path(root, task_id)
-            status = "stale-result"
-        if destination.exists():
+            destination = _status_path(root, task_id)
+            status = "resumable"
+        if destination.exists() and status != "resumable":
             if status == "stale-result":
                 return status
             raise RuntimeError(f"task already completed: {task_id}")
-        _publish_immutable_json(destination, _serialize_json(result))
+        if status == "resumable":
+            _replace_json(destination, _serialize_json(result))
+        else:
+            _publish_immutable_json(destination, _serialize_json(result))
+            if status == "completed":
+                _status_path(root, task_id).unlink(missing_ok=True)
         return status
     finally:
         if destination is not None and destination.exists():
@@ -123,7 +137,8 @@ def retry_decision(root: Path, task_id: str, result: dict[str, Any]) -> dict[str
     updated under a task-local file lock so concurrent failure reports cannot
     reset attempt counts or re-enable a consumed fallback.
     """
-    root = Path(root)
+    root = project_root(root)
+    storage_directory(root, "tasks")
     _require_safe_id(task_id, "task_id")
     _validate_retry_result(result)
     envelope = _read_envelope(root, task_id)
@@ -155,14 +170,7 @@ def retry_decision(root: Path, task_id: str, result: dict[str, Any]) -> dict[str
         elif ledger["fallback_used"]:
             decision = {"action": "block", "reason": "retry-budget-exhausted"}
         else:
-            fallback = next(
-                (
-                    candidate
-                    for candidate in envelope["adapter_preferences"]
-                    if candidate != adapter
-                ),
-                None,
-            )
+            fallback = _compatible_retry_fallback(envelope, adapter)
             if fallback is None:
                 decision = {"action": "block", "reason": "no-fallback-adapter"}
             else:
@@ -178,11 +186,17 @@ def retry_decision(root: Path, task_id: str, result: dict[str, Any]) -> dict[str
 
 def active_claim_task_ids(root: Path) -> list[str]:
     """Return live task claims after safely reclaiming dead-PID locks."""
-    locks_root = Path(root) / "tasks" / "locks"
+    root = project_root(root)
+    tasks_root = storage_directory(root, "tasks", create=True)
+    locks_root = tasks_root / "locks"
+    if locks_root.is_symlink():
+        raise ValueError("task lock storage must not be a symlink")
     if not locks_root.is_dir():
         return []
     active = []
     for path in sorted(locks_root.glob("*.lock")):
+        if path.is_symlink():
+            raise ValueError(f"task lock storage must not contain symlinks: {path.name}")
         task_id = path.name[: -len(".lock")]
         _require_safe_id(task_id, "task_id")
         while path.exists():
@@ -208,6 +222,55 @@ def _is_current_result(root: Path, envelope: dict[str, Any], result: dict[str, A
         if _has_newer_approved_lineage(artifact, artifacts):
             return False
     return True
+
+
+def _validate_result_artifacts(
+    root: Path, envelope: dict[str, Any], result: dict[str, Any]
+) -> None:
+    """Require every claimed output to be a persisted artifact of the declared contract."""
+    if result["status"] == "succeeded" and not result["artifacts"]:
+        raise ValueError("a succeeded task must return at least one artifact")
+    artifacts = _artifacts_by_id(root / "artifacts")
+    for artifact_id in result["artifacts"]:
+        artifact = artifacts.get(artifact_id)
+        if artifact is None:
+            raise ValueError(f"task result artifact does not exist: {artifact_id}")
+        if artifact.get("output_contract") != envelope["output_contract"]:
+            raise ValueError(
+                f"task result artifact {artifact_id} does not satisfy "
+                f"{envelope['output_contract']}"
+            )
+
+
+def _compatible_retry_fallback(
+    envelope: dict[str, Any], current_adapter: str
+) -> Optional[str]:
+    """Choose the selected manifest fallback before other compatible preferences."""
+    manifests_root = Path(__file__).parents[2] / "registries" / "adapters"
+    manifests: dict[str, dict[str, Any]] = {}
+    for path in sorted(manifests_root.glob("*.json")):
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            raise ValueError(f"invalid packaged adapter manifest: {path}") from error
+        if not isinstance(manifest, dict) or manifest.get("id") != path.stem:
+            raise ValueError(f"invalid packaged adapter manifest: {path}")
+        manifests[path.stem] = manifest
+    current = manifests.get(current_adapter)
+    if current is None or envelope["capability"] not in current.get("capabilities", []):
+        raise ValueError("retry adapter is incompatible with the task capability")
+    candidates = []
+    declared = current.get("fallback")
+    if isinstance(declared, str):
+        candidates.append(declared)
+    candidates.extend(envelope["adapter_preferences"])
+    for candidate_id in candidates:
+        if candidate_id == current_adapter or candidate_id not in envelope["adapter_preferences"]:
+            continue
+        candidate = manifests.get(candidate_id)
+        if candidate is not None and envelope["capability"] in candidate.get("capabilities", []):
+            return candidate_id
+    return None
 
 
 def _has_newer_approved_lineage(
@@ -261,28 +324,32 @@ def _read_envelope(root: Path, task_id: str) -> dict[str, Any]:
 
 
 def _claim_path(root: Path, task_id: str) -> Path:
-    return root / "tasks" / "locks" / f"{task_id}.lock"
+    return project_path(root, Path("tasks") / "locks" / f"{task_id}.lock")
 
 
 def _result_path(root: Path, task_id: str) -> Path:
-    return root / "tasks" / "results" / f"{task_id}.json"
+    return project_path(root, Path("tasks") / "results" / f"{task_id}.json")
 
 
 def _stale_result_path(root: Path, task_id: str) -> Path:
-    return root / "tasks" / "stale-results" / f"{task_id}.json"
+    return project_path(root, Path("tasks") / "stale-results" / f"{task_id}.json")
+
+
+def _status_path(root: Path, task_id: str) -> Path:
+    return project_path(root, Path("tasks") / "status" / f"{task_id}.json")
 
 
 def _retry_ledger_path(root: Path, task_id: str) -> Path:
-    return root / "tasks" / "retries" / f"{task_id}.json"
+    return project_path(root, Path("tasks") / "retries" / f"{task_id}.json")
 
 
 def _retry_lock_path(root: Path, task_id: str) -> Path:
-    return root / "tasks" / "retry-locks" / f"{task_id}.lock"
+    return project_path(root, Path("tasks") / "retry-locks" / f"{task_id}.lock")
 
 
 def _task_path(root: Path, task_id: str) -> Path:
     _require_safe_id(task_id, "task_id")
-    return root / "tasks" / f"{task_id}.json"
+    return project_path(root, Path("tasks") / f"{task_id}.json")
 
 
 def _create_claim(path: Path, claim: dict[str, Any]) -> None:

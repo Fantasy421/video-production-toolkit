@@ -15,5 +15,11 @@
     "error": {"type": "string", "minLength": 1},
     "user_decision_request": {"type": "string", "minLength": 1}
   },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "succeeded"}}, "required": ["status"]},
+      "then": {"properties": {"artifacts": {"minItems": 1}}}
+    }
+  ],
   "additionalProperties": false
 }

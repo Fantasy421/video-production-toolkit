@@ -35,7 +35,66 @@
     "editable": {"type": "boolean"},
     "installed_skill": {"$ref": "#/$defs/nonEmptyString"},
     "fallback": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/nonEmptyString"}]},
-    "license_mode": {"const": "external-reference"}
+    "license_mode": {"const": "external-reference"},
+    "tokens": {"type": "object", "minProperties": 1},
+    "rules": {"$ref": "#/$defs/stringArray"},
+    "previews": {"$ref": "#/$defs/stringArray"},
+    "applicability": {"$ref": "#/$defs/stringArray"},
+    "exclusions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/nonEmptyString"}
+    },
+    "required_fonts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["family", "source"],
+            "properties": {
+              "family": {"$ref": "#/$defs/nonEmptyString"},
+              "source": {"const": "system"}
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["family", "source", "path"],
+            "properties": {
+              "family": {"$ref": "#/$defs/nonEmptyString"},
+              "source": {"const": "bundled"},
+              "path": {"$ref": "#/$defs/nonEmptyString"}
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "required": ["canvases", "renderers"],
+      "properties": {
+        "canvases": {"$ref": "#/$defs/stringArray"},
+        "renderers": {"$ref": "#/$defs/stringArray"}
+      },
+      "additionalProperties": false
+    },
+    "project_evidence": {"$ref": "#/$defs/stringArray"},
+    "regions": {
+      "type": "object",
+      "required": ["subject", "information", "subtitle", "platform_safe"],
+      "properties": {
+        "subject": {"$ref": "#/$defs/region"},
+        "information": {"$ref": "#/$defs/region"},
+        "subtitle": {"$ref": "#/$defs/region"},
+        "platform_safe": {"$ref": "#/$defs/region"}
+      },
+      "additionalProperties": false
+    },
+    "density": {"enum": ["low", "medium", "high"]},
+    "media_compatibility": {"$ref": "#/$defs/stringArray"}
   },
   "additionalProperties": false,
   "$defs": {
@@ -45,6 +104,17 @@
       "minItems": 1,
       "uniqueItems": true,
       "items": {"$ref": "#/$defs/nonEmptyString"}
+    },
+    "region": {
+      "type": "object",
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": {"type": "number", "minimum": 0, "maximum": 1},
+        "y": {"type": "number", "minimum": 0, "maximum": 1},
+        "width": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "height": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}
+      },
+      "additionalProperties": false
     }
   }
 }

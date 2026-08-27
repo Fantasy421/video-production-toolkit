@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Video Production Toolkit Style Pack",
+  "type": "object",
+  "required": [
+    "id", "version", "job", "preview", "renderer", "implementation_ref", "license",
+    "tokens", "rules", "previews", "applicability", "exclusions", "required_fonts",
+    "compatibility", "project_evidence"
+  ],
+  "properties": {
+    "id": {"$ref": "#/$defs/text"},
+    "version": {"$ref": "#/$defs/text"},
+    "job": {"$ref": "#/$defs/text"},
+    "preview": {"$ref": "#/$defs/text"},
+    "renderer": {"$ref": "#/$defs/text"},
+    "implementation_ref": {"$ref": "#/$defs/text"},
+    "license": {"$ref": "#/$defs/text"},
+    "mechanism": {"$ref": "#/$defs/text"},
+    "participants": {"$ref": "#/$defs/stringArray"},
+    "canvas": {"$ref": "#/$defs/stringArray"},
+    "tokens": {"type": "object", "minProperties": 1},
+    "rules": {"$ref": "#/$defs/stringArray"},
+    "previews": {"$ref": "#/$defs/stringArray"},
+    "applicability": {"$ref": "#/$defs/stringArray"},
+    "exclusions": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+    "required_fonts": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object", "required": ["family", "source"],
+            "properties": {"family": {"$ref": "#/$defs/text"}, "source": {"const": "system"}},
+            "additionalProperties": false
+          },
+          {
+            "type": "object", "required": ["family", "source", "path"],
+            "properties": {"family": {"$ref": "#/$defs/text"}, "source": {"const": "bundled"}, "path": {"$ref": "#/$defs/text"}},
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "compatibility": {
+      "type": "object", "required": ["canvases", "renderers"],
+      "properties": {"canvases": {"$ref": "#/$defs/stringArray"}, "renderers": {"$ref": "#/$defs/stringArray"}},
+      "additionalProperties": false
+    },
+    "project_evidence": {"$ref": "#/$defs/stringArray"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "text": {"type": "string", "minLength": 1},
+    "stringArray": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}}
+  }
+}

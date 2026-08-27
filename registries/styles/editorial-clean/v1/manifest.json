@@ -8,5 +8,23 @@
   "license": "CC0-1.0",
   "mechanism": "editorial-clean",
   "participants": ["host", "diagram"],
-  "canvas": ["16:9", "9:16"]
+  "canvas": ["16:9", "9:16"],
+  "tokens": {
+    "colors": {"background": "#F7F5F0", "foreground": "#161616", "accent": "#356AE6"},
+    "typography": {"heading": "PingFang SC", "body": "PingFang SC"},
+    "materials": {"surface": "matte", "border": "hairline"}
+  },
+  "rules": [
+    "Use contrast and spacing to establish one clear information hierarchy.",
+    "Keep decorative motion subordinate to the semantic carrier."
+  ],
+  "previews": ["previews/styles/editorial-clean-v1.html"],
+  "applicability": ["Chinese knowledge video", "talking-head explainer", "tutorial"],
+  "exclusions": ["high-density entertainment montage"],
+  "required_fonts": [{"family": "PingFang SC", "source": "system"}],
+  "compatibility": {
+    "canvases": ["16:9", "9:16"],
+    "renderers": ["hyperframes", "remotion"]
+  },
+  "project_evidence": ["Starter pack; freeze only after a project visual-direction approval."]
 }

@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
+from .runtime_paths import project_path, project_root, storage_directory
+
 
 ARTIFACT_REQUIRED_KEYS = (
     "artifact_id",
@@ -32,10 +34,11 @@ LEGACY_APPROVAL_KEYS = set(APPROVAL_REQUIRED_KEYS) - {"decision"}
 
 def create_artifact(root: Path, artifact: dict[str, Any]) -> Path:
     """Persist one immutable artifact metadata record and return its path."""
-    root = Path(root)
+    root = project_root(root)
     _validate_artifact(artifact)
+    project_path(root, artifact["path"])
     payload = _serialize_json(artifact)
-    artifacts_root = root / "artifacts"
+    artifacts_root = storage_directory(root, "artifacts", create=True)
     existing = _artifact_paths_by_id(artifacts_root)
     artifact_id = artifact["artifact_id"]
     if artifact_id in existing:
@@ -65,8 +68,9 @@ def approve_artifact(
     decision: str = "approved",
 ) -> str:
     """Create a durable approval record for an existing artifact."""
-    root = Path(root)
-    if target_id not in _artifact_paths_by_id(root / "artifacts"):
+    root = project_root(root)
+    artifacts_root = storage_directory(root, "artifacts")
+    if target_id not in _artifact_paths_by_id(artifacts_root):
         raise ValueError(f"approval target does not exist: {target_id}")
     if not isinstance(scope, str) or not scope:
         raise ValueError("approval scope must be a non-empty string")
@@ -76,7 +80,6 @@ def approve_artifact(
         raise ValueError("approval decision is not recognized")
 
     approval_id = f"approval-{uuid4().hex}"
-    approval_path = root / "approvals" / f"{approval_id}.json"
     approval = {
         "approval_id": approval_id,
         "target_id": target_id,
@@ -86,7 +89,9 @@ def approve_artifact(
     }
     _validate_approval(approval)
     payload = _serialize_json(approval)
-    _require_within(root / "approvals", approval_path)
+    approvals_root = storage_directory(root, "approvals", create=True)
+    approval_path = project_path(root, Path("approvals") / f"{approval_id}.json")
+    _require_within(approvals_root, approval_path)
     _publish_json(approval_path, payload)
     return approval_id
 
@@ -98,10 +103,11 @@ def read_approval(root: Path, approval_id: str) -> dict[str, Any]:
     artifacts. Their in-memory view therefore defaults to approved while the
     source JSON remains unchanged.
     """
-    root = Path(root)
+    root = project_root(root)
     _require_safe_component(approval_id, "approval_id")
-    path = root / "approvals" / f"{approval_id}.json"
-    _require_within(root / "approvals", path)
+    approvals_root = storage_directory(root, "approvals")
+    path = project_path(root, Path("approvals") / f"{approval_id}.json")
+    _require_within(approvals_root, path)
     try:
         approval = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
@@ -113,17 +119,30 @@ def read_approval(root: Path, approval_id: str) -> dict[str, Any]:
 
 
 def _artifact_paths_by_id(artifacts_root: Path) -> dict[str, Path]:
+    if artifacts_root.is_symlink():
+        raise ValueError("artifact storage must not be a symlink")
     if not artifacts_root.is_dir():
         return {}
     paths: dict[str, Path] = {}
-    for path in artifacts_root.glob("*/*.json"):
-        artifact = _read_valid_artifact(path)
-        if artifact is None:
+    for type_directory in artifacts_root.iterdir():
+        if type_directory.name == ".locks":
+            if type_directory.is_symlink():
+                raise ValueError("artifact lock storage must not be a symlink")
             continue
-        artifact_id = artifact["artifact_id"]
-        if artifact_id in paths:
-            raise ValueError(f"duplicate artifact id in project: {artifact_id}")
-        paths[artifact_id] = path
+        if type_directory.is_symlink():
+            raise ValueError("artifact type storage must not be a symlink")
+        if not type_directory.is_dir():
+            continue
+        for path in type_directory.glob("*.json"):
+            if path.is_symlink():
+                raise ValueError("artifact metadata must not be a symlink")
+            artifact = _read_valid_artifact(path)
+            if artifact is None:
+                continue
+            artifact_id = artifact["artifact_id"]
+            if artifact_id in paths:
+                raise ValueError(f"duplicate artifact id in project: {artifact_id}")
+            paths[artifact_id] = path
     return paths
 
 
@@ -280,6 +299,8 @@ def _publish_json(destination: Path, payload: str) -> None:
 
 def _require_within(root: Path, destination: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
+    if root.is_symlink() or destination.is_symlink() or destination.parent.is_symlink():
+        raise ValueError("artifact storage must not contain symlinks")
     try:
         destination.resolve().relative_to(root.resolve())
     except ValueError:

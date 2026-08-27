@@ -6,7 +6,7 @@
   "renderer": "chatcut",
   "implementation_ref": "external:chatcut-plugin-basics",
   "license": "external",
-  "capabilities": ["motion.produce"],
+  "capabilities": ["motion.produce", "timeline.assemble"],
   "accepts": ["motion-contract-v1", "scene-contract-v1", "timeline-contract-v1"],
   "outputs": ["chatcut-project", "editable-motion-graphic", "rendered-video"],
   "editable": true,

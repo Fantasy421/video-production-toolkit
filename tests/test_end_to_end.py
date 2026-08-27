@@ -17,14 +17,23 @@ from scripts.toolkit.orchestrator import (
     invalidate_artifact_descendants,
     resume_project,
 )
-from scripts.toolkit.project_state import initialize_project
+from scripts.toolkit.project_state import PHASES, append_event, initialize_project
 from scripts.toolkit.tasks import claim_task, complete_task, create_task
 from scripts.verify_installation import run_smoke, verify_installation
 
 
 ROOT = Path(__file__).parents[1]
+SHIPPED_INVALIDATION = json.loads(
+    (ROOT / "references/policies/invalidation.json").read_text(encoding="utf-8")
+)
 FIXTURE = ROOT / "tests" / "fixtures" / "knowledge-video-minimal"
 LEGACY = Path.home() / ".codex" / "skills" / "knowledge-video-visual-director"
+
+
+def advance_project(project, target_phase):
+    """Advance a fixture through the same legal phase events used in production."""
+    for phase in PHASES[1 : PHASES.index(target_phase) + 1]:
+        append_event(project, {"event": "project.phase_changed", "phase": phase})
 
 
 def activate_personal_plugin(home, source):
@@ -165,6 +174,49 @@ def candidate(task_id, capability, inputs, gate, target_id, **constraints):
 
 
 class CoordinatorTests(unittest.TestCase):
+    def test_coordinator_routes_capabilities_only_in_legal_project_phases(self):
+        """Catches a valid envelope running before its workflow phase is ready."""
+        task = candidate(
+            "produce-S01",
+            "scene.produce",
+            ["storyboard-v1"],
+            "storyboard-and-cost",
+            "storyboard-v1",
+            production_scope="representative-slice",
+            scene_id="S01",
+        )
+        artifacts = [artifact("storyboard-v1", "storyboard")]
+        approvals = [
+            {
+                "target_id": "storyboard-v1",
+                "scope": "storyboard-and-cost",
+                "decision": "approved",
+            }
+        ]
+
+        self.assertEqual(
+            [],
+            calculate_ready_tasks(
+                {"phase": "initialized", "candidate_tasks": [task], "locked_task_ids": []},
+                artifacts,
+                approvals,
+            ),
+        )
+        self.assertEqual(
+            ["scene.produce:S01"],
+            calculate_ready_tasks(
+                {"phase": "storyboard_ready", "candidate_tasks": [task], "locked_task_ids": []},
+                artifacts,
+                approvals,
+            ),
+        )
+        with self.assertRaises(ValueError):
+            calculate_ready_tasks(
+                {"phase": "not-a-phase", "candidate_tasks": [task], "locked_task_ids": []},
+                artifacts,
+                approvals,
+            )
+
     def test_all_four_gates_require_an_exact_durable_approval(self):
         """Catches wrong-scope, wrong-type, or unrelated approvals advancing work."""
         cases = (
@@ -584,11 +636,12 @@ class CoordinatorTests(unittest.TestCase):
                     scene_id="S02",
                 ),
             )
+            advance_project(project, "storyboard_ready")
 
             stale = invalidate_artifact_descendants(
                 project,
                 "contract-S02-v1",
-                {"scene-contract": ["media", "timeline", "review-pack"]},
+                SHIPPED_INVALIDATION,
             )
             resumed = resume_project(project)
             resumed_again = resume_project(project)
@@ -640,12 +693,21 @@ class CoordinatorTests(unittest.TestCase):
                 scene_id="S02",
             )
             create_task(project, envelope)
+            create_artifact(
+                project,
+                artifact(
+                    "review-S02-v1",
+                    "review-pack",
+                    parents=["scene-S02-v1"],
+                    output_contract="task-result-v1",
+                ),
+            )
             claim = claim_task(project, "review-S02", "worker-a")
 
             invalidate_artifact_descendants(
                 project,
                 "contract-S02-v1",
-                {"scene-contract": ["media", "timeline", "review-pack"]},
+                SHIPPED_INVALIDATION,
             )
             status = complete_task(
                 project,
@@ -692,6 +754,7 @@ class CoordinatorTests(unittest.TestCase):
                     scene_id="S02",
                 ),
             )
+            advance_project(project, "storyboard_ready")
             claim_task(project, "produce-S02", "crashed-worker")
             lock_path = project / "tasks" / "locks" / "produce-S02.lock"
             lock = json.loads(lock_path.read_text(encoding="utf-8"))
@@ -704,6 +767,34 @@ class CoordinatorTests(unittest.TestCase):
             self.assertEqual(["scene.produce:S02"], resumed["ready_tasks"])
             self.assertEqual([], resumed["locked_task_ids"])
             self.assertFalse(lock_path.exists())
+
+    def test_resume_rejects_a_symlinked_task_result_directory(self):
+        """Catches completed-task discovery following storage outside the project."""
+        with TemporaryDirectory() as folder, TemporaryDirectory() as outside_folder:
+            project = Path(folder) / "project"
+            initialize_project(project, "kv-result-symlink", "knowledge-video")
+            outside = Path(outside_folder)
+            (outside / "foreign.json").write_text("{}", encoding="utf-8")
+            (project / "tasks" / "results").symlink_to(
+                outside, target_is_directory=True
+            )
+
+            with self.assertRaises(ValueError):
+                resume_project(project)
+
+    def test_resume_rejects_a_symlinked_task_result_record(self):
+        """Catches a foreign result being counted terminally by its symlink name."""
+        with TemporaryDirectory() as folder, TemporaryDirectory() as outside_folder:
+            project = Path(folder) / "project"
+            initialize_project(project, "kv-result-record-symlink", "knowledge-video")
+            results = project / "tasks" / "results"
+            results.mkdir()
+            foreign = Path(outside_folder) / "foreign.json"
+            foreign.write_text("{}", encoding="utf-8")
+            (results / "foreign.json").symlink_to(foreign)
+
+            with self.assertRaises(ValueError):
+                resume_project(project)
 
 
 class SmokeAndInstallationTests(unittest.TestCase):

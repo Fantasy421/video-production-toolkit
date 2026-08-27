@@ -116,6 +116,9 @@ draft | approved | stale | superseded | invalid
 ```
 
 These values must not be collapsed into one overloaded status field.
+Only `succeeded` becomes a terminal result. The remaining worker result statuses
+are resumable checkpoints: they release the claim, remain visible under task
+status storage, and may be reclaimed after their blocking condition changes.
 
 ## 7. Immutable Artifact DAG
 
@@ -236,6 +239,9 @@ Each semantic beat has exactly one primary carrier:
 - Motion Graphics for abstractions, relationships, precise text, numbers, and diagrams.
 - Evidence for documents, screenshots, citations, and data.
 
+Persist these as the canonical lowercase tokens `a-roll`, `b-roll`, `scene`,
+`demo`, `motion-graphics`, and `evidence`; title case is display prose only.
+
 It may have at most one secondary layer, such as a callout, number animation, label, subtitle emphasis, connection, or progress state. The system must reject designs that stack scene, dense Motion Graphics, B-roll, character cutouts, and unrelated motion in one beat without an explicit revised contract.
 
 ## 12. External Capability Integration
@@ -268,10 +274,12 @@ The plugin references external skills and their installed capabilities. It does 
 ### 13.1 Style Registry
 
 Style Packs contain versioned tokens, rules, previews, applicability, exclusions, required fonts, compatibility constraints, and project evidence. They do not impose one global aesthetic.
+Their exact persisted contract is `references/schemas/style-pack.schema.json`.
 
 ### 13.2 Layout Registry
 
 Layout Packs define canvas compatibility, subject, information, subtitle and platform-safe regions, density, and media compatibility independently from surface styling.
+Their exact persisted contract is `references/schemas/layout-pack.schema.json`.
 
 ### 13.3 Motion Recipe Registry
 

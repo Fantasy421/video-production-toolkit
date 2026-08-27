@@ -13,7 +13,8 @@ from scripts.toolkit.invalidation import (
     invalidate_descendants,
     invalidated_artifact_ids,
 )
-from scripts.toolkit.project_state import append_event, replay_events
+from scripts.toolkit.project_state import PHASES, append_event, replay_events
+from scripts.toolkit.runtime_paths import project_path, project_root
 from scripts.toolkit.tasks import (
     _read_envelope,
     _validate_envelope,
@@ -53,6 +54,18 @@ _FINAL_GATE_TARGET_TYPES = {
     "handoff": "final-draft",
     "export": "final-draft",
 }
+_CAPABILITY_PHASES = {
+    "narration.plan": {"initialized"},
+    "visual.preview": {"content_ready"},
+    "storyboard.plan": {"direction_ready"},
+    "scene.produce": {"storyboard_ready", "production_ready"},
+    "motion.preview": {"storyboard_ready"},
+    "motion.produce": {"storyboard_ready", "production_ready"},
+    "timeline.assemble": {"storyboard_ready", "production_ready"},
+    "structure.validate": {"assembled"},
+    "review.package": {"review_ready"},
+    "project.manage": set(PHASES),
+}
 
 
 def calculate_ready_tasks(
@@ -69,6 +82,9 @@ def calculate_ready_tasks(
     """
     if not isinstance(state, Mapping):
         raise ValueError("state must be a mapping")
+    phase = state.get("phase")
+    if phase is not None and phase not in PHASES:
+        raise ValueError("project phase is not recognized")
     candidates = state.get("candidate_tasks", [])
     if not isinstance(candidates, list):
         raise ValueError("candidate_tasks must be a list")
@@ -89,6 +105,8 @@ def calculate_ready_tasks(
         seen_task_ids.add(task_id)
         if task_id in locked or task_id in completed:
             continue
+        if phase is not None and not _capability_is_legal_in_phase(candidate, phase):
+            continue
         if not _parents_are_current(candidate["inputs"], by_id):
             continue
         gate = _required_gate(candidate)
@@ -104,13 +122,26 @@ def calculate_ready_tasks(
     return [_action_name(selected)]
 
 
+def _capability_is_legal_in_phase(candidate: Mapping[str, Any], phase: str) -> bool:
+    capability = candidate["capability"]
+    allowed = _CAPABILITY_PHASES.get(capability)
+    if allowed is None:
+        raise ValueError(f"unknown coordinator capability: {capability}")
+    scope = candidate["constraints"].get("production_scope")
+    if capability in {"scene.produce", "motion.produce", "timeline.assemble"}:
+        if scope in _EXPANSION_SCOPES:
+            return phase == "production_ready"
+        return phase == "storyboard_ready"
+    return phase in allowed
+
+
 def invalidate_artifact_descendants(
     root: Path,
     changed_id: str,
     rules: Mapping[str, list[str]],
 ) -> list[str]:
     """Persist local DAG invalidation as an event without rewriting artifacts."""
-    root = Path(root)
+    root = project_root(root)
     artifacts = _load_artifacts(root)
     stale = sorted(invalidate_descendants(artifacts, changed_id, rules))
     append_event(
@@ -126,7 +157,7 @@ def invalidate_artifact_descendants(
 
 def resume_project(root: Path) -> dict[str, Any]:
     """Rebuild compact coordinator input and one ready action from disk."""
-    root = Path(root)
+    root = project_root(root)
     state = replay_events(root)
     if not state:
         raise ValueError("project event log does not contain initialization")
@@ -139,8 +170,8 @@ def resume_project(root: Path) -> dict[str, Any]:
     candidate_tasks = _load_candidate_tasks(root)
     locked = active_claim_task_ids(root)
     completed = sorted(
-        set(_task_ids(root / "tasks" / "results", ".json"))
-        | set(_task_ids(root / "tasks" / "stale-results", ".json"))
+        set(_task_ids(root, Path("tasks") / "results", ".json"))
+        | set(_task_ids(root, Path("tasks") / "stale-results", ".json"))
     )
     approvals = _load_approvals(root)
     coordinator_state = {
@@ -293,7 +324,8 @@ def _normalize_approvals(approvals: Iterable[Mapping[str, Any]]) -> list[dict[st
 
 def _load_artifacts(root: Path) -> list[dict[str, Any]]:
     artifacts = []
-    for artifact_id, path in sorted(_artifact_paths_by_id(root / "artifacts").items()):
+    artifacts_root = project_path(root, "artifacts")
+    for artifact_id, path in sorted(_artifact_paths_by_id(artifacts_root).items()):
         item = _read_valid_artifact(path)
         if item is None or item["artifact_id"] != artifact_id:
             raise ValueError(f"invalid artifact metadata: {path}")
@@ -303,7 +335,7 @@ def _load_artifacts(root: Path) -> list[dict[str, Any]]:
 
 def _load_candidate_tasks(root: Path) -> list[dict[str, Any]]:
     tasks = []
-    tasks_root = root / "tasks"
+    tasks_root = project_path(root, "tasks")
     if not tasks_root.is_dir():
         return tasks
     for path in sorted(tasks_root.glob("*.json")):
@@ -312,16 +344,23 @@ def _load_candidate_tasks(root: Path) -> list[dict[str, Any]]:
 
 
 def _load_approvals(root: Path) -> list[dict[str, Any]]:
-    approvals_root = root / "approvals"
+    approvals_root = project_path(root, "approvals")
     if not approvals_root.is_dir():
         return []
     return [read_approval(root, path.stem) for path in sorted(approvals_root.glob("*.json"))]
 
 
-def _task_ids(directory: Path, suffix: str) -> list[str]:
+def _task_ids(root: Path, relative: Path, suffix: str) -> list[str]:
+    directory = project_path(root, relative)
     if not directory.is_dir():
         return []
-    return sorted(path.name[: -len(suffix)] for path in directory.glob(f"*{suffix}"))
+    task_ids = []
+    for path in directory.glob(f"*{suffix}"):
+        if path.is_symlink():
+            raise ValueError(f"task result storage must not contain symlinks: {path.name}")
+        if path.is_file():
+            task_ids.append(path.name[: -len(suffix)])
+    return sorted(task_ids)
 
 
 def _string_set(value: Any, label: str) -> set[str]:

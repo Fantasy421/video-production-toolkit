@@ -8,7 +8,7 @@ description: Route Chinese talking-head and tutorial knowledge-video requests ab
 For a Chinese talking-head and tutorial knowledge-video request about a topic,
 script, voice, or A-roll:
 
-1. Read only the project's compact `project.json` state summary, then replay its events through the state manager. Stop if the summary does not match event replay, an approval is missing, or more than one contradictory task is marked ready.
+1. Read only the project's compact `project.json` state summary, then replay its events through the state manager. Reject capability/phase pairs outside `decision-gates.md`. Stop if the summary does not match event replay, an approval is missing, or more than one contradictory task is marked ready.
 2. Choose exactly one ready task: one action slice, never a fan-out. Do not generate media from this routing skill.
 3. Route its declared capability to exactly one child skill:
 

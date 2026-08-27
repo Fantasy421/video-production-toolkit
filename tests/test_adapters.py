@@ -19,6 +19,30 @@ class AdapterSelectionTests(unittest.TestCase):
     def test_h5_preview_prefers_hyperframes(self):
         selected = select_adapter("motion.preview", self.requirements(format="html"), self.manifests)
         self.assertEqual("hyperframes", selected["id"])
+        self.assertEqual("remotion", selected["fallback"]["id"])
+
+    def test_visual_direction_preview_is_a_declared_adapter_capability(self):
+        """Catches visual.preview routing to no provider despite the H5 workflow."""
+        selected = select_adapter(
+            "visual.preview", self.requirements(format="html"), self.manifests
+        )
+
+        self.assertEqual("hyperframes", selected["id"])
+        self.assertEqual("remotion", selected["fallback"]["id"])
+
+    def test_chatcut_declares_editable_timeline_assembly(self):
+        """Catches the default final timeline backend lacking its coordinator capability."""
+        selected = select_adapter(
+            "timeline.assemble",
+            self.requirements(
+                contract="timeline-contract-v1",
+                output="chatcut-project",
+                editable=True,
+            ),
+            self.manifests,
+        )
+
+        self.assertEqual("chatcut", selected["id"])
         self.assertIsNone(selected["fallback"])
 
     def test_editable_overlay_prefers_chatcut_motion_graphics(self):
@@ -82,7 +106,7 @@ class AdapterSelectionTests(unittest.TestCase):
             self.manifests,
         )
         self.assertEqual("hyperframes", selected["id"])
-        self.assertIsNone(selected["fallback"])
+        self.assertEqual("remotion", selected["fallback"]["id"])
 
     def test_explicit_primary_preference_retains_only_its_declared_authorized_fallback(self):
         selected = select_adapter(

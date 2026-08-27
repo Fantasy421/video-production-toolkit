@@ -23,3 +23,11 @@ workers cannot complete a task with an old token.
 A result that no longer matches the envelope inputs, whose inputs are not
 approved, or whose input lineage has a newer approved version, is retained under
 `tasks/stale-results/` and never registered as task output.
+
+Only `succeeded` is a terminal task result and may be stored under
+`tasks/results/`; it must return at least one existing artifact whose
+`output_contract` matches the immutable task envelope. `blocked`,
+`waiting_external`, `waiting_user`, `failed`, and `cancelled` are resumable
+checkpoints stored under `tasks/status/`. They release the active claim and do
+not prevent a later worker from reclaiming the task. Any artifact ID returned by
+a checkpoint must still exist and match the envelope output contract.

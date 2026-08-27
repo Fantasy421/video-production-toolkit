@@ -16,8 +16,10 @@ _REQUIREMENT_KEYS = {
 }
 _LOCAL_NO_CREDIT = {"hyperframes", "remotion", "chatcut"}
 _PRIMARY_ORDER = {
+    "visual.preview": ("hyperframes", "remotion"),
     "motion.preview": ("hyperframes", "remotion"),
     "motion.produce": ("remotion", "video-shotcraft", "chatcut"),
+    "timeline.assemble": ("chatcut",),
 }
 _OVERLAY_ORDER = ("chatcut", "remotion", "video-shotcraft")
 

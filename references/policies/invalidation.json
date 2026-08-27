@@ -1,8 +1,10 @@
 {
-  "narration": ["semantic-beats", "storyboard", "scene-contract", "media", "timeline", "review-pack"],
+  "narration": ["semantic-beats", "storyboard", "scene-contract", "media", "motion-graphic", "timeline", "review-pack"],
   "voice-timing": ["semantic-beats", "storyboard", "scene-contract", "timeline", "review-pack"],
   "style-pack": ["visual-preview", "media", "motion-graphic", "timeline", "review-pack"],
   "layout-pack": ["visual-preview", "scene-contract", "media", "motion-graphic", "timeline", "review-pack"],
-  "scene-media": ["timeline", "review-pack"],
+  "scene-contract": ["media", "motion-graphic", "timeline", "review-pack"],
+  "media": ["timeline", "review-pack"],
+  "motion-graphic": ["timeline", "review-pack"],
   "caption-style": ["captions", "timeline", "review-pack"]
 }

@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from scripts.build_review_pack import build_review_pack
-from scripts.toolkit.project_state import initialize_project, set_active_timeline
+from scripts.toolkit.project_state import append_event, initialize_project, set_active_timeline
 
 
 class ReviewPackTests(unittest.TestCase):
@@ -52,9 +52,79 @@ class ReviewPackTests(unittest.TestCase):
         self.assertIn("../previews/S01-preview.jpg", html)
         self.assertEqual("Representative slice and final draft", review["decision_requests"][0]["gate"])
 
+    def test_review_pack_excludes_a_timeline_staled_by_an_event_overlay(self):
+        """Catches review packaging presenting a timeline invalidated only in the event log."""
+        initialize_project(self.root, "review-invalidated", "knowledge-video")
+        append_event(
+            self.root,
+            {
+                "event": "artifacts.invalidated",
+                "changed_id": "timeline-v1",
+                "artifact_ids": ["timeline-v1"],
+            },
+        )
+
+        path = build_review_pack(self.root, self.root / "review")
+        review = json.loads((path.parent / "review.json").read_text(encoding="utf-8"))
+
+        self.assertNotIn('data-scene-id="S01"', path.read_text(encoding="utf-8"))
+        self.assertIn(
+            "missing-active-timeline",
+            {item["code"] for item in review["structural_errors"]},
+        )
+
+    def test_review_pack_excludes_timeline_scenes_when_referenced_media_is_stale(self):
+        """Catches an approved timeline presenting scene media invalidated by an event."""
+        initialize_project(self.root, "review-stale-media", "knowledge-video")
+        (self.root / "artifacts" / "media").mkdir()
+        (self.root / "artifacts" / "media" / "scene-S01-v1.json").write_text(
+            json.dumps(
+                {
+                    "artifact_id": "scene-S01-v1",
+                    "type": "media",
+                    "version": 1,
+                    "status": "approved",
+                    "parents": [],
+                    "path": "media/scene-S01.png",
+                }
+            ),
+            encoding="utf-8",
+        )
+        timeline_path = self.root / "timeline" / "timeline.json"
+        timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
+        timeline["tracks"][0]["clips"][0]["artifact_id"] = "scene-S01-v1"
+        timeline_path.write_text(json.dumps(timeline), encoding="utf-8")
+        append_event(
+            self.root,
+            {
+                "event": "artifacts.invalidated",
+                "changed_id": "scene-S01-v1",
+                "artifact_ids": ["scene-S01-v1"],
+            },
+        )
+
+        path = build_review_pack(self.root, self.root / "review")
+        review = json.loads((path.parent / "review.json").read_text(encoding="utf-8"))
+
+        self.assertEqual([], review["scenes"])
+        self.assertNotIn('data-scene-id="S01"', path.read_text(encoding="utf-8"))
+        self.assertIn(
+            "stale-active-artifact",
+            {item["code"] for item in review["structural_errors"]},
+        )
+
     def test_review_pack_rejects_output_outside_project(self):
         with self.assertRaises(ValueError):
             build_review_pack(self.root, self.root.parent / "outside-review")
+
+    def test_review_pack_rejects_a_symlinked_project_root(self):
+        """Catches root resolution hiding a caller-controlled project symlink."""
+        with TemporaryDirectory() as folder:
+            linked_root = Path(folder) / "project-link"
+            linked_root.symlink_to(self.root, target_is_directory=True)
+
+            with self.assertRaises(ValueError):
+                build_review_pack(linked_root, linked_root / "review")
 
     def test_review_pack_does_not_link_preview_symlinks_outside_project(self):
         external = self.root.parent / "outside-preview.jpg"

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
@@ -45,6 +46,30 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual(self.root / "artifacts" / "style-pack" / "style-v1.json", path)
         self.assertEqual(self.artifact, json.loads(path.read_text(encoding="utf-8")))
 
+    def test_artifact_and_approval_storage_reject_symlink_escapes(self):
+        """Catches runtime metadata writes following artifacts or approvals outside the project."""
+        with TemporaryDirectory() as outside_folder:
+            outside = Path(outside_folder)
+            (self.root / "artifacts").symlink_to(outside / "artifacts", target_is_directory=True)
+            (outside / "artifacts").mkdir()
+
+            with self.assertRaises(ValueError):
+                create_artifact(self.root, self.artifact)
+            self.assertEqual([], list((outside / "artifacts").rglob("*.json")))
+
+        (self.root / "artifacts").unlink()
+        create_artifact(self.root, self.artifact)
+        with TemporaryDirectory() as outside_folder:
+            outside = Path(outside_folder)
+            (outside / "approvals").mkdir()
+            (self.root / "approvals").symlink_to(
+                outside / "approvals", target_is_directory=True
+            )
+
+            with self.assertRaises(ValueError):
+                approve_artifact(self.root, "style-v1", "whole-project", "approved")
+            self.assertEqual([], list((outside / "approvals").glob("*.json")))
+
     def test_artifact_rejects_unknown_parent(self):
         """Catches a DAG edge being recorded without a durable parent artifact."""
         artifact = {**self.artifact, "artifact_id": "preview-v1", "parents": ["missing-v1"]}
@@ -60,6 +85,56 @@ class ArtifactTests(unittest.TestCase):
 
                 with self.assertRaises(ValueError):
                     create_artifact(self.root, artifact)
+
+    def test_artifact_payload_path_must_remain_inside_the_project(self):
+        """Catches metadata registering an absolute or traversing payload path."""
+        unsafe_paths = (
+            "../outside.json",
+            "/tmp/outside.json",
+            "..\\outside.json",
+            "C:/outside.json",
+            ".",
+        )
+        for index, payload_path in enumerate(unsafe_paths, 1):
+            with self.subTest(payload_path=payload_path):
+                artifact_id = f"style-unsafe-v{index}"
+                artifact = {
+                    **self.artifact,
+                    "artifact_id": artifact_id,
+                    "path": payload_path,
+                }
+
+                with self.assertRaises(ValueError):
+                    create_artifact(self.root, artifact)
+
+                self.assertFalse(
+                    (self.root / "artifacts" / "style-pack" / f"{artifact_id}.json").exists()
+                )
+
+    def test_artifact_schema_rejects_unsafe_project_paths(self):
+        """Catches schema consumers accepting paths the runtime must reject."""
+        schema = json.loads(
+            (
+                Path(__file__).parents[1]
+                / "references/schemas/artifact.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        path_schema = schema["properties"]["path"]
+        self.assertIn("pattern", path_schema)
+        pattern = path_schema["pattern"]
+
+        for unsafe in (
+            "../outside.json",
+            "/tmp/outside.json",
+            "..\\outside.json",
+            "C:/outside.json",
+            ".",
+        ):
+            with self.subTest(unsafe=unsafe):
+                self.assertIsNone(re.search(pattern, unsafe))
+        for valid in ("media/scene-S01.png", "timeline/editable.project"):
+            with self.subTest(valid=valid):
+                self.assertIsNotNone(re.search(pattern, valid))
 
     def test_serialization_failure_leaves_no_artifact_and_retry_succeeds(self):
         """Catches a failed JSON write reserving an ID or publishing a partial file."""

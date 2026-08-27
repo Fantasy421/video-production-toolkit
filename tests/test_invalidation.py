@@ -44,6 +44,26 @@ class InvalidationTests(unittest.TestCase):
 
         self.assertEqual(set(), invalidate_descendants(artifacts, "style-v1", self.rules))
 
+    def test_shipped_policy_invalidates_scene_contract_media_and_timeline_descendants(self):
+        """Catches resume smoke passing only because it injects private invalidation rules."""
+        artifacts = [
+            {"artifact_id": "contract-S01-v1", "type": "scene-contract", "parents": []},
+            {"artifact_id": "scene-S01-v1", "type": "media", "parents": ["contract-S01-v1"]},
+            {"artifact_id": "timeline-v1", "type": "timeline", "parents": ["scene-S01-v1"]},
+            {"artifact_id": "review-v1", "type": "review-pack", "parents": ["timeline-v1"]},
+        ]
+
+        self.assertEqual(
+            {"scene-S01-v1", "timeline-v1", "review-v1"},
+            invalidate_descendants(artifacts, "contract-S01-v1", self.rules),
+        )
+
+    def test_shipped_policy_uses_the_canonical_media_artifact_type(self):
+        """Catches the policy naming scene-media while production artifacts are media."""
+        self.assertIn("media", self.rules["scene-contract"])
+        self.assertIn("media", self.rules["style-pack"])
+        self.assertNotIn("scene-media", self.rules)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,5 +8,13 @@
   "license": "CC0-1.0",
   "mechanism": "explainer-overlay",
   "participants": ["host", "diagram"],
-  "canvas": ["16:9"]
+  "canvas": ["16:9"],
+  "regions": {
+    "subject": {"x": 0.05, "y": 0.08, "width": 0.38, "height": 0.72},
+    "information": {"x": 0.47, "y": 0.08, "width": 0.48, "height": 0.72},
+    "subtitle": {"x": 0.08, "y": 0.82, "width": 0.84, "height": 0.10},
+    "platform_safe": {"x": 0.05, "y": 0.05, "width": 0.90, "height": 0.90}
+  },
+  "density": "medium",
+  "media_compatibility": ["a-roll", "motion-graphics", "evidence", "captions"]
 }

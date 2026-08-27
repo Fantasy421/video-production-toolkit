@@ -31,5 +31,26 @@ their prerequisite gate lacks a scoped approval artifact. Workers must not
 invent, broaden, or override a gate decision. The coordinator may dispatch only
 the next task allowed by the recorded decision.
 
+## Phase routing
+
+Project phase is replayed from the event log and may advance only one step at a
+time. The coordinator rejects candidate capabilities outside these legal
+phase/scope combinations:
+
+| Project phase | Legal production capability |
+| --- | --- |
+| `initialized` | `narration.plan` |
+| `content_ready` | `visual.preview` |
+| `direction_ready` | `storyboard.plan` |
+| `storyboard_ready` | representative-slice `scene.produce`, `motion.preview`, `motion.produce`, or `timeline.assemble` |
+| `production_ready` | full-production `scene.produce`, `motion.produce`, or `timeline.assemble` |
+| `assembled` | `structure.validate` |
+| `review_ready` | `review.package` |
+| any valid phase | `project.manage` |
+
+`handoff_ready` has no further production capability other than
+`project.manage`. Phase eligibility never substitutes for the approval gate in
+the table above; both checks must pass.
+
 See `../schemas/approval.schema.json`, `../schemas/task-envelope.schema.json`,
 and `../schemas/task-result.schema.json`.

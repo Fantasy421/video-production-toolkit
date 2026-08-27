@@ -25,16 +25,12 @@ class PackageTests(unittest.TestCase):
         """Catches a marketplace entry whose manifest cannot expose bundled skills."""
         with TemporaryDirectory() as folder:
             package = Path(folder)
-            for relative in (
-                ".codex-plugin/plugin.json",
-                "agents/openai.yaml",
-                "assets/project-template/project.json",
-                "assets/project-template/review-pack/index.html",
-                "skills/video-director/SKILL.md",
-            ):
-                destination = package / relative
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_bytes((ROOT / relative).read_bytes())
+            shutil.copytree(
+                ROOT,
+                package,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns(".git", "__pycache__"),
+            )
             manifest_path = package / ".codex-plugin" / "plugin.json"
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             manifest["name"] = "Video Production Toolkit"
@@ -52,6 +48,24 @@ class PackageTests(unittest.TestCase):
             "assets/project-template/project.json",
             "assets/project-template/review-pack/index.html",
         ):
+            with self.subTest(relative=relative), TemporaryDirectory() as folder:
+                package = Path(folder) / "package"
+                shutil.copytree(ROOT, package, ignore=shutil.ignore_patterns(".git"))
+                (package / relative).unlink()
+
+                self.assertIn(f"missing:{relative}", validate_package(package))
+
+    def test_style_and_layout_pack_assets_are_required(self):
+        """Catches installation omitting schemas, manifests, or human previews."""
+        required_pack_assets = (
+            "references/schemas/style-pack.schema.json",
+            "references/schemas/layout-pack.schema.json",
+            "registries/styles/editorial-clean/v1/manifest.json",
+            "registries/layouts/talking-head-left-explainer-right/v1/manifest.json",
+            "previews/styles/editorial-clean-v1.html",
+            "previews/layouts/talking-head-left-explainer-right-v1.html",
+        )
+        for relative in required_pack_assets:
             with self.subTest(relative=relative), TemporaryDirectory() as folder:
                 package = Path(folder) / "package"
                 shutil.copytree(ROOT, package, ignore=shutil.ignore_patterns(".git"))

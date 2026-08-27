@@ -21,6 +21,13 @@ class TaskTests(unittest.TestCase):
             self.create_artifact("style-v3", "style-pack", 3),
             self.create_artifact("layout-v2", "layout-pack", 2),
         ]
+        self.create_artifact(
+            "motion-preview-S03-v2",
+            "visual-preview",
+            2,
+            parents=self.inputs,
+            output_contract="motion-preview-v1",
+        )
         self.envelope = {
             "task_id": "preview-S03-v2",
             "capability": "motion.preview",
@@ -33,7 +40,9 @@ class TaskTests(unittest.TestCase):
     def tearDown(self):
         self.folder.cleanup()
 
-    def create_artifact(self, artifact_id, artifact_type, version, status="approved", parents=None):
+    def create_artifact(
+        self, artifact_id, artifact_type, version, status="approved", parents=None, **metadata
+    ):
         create_artifact(
             self.root,
             {
@@ -43,6 +52,7 @@ class TaskTests(unittest.TestCase):
                 "status": status,
                 "parents": [] if parents is None else parents,
                 "path": f"media/{artifact_id}.json",
+                **metadata,
             },
         )
         return artifact_id
@@ -72,6 +82,41 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(self.envelope, json.loads(path.read_text(encoding="utf-8")))
         with self.assertRaises(FileExistsError):
             create_task(self.root, self.envelope)
+
+    def test_task_storage_rejects_a_symlink_escape(self):
+        """Catches task envelopes and claims being written outside the runtime project."""
+        with TemporaryDirectory() as outside_folder:
+            outside = Path(outside_folder) / "tasks"
+            outside.mkdir()
+            (self.root / "tasks").symlink_to(outside, target_is_directory=True)
+
+            with self.assertRaises(ValueError):
+                create_task(self.root, self.envelope)
+            self.assertEqual([], list(outside.rglob("*.json")))
+
+    def test_active_claim_scan_rejects_a_symlinked_claim_record(self):
+        """Catches live-claim discovery reading a foreign lock through a symlink."""
+        locks = self.root / "tasks" / "locks"
+        locks.mkdir(parents=True)
+        with TemporaryDirectory() as outside_folder:
+            foreign = Path(outside_folder) / "foreign.lock"
+            foreign.write_text(
+                json.dumps(
+                    {
+                        "task_id": "foreign",
+                        "worker_id": "outside-worker",
+                        "claim_token": "outside-token",
+                        "pid": os.getpid(),
+                        "created_at": 1.0,
+                        "lease_expires_at": 2.0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (locks / "foreign.lock").symlink_to(foreign)
+
+            with self.assertRaises(ValueError):
+                tasks.active_claim_task_ids(self.root)
 
     def test_runtime_rejects_properties_outside_task_schemas(self):
         """Catches runtime records accepting fields rejected by the persisted schemas."""
@@ -236,6 +281,80 @@ class TaskTests(unittest.TestCase):
             ),
         )
 
+    def test_only_succeeded_results_are_terminal(self):
+        """Catches wait, failure, cancellation, or blocker checkpoints preventing resume."""
+        for status in ("blocked", "waiting_external", "waiting_user", "failed", "cancelled"):
+            with self.subTest(status=status), TemporaryDirectory() as folder:
+                root = Path(folder)
+                for artifact_id, artifact_type, version in (
+                    ("scene-contract-S03-v4", "scene-contract", 4),
+                    ("style-v3", "style-pack", 3),
+                    ("layout-v2", "layout-pack", 2),
+                ):
+                    create_artifact(
+                        root,
+                        {
+                            "artifact_id": artifact_id,
+                            "type": artifact_type,
+                            "version": version,
+                            "status": "approved",
+                            "parents": [],
+                            "path": f"media/{artifact_id}.json",
+                        },
+                    )
+                create_task(root, self.envelope)
+                claim = claim_task(root, "preview-S03-v2", "worker-a")
+                checkpoint = self.result_for(
+                    claim,
+                    status=status,
+                    artifacts=[],
+                    error="adapter_error" if status in {"blocked", "failed", "cancelled"} else None,
+                    user_decision_request="choose a direction" if status == "waiting_user" else None,
+                )
+                checkpoint = {key: value for key, value in checkpoint.items() if value is not None}
+
+                self.assertEqual("resumable", complete_task(root, checkpoint))
+                self.assertFalse((root / "tasks" / "results" / "preview-S03-v2.json").exists())
+                self.assertTrue((root / "tasks" / "status" / "preview-S03-v2.json").is_file())
+                resumed = claim_task(root, "preview-S03-v2", "worker-b")
+                self.assertEqual("worker-b", resumed["worker_id"])
+
+    def test_returned_artifacts_must_exist_and_match_the_envelope_output_contract(self):
+        """Catches a succeeded or waiting result publishing invented or wrong-contract output IDs."""
+        claim = self.dispatch_and_claim()
+        with self.assertRaises(ValueError):
+            complete_task(
+                self.root,
+                self.result_for(claim, status="waiting_external", artifacts=["missing-preview"]),
+            )
+        self.assertTrue((self.root / "tasks" / "locks" / "preview-S03-v2.lock").exists())
+
+        create_artifact(
+            self.root,
+            {
+                "artifact_id": "wrong-contract-preview",
+                "type": "visual-preview",
+                "version": 1,
+                "status": "approved",
+                "parents": self.inputs,
+                "path": "media/wrong-contract-preview.json",
+                "output_contract": "different-preview-v1",
+            },
+        )
+        with self.assertRaises(ValueError):
+            complete_task(
+                self.root,
+                self.result_for(claim, artifacts=["wrong-contract-preview"]),
+            )
+        self.assertTrue((self.root / "tasks" / "locks" / "preview-S03-v2.lock").exists())
+
+    def test_succeeded_result_requires_at_least_one_returned_artifact(self):
+        """Catches a success marker terminating work without its contracted output."""
+        claim = self.dispatch_and_claim()
+
+        with self.assertRaises(ValueError):
+            complete_task(self.root, self.result_for(claim, artifacts=[]))
+
     def test_retry_ledger_enforces_two_attempts_then_one_declared_fallback(self):
         """Catches retry state resetting and repeatedly returning to an earlier adapter."""
         create_task(self.root, self.envelope)
@@ -296,6 +415,28 @@ class TaskTests(unittest.TestCase):
                 "preview-S03-v2",
                 {"error": "adapter_error", "adapter": "untrusted-renderer"},
             )
+
+    def test_retry_skips_a_preferred_adapter_incompatible_with_the_task_capability(self):
+        """Catches motion.preview switching from Hyperframes to VideoShotCraft."""
+        envelope = {
+            **self.envelope,
+            "task_id": "preview-compatible-fallback",
+            "adapter_preferences": ["hyperframes", "video-shotcraft", "remotion"],
+        }
+        create_task(self.root, envelope)
+
+        self.assertEqual(
+            {"action": "retry", "adapter": "hyperframes"},
+            retry_decision(
+                self.root, "preview-compatible-fallback", {"error": "adapter_error"}
+            ),
+        )
+        self.assertEqual(
+            {"action": "switch-adapter", "adapter": "remotion"},
+            retry_decision(
+                self.root, "preview-compatible-fallback", {"error": "adapter_error"}
+            ),
+        )
 
     def test_concurrent_retry_updates_do_not_lose_an_attempt(self):
         """Catches two failed attempts racing and both persisting an attempt count of one."""

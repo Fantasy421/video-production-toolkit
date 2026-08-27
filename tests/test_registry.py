@@ -174,9 +174,12 @@ class RegistryTests(unittest.TestCase):
         }
 
         self.assertIn("motion.preview", manifests["hyperframes"]["capabilities"])
+        self.assertIn("visual.preview", manifests["hyperframes"]["capabilities"])
         self.assertTrue({"motion.preview", "motion.produce"} <= set(manifests["remotion"]["capabilities"]))
+        self.assertIn("visual.preview", manifests["remotion"]["capabilities"])
         self.assertIn("motion.produce", manifests["video-shotcraft"]["capabilities"])
         self.assertIn("motion.produce", manifests["chatcut"]["capabilities"])
+        self.assertIn("timeline.assemble", manifests["chatcut"]["capabilities"])
 
     def test_video_shotcraft_index_keeps_metadata_and_external_source_reference_only(self):
         """Catches indexing that embeds external recipe bodies instead of a source reference."""
@@ -276,6 +279,91 @@ class RegistryTests(unittest.TestCase):
         for kind in ("styles", "layouts", "recipes", "adapters"):
             with self.subTest(kind=kind):
                 search_registry(ROOT, kind, {})
+
+    def test_style_and_layout_manifests_carry_their_authoritative_fields(self):
+        """Catches generic registry metadata replacing the pack contracts from the spec."""
+        style = json.loads(
+            (
+                ROOT
+                / "registries/styles/editorial-clean/v1/manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+        layout = json.loads(
+            (
+                ROOT
+                / "registries/layouts/talking-head-left-explainer-right/v1/manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+
+        self.assertTrue(
+            {
+                "tokens",
+                "rules",
+                "previews",
+                "applicability",
+                "exclusions",
+                "required_fonts",
+                "compatibility",
+                "project_evidence",
+            }
+            <= set(style)
+        )
+        self.assertTrue(
+            {"regions", "density", "media_compatibility"} <= set(layout)
+        )
+        for relative, required in (
+            (
+                "references/schemas/style-pack.schema.json",
+                "required_fonts",
+            ),
+            (
+                "references/schemas/layout-pack.schema.json",
+                "regions",
+            ),
+        ):
+            with self.subTest(schema=relative):
+                schema = json.loads((ROOT / relative).read_text(encoding="utf-8"))
+                self.assertIn(required, schema["required"])
+                self.assertFalse(schema["additionalProperties"])
+
+    def test_generic_registry_schema_can_express_exact_font_sources(self):
+        """Catches bundled fonts without paths or system fonts with impossible paths."""
+        schema = json.loads(
+            (
+                ROOT / "references/schemas/registry-entry.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+
+        font_items = schema["properties"]["required_fonts"]["items"]
+        self.assertIn("oneOf", font_items)
+        branches = {
+            branch["properties"]["source"]["const"]: branch
+            for branch in font_items["oneOf"]
+        }
+
+        self.assertEqual({"system", "bundled"}, set(branches))
+        self.assertEqual(["family", "source"], branches["system"]["required"])
+        self.assertEqual(
+            ["family", "source", "path"], branches["bundled"]["required"]
+        )
+
+    def test_registry_runtime_enforces_kind_specific_pack_contracts(self):
+        """Catches schema-only pack fields that runtime search silently ignores."""
+        source = json.loads(
+            (
+                ROOT
+                / "registries/styles/editorial-clean/v1/manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+        source.pop("required_fonts", None)
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            registry = root / "registries" / "styles"
+            registry.mkdir(parents=True)
+            (registry / "invalid.json").write_text(json.dumps(source), encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                search_registry(root, "styles", {})
 
     @staticmethod
     def recipe(recipe_id, canvas, duration=None):

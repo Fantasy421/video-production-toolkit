@@ -8,6 +8,12 @@ import struct
 from typing import Any, Iterable, Optional, Union
 import zlib
 
+from .contracts import validate_scene_contract
+from .project_state import PHASES
+from .invalidation import invalidated_artifact_ids
+from .packs import validate_layout_pack, validate_style_pack
+from .runtime_paths import project_path, project_root
+
 
 ARTIFACT_REQUIRED_KEYS = ("artifact_id", "type", "version", "status", "parents", "path")
 ARTIFACT_STATUSES = {"draft", "approved", "stale", "superseded", "invalid"}
@@ -20,7 +26,6 @@ TASK_REQUIRED_KEYS = {
     "output_contract",
     "constraints",
 }
-PRIMARY_CARRIERS = {"A-roll", "B-roll", "Scene", "Demo", "Motion Graphics", "Evidence"}
 NON_SEMANTIC_TRACK_KINDS = {
     "voice",
     "voiceover",
@@ -44,13 +49,29 @@ def validate_project(root: Path) -> dict[str, list[dict[str, Any]]]:
     aesthetic opinion or changes project state, so callers can safely run it
     before a user-review gate or after an interrupted production task.
     """
-    root = Path(root).resolve()
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
+    try:
+        root = project_root(root)
+    except ValueError:
+        return {
+            "errors": [_issue("unsafe-runtime-root")],
+            "warnings": [],
+        }
     project = _read_project(root, errors)
     artifacts = _read_artifacts(root, errors)
+    try:
+        invalidated = invalidated_artifact_ids(root)
+    except ValueError:
+        errors.append(_issue("invalid-event-log"))
+        invalidated = set()
+    artifacts = {
+        artifact_id: ({**artifact, "status": "stale"} if artifact_id in invalidated else artifact)
+        for artifact_id, artifact in artifacts.items()
+    }
     approvals = _read_approvals(root, errors)
     _check_artifact_graph(root, artifacts, errors)
+    _check_packs(root, artifacts, errors)
     _check_promoted_assets(root, artifacts, errors)
     _check_tasks(root, artifacts, errors)
     active_timeline = _resolve_active_timeline(root, project, artifacts, errors)
@@ -62,8 +83,12 @@ def validate_project(root: Path) -> dict[str, list[dict[str, Any]]]:
 
 
 def _read_project(root: Path, errors: list[dict[str, Any]]) -> dict[str, Any]:
-    project_path = root / "project.json"
-    project = _read_json_object(project_path)
+    try:
+        snapshot_path = project_path(root, "project.json")
+    except ValueError:
+        errors.append(_issue("unsafe-runtime-storage", storage="project.json"))
+        return {}
+    project = _read_json_object(snapshot_path)
     if project is None:
         errors.append(_issue("missing-project-state", path="project.json"))
         return {}
@@ -75,6 +100,9 @@ def _read_project(root: Path, errors: list[dict[str, Any]]) -> dict[str, Any]:
     if not all(isinstance(project.get(key), str) and project[key] for key in ("project_id", "workflow", "phase")):
         errors.append(_issue("invalid-project-state", path="project.json"))
         return {}
+    if project["phase"] not in PHASES:
+        errors.append(_issue("invalid-project-state", path="project.json"))
+        return {}
     if "active_timeline_id" in project and not _safe_component(project["active_timeline_id"]):
         errors.append(_issue("invalid-project-state", path="project.json"))
         return {}
@@ -84,9 +112,22 @@ def _read_project(root: Path, errors: list[dict[str, Any]]) -> dict[str, Any]:
 def _read_artifacts(root: Path, errors: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     artifacts: dict[str, dict[str, Any]] = {}
     artifacts_root = root / "artifacts"
+    if artifacts_root.is_symlink():
+        errors.append(_issue("unsafe-runtime-storage", storage="artifacts"))
+        return artifacts
     if not artifacts_root.is_dir():
         return artifacts
-    for path in sorted(artifacts_root.glob("*/*.json")):
+    paths = []
+    for type_directory in sorted(artifacts_root.iterdir()):
+        if type_directory.is_symlink():
+            errors.append(_issue("unsafe-runtime-storage", storage=_relative(root, type_directory)))
+            continue
+        if type_directory.is_dir():
+            paths.extend(sorted(type_directory.glob("*.json")))
+    for path in paths:
+        if path.is_symlink():
+            errors.append(_issue("unsafe-runtime-storage", storage=_relative(root, path)))
+            continue
         raw = _read_json_object(path)
         if raw is None or not _valid_artifact(raw) or path.name != f"{raw.get('artifact_id')}.json":
             errors.append(_issue("invalid-artifact-metadata", path=_relative(root, path)))
@@ -119,9 +160,17 @@ def _valid_artifact(artifact: dict[str, Any]) -> bool:
 def _read_approvals(root: Path, errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
     approvals: list[dict[str, Any]] = []
     approval_root = root / "approvals"
+    if approval_root.is_symlink():
+        errors.append(_issue("unsafe-runtime-storage", storage="approvals"))
+        return approvals
     if not approval_root.is_dir():
         return approvals
     for path in sorted(approval_root.glob("*.json")):
+        if path.is_symlink():
+            errors.append(
+                _issue("unsafe-runtime-storage", storage=_relative(root, path))
+            )
+            continue
         approval = _read_json_object(path)
         if approval is None or not _valid_approval(approval) or path.name != f"{approval.get('approval_id')}.json":
             errors.append(_issue("invalid-approval-record", path=_relative(root, path)))
@@ -180,6 +229,63 @@ def _check_artifact_parent_cycles(artifacts: dict[str, dict[str, Any]], errors: 
         visit(artifact_id)
     for artifact_id in sorted(cycle_members):
         errors.append(_issue("artifact-parent-cycle", artifact_id=artifact_id))
+
+
+def _check_packs(
+    root: Path,
+    artifacts: dict[str, dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> None:
+    """Validate approved pack payloads, normalized regions, previews, and fonts."""
+    for artifact_id in sorted(artifacts):
+        artifact = artifacts[artifact_id]
+        if artifact["type"] not in {"style-pack", "layout-pack"}:
+            continue
+        source = _safe_project_path(root, artifact["path"])
+        payload = _read_json_object(source) if source is not None else None
+        if payload is None:
+            continue
+        try:
+            if artifact["type"] == "style-pack":
+                payload = validate_style_pack(payload)
+            else:
+                payload = validate_layout_pack(payload)
+        except ValueError:
+            errors.append(
+                _issue(
+                    "invalid-style-pack"
+                    if artifact["type"] == "style-pack"
+                    else "invalid-layout-pack",
+                    artifact_id=artifact_id,
+                )
+            )
+            continue
+        previews = payload["previews"] if artifact["type"] == "style-pack" else [payload["preview"]]
+        for preview in previews:
+            preview_path = _safe_project_path(root, preview)
+            if preview_path is None or not preview_path.is_file():
+                errors.append(
+                    _issue(
+                        "missing-pack-preview",
+                        artifact_id=artifact_id,
+                        path=preview,
+                    )
+                )
+        if artifact["type"] != "style-pack":
+            continue
+        for font in payload["required_fonts"]:
+            if font["source"] != "bundled":
+                continue
+            font_path = _safe_project_path(root, font["path"])
+            if font_path is None or not font_path.is_file():
+                errors.append(
+                    _issue(
+                        "missing-required-font",
+                        artifact_id=artifact_id,
+                        family=font["family"],
+                        path=font["path"],
+                    )
+                )
 
 
 def _check_promoted_assets(
@@ -443,9 +549,17 @@ def _png_predictor(
 
 def _check_tasks(root: Path, artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]]) -> None:
     task_root = root / "tasks"
+    if task_root.is_symlink():
+        errors.append(_issue("unsafe-runtime-storage", storage="tasks"))
+        return
     if not task_root.is_dir():
         return
     for path in sorted(task_root.glob("*.json")):
+        if path.is_symlink():
+            errors.append(
+                _issue("unsafe-runtime-storage", storage=_relative(root, path))
+            )
+            continue
         envelope = _read_json_object(path)
         if envelope is None or not _valid_task_envelope(envelope) or path.name != f"{envelope.get('task_id')}.json":
             errors.append(_issue("invalid-task-envelope", path=_relative(root, path)))
@@ -473,11 +587,49 @@ def _valid_task_envelope(envelope: dict[str, Any]) -> bool:
 
 def resolve_active_timeline(root: Path) -> Optional[tuple[str, dict[str, Any]]]:
     """Resolve the one approved, fresh timeline referenced by persisted state."""
-    root = Path(root).resolve()
+    root = project_root(root)
     ignored: list[dict[str, Any]] = []
     project = _read_project(root, ignored)
     artifacts = _read_artifacts(root, ignored)
-    return _resolve_active_timeline(root, project, artifacts, ignored)
+    try:
+        invalidated = invalidated_artifact_ids(root)
+    except ValueError:
+        return None
+    artifacts = {
+        artifact_id: ({**artifact, "status": "stale"} if artifact_id in invalidated else artifact)
+        for artifact_id, artifact in artifacts.items()
+    }
+    selected = _resolve_active_timeline(root, project, artifacts, ignored)
+    if selected is None:
+        return None
+    timeline_id, timeline = selected
+    if not _timeline_references_are_current(
+        artifacts[timeline_id], timeline, artifacts
+    ):
+        return None
+    return selected
+
+
+def _timeline_references_are_current(
+    timeline_artifact: dict[str, Any],
+    timeline: dict[str, Any],
+    artifacts: dict[str, dict[str, Any]],
+) -> bool:
+    referenced_ids = set(timeline_artifact["parents"])
+    for _, _, _, clips in _timeline_tracks(timeline):
+        for clip in clips:
+            for field in ("artifact_id", "contract_id"):
+                artifact_id = clip.get(field)
+                if artifact_id is not None:
+                    if not isinstance(artifact_id, str) or not artifact_id:
+                        return False
+                    referenced_ids.add(artifact_id)
+    return all(
+        artifact_id in artifacts
+        and artifacts[artifact_id]["status"] == "approved"
+        and not _has_newer_approved_lineage(artifacts[artifact_id], artifacts)
+        for artifact_id in referenced_ids
+    )
 
 
 def _resolve_active_timeline(root: Path, project: dict[str, Any], artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]]) -> Optional[tuple[str, dict[str, Any]]]:
@@ -628,22 +780,35 @@ def _check_contracts(root: Path, timeline_id: str, timeline: dict[str, Any], art
         if payload is None:
             errors.append(_issue("invalid-contract-coverage", contract_id=contract_id, timeline_id=timeline_id))
             continue
-        beats = _object_list(payload.get("semantic_beats", []))
-        if not beats:
-            errors.append(_issue("missing-contract-coverage", contract_id=contract_id, timeline_id=timeline_id))
+        try:
+            payload = validate_scene_contract(payload)
+        except ValueError:
+            errors.append(
+                _issue(
+                    "invalid-scene-contract",
+                    contract_id=contract_id,
+                    timeline_id=timeline_id,
+                )
+            )
             continue
         for clip in referenced[contract_id]:
             scene_id = clip.get("scene_id")
             if isinstance(scene_id, str) and scene_id and payload.get("scene_id") != scene_id:
                 errors.append(_issue("contract-scene-mismatch", contract_id=contract_id, scene_id=scene_id, timeline_id=timeline_id))
-        for beat in beats:
-            carrier = beat.get("primary_carrier")
-            secondary = beat.get("secondary_layer", beat.get("secondary_layers", []))
-            layers = secondary if isinstance(secondary, list) else [secondary] if secondary else []
-            if carrier not in PRIMARY_CARRIERS:
-                errors.append(_issue("invalid-primary-carrier", contract_id=contract_id))
-            if len(layers) > 1:
-                errors.append(_issue("too-many-secondary-layers", contract_id=contract_id))
+            start, end = clip.get("start_ms"), clip.get("end_ms")
+            if (
+                _duration(start)
+                and _duration(end)
+                and (start < payload["start_ms"] or end > payload["end_ms"])
+            ):
+                errors.append(
+                    _issue(
+                        "contract-timing-mismatch",
+                        contract_id=contract_id,
+                        scene_id=scene_id or "unknown",
+                        timeline_id=timeline_id,
+                    )
+                )
 
 
 def _check_demo_lifecycle(timeline_id: str, timeline: dict[str, Any], errors: list[dict[str, Any]]) -> None:
@@ -655,7 +820,7 @@ def _check_demo_lifecycle(timeline_id: str, timeline: dict[str, Any], errors: li
     }
     for _, _, _, clips in _timeline_tracks(timeline):
         for clip in clips:
-            if clip.get("primary_carrier") != "Demo":
+            if clip.get("primary_carrier") != "demo":
                 continue
             demo_id = clip.get("demo_id")
             record = records.get(demo_id) if isinstance(demo_id, str) else None
@@ -716,9 +881,8 @@ def _safe_project_path(root: Path, relative: Any) -> Optional[Path]:
     candidate = Path(relative)
     if candidate.is_absolute() or "\\" in relative or any(part in {".", ".."} for part in candidate.parts):
         return None
-    destination = root / candidate
     try:
-        destination.resolve().relative_to(root)
+        destination = project_path(root, candidate)
     except ValueError:
         return None
     return destination

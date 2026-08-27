@@ -12,8 +12,10 @@ from typing import Any, Optional
 from uuid import uuid4
 
 try:
+    from scripts.toolkit.runtime_paths import project_path, project_root
     from scripts.toolkit.validation import resolve_active_timeline, validate_project
 except ModuleNotFoundError:
+    from toolkit.runtime_paths import project_path, project_root
     from toolkit.validation import resolve_active_timeline, validate_project
 
 
@@ -28,14 +30,22 @@ def build_review_pack(root: Path, output: Path) -> Path:
     preview bytes or generate creative commentary; subjective decisions remain
     explicit requests for the user.
     """
-    root = Path(root).resolve()
-    output = Path(output)
-    output = output.resolve() if output.is_absolute() else (root / output).resolve()
+    lexical_root = project_root(root).absolute()
+    requested_output = Path(output)
+    if requested_output.is_absolute():
+        try:
+            relative_output = requested_output.relative_to(lexical_root)
+        except ValueError:
+            raise ValueError("review pack output must remain inside the project") from None
+    else:
+        relative_output = requested_output
+    root = lexical_root.resolve(strict=True)
     try:
-        output.relative_to(root)
+        output = project_path(root, relative_output)
     except ValueError:
         raise ValueError("review pack output must remain inside the project") from None
     output.mkdir(parents=True, exist_ok=True)
+    project_path(root, output.relative_to(root) / ".bundles")
     current = output / "current"
     if current.exists() and not current.is_symlink():
         raise ValueError("review pack current pointer must be a symlink")

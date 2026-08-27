@@ -15,6 +15,12 @@ Allowed inputs: accept only one claimed task-envelope with capability
 `visual.preview`, its declared narration/content references, and compact
 registry metadata.
 
+Pack contracts: a Style Pack carries tokens, rules, previews, applicability,
+exclusions, required fonts, compatibility, and project evidence. A Layout Pack
+carries canvas, normalized subject/information/subtitle/platform-safe regions,
+density, and media compatibility. Use the exact kind-specific schemas; a
+generic registry entry is not a substitute.
+
 Required output: Return a task-result envelope with preview and pack artifact
 IDs, objective checks, warnings, and the Visual direction decision request.
 
@@ -24,4 +30,6 @@ Visual direction gate has a scoped approval; return `waiting_user`.
 
 Follow `../../references/schemas/task-envelope.schema.json`,
 `../../references/schemas/task-result.schema.json`,
+`../../references/schemas/style-pack.schema.json`,
+`../../references/schemas/layout-pack.schema.json`,
 `../../references/policies/decision-gates.md`, and the registry manifests.

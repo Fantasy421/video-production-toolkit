@@ -6,8 +6,12 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Optional
 
+try:
+    from scripts.toolkit.contracts import SCENE_CARRIERS, validate_scene_contract
+except ModuleNotFoundError:
+    from toolkit.contracts import SCENE_CARRIERS, validate_scene_contract
 
-_CARRIERS = {"a-roll", "b-roll", "scene", "demo", "motion-graphics", "evidence"}
+
 _WEIGHTS = {
     "new-character-baseline": 5,
     "scene-image-generation": 4,
@@ -65,14 +69,13 @@ def _normalize_contracts(scene_contracts: Sequence[Mapping[str, Any]]) -> list[d
     for contract in scene_contracts:
         if not isinstance(contract, Mapping):
             raise ValueError("scene contract must be a mapping")
-        _validate_contract_shape(contract)
+        contract = validate_scene_contract(contract)
         scene_id = contract["scene_id"]
-        _safe_id(scene_id)
         start, end = contract.get("start_ms"), contract.get("end_ms")
         if isinstance(start, bool) or isinstance(end, bool) or not isinstance(start, int) or not isinstance(end, int) or start < 0 or end <= start:
             raise ValueError("scene contract requires non-overlapping positive millisecond timing")
         carrier = contract.get("primary_carrier")
-        if carrier not in _CARRIERS:
+        if carrier not in SCENE_CARRIERS:
             raise ValueError("scene contract has an unknown primary carrier")
         normalized.append({"id": scene_id, "start": start, "end": end, "carrier": carrier, "risks": _risks(contract, carrier)})
     normalized.sort(key=lambda item: (item["start"], item["end"], item["id"]))
@@ -178,26 +181,6 @@ def _duration_blocker(contracts: list[dict[str, Any]]) -> RepresentativeSlice:
             "required_high_risk_carriers": required,
         },
     )
-
-
-def _safe_id(value: Any) -> None:
-    import re
-    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_:-]*(?:\.[A-Za-z0-9][A-Za-z0-9_:-]*)*", value):
-        raise ValueError("scene_id must be a safe artifact token")
-
-
-def _validate_contract_shape(contract: Mapping[str, Any]) -> None:
-    allowed = {"scene_id", "start_ms", "end_ms", "primary_carrier", "secondary_layer", "purpose", "new_character_baseline", "scene_image_generation", "generated_video", "captions"}
-    required = {"scene_id", "start_ms", "end_ms", "primary_carrier", "purpose"}
-    if set(contract) - allowed or required - set(contract):
-        raise ValueError("scene contract does not match scene-contract-v1")
-    _safe_id(contract["scene_id"])
-    for field in ("purpose", "secondary_layer"):
-        if field in contract and (not isinstance(contract[field], str) or not contract[field]):
-            raise ValueError(f"scene contract {field} must be a non-empty string")
-    for field in ("new_character_baseline", "scene_image_generation", "generated_video", "captions"):
-        if field in contract and not isinstance(contract[field], bool):
-            raise ValueError(f"scene contract {field} must be a boolean")
 
 
 def main() -> None:
