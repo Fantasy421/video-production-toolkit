@@ -10,6 +10,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from scripts.toolkit.artifacts import _artifact_paths_by_id, _read_valid_artifact
+from scripts.toolkit.adapters import select_adapter
 from scripts.toolkit.invalidation import invalidated_artifact_ids
 from scripts.toolkit.runtime_paths import project_path, project_root, storage_directory
 
@@ -245,7 +246,7 @@ def _validate_result_artifacts(
 def _compatible_retry_fallback(
     envelope: dict[str, Any], current_adapter: str
 ) -> Optional[str]:
-    """Choose the selected manifest fallback before other compatible preferences."""
+    """Reuse initial routing predicates to choose the selected manifest fallback."""
     manifests_root = Path(__file__).parents[2] / "registries" / "adapters"
     manifests: dict[str, dict[str, Any]] = {}
     for path in sorted(manifests_root.glob("*.json")):
@@ -257,20 +258,41 @@ def _compatible_retry_fallback(
             raise ValueError(f"invalid packaged adapter manifest: {path}")
         manifests[path.stem] = manifest
     current = manifests.get(current_adapter)
-    if current is None or envelope["capability"] not in current.get("capabilities", []):
-        raise ValueError("retry adapter is incompatible with the task capability")
-    candidates = []
-    declared = current.get("fallback")
-    if isinstance(declared, str):
-        candidates.append(declared)
-    candidates.extend(envelope["adapter_preferences"])
-    for candidate_id in candidates:
-        if candidate_id == current_adapter or candidate_id not in envelope["adapter_preferences"]:
-            continue
-        candidate = manifests.get(candidate_id)
-        if candidate is not None and envelope["capability"] in candidate.get("capabilities", []):
-            return candidate_id
-    return None
+    if current is None:
+        raise ValueError("retry adapter is not a packaged adapter")
+
+    constraints = envelope["constraints"]
+    routing_keys = {
+        "accepted_contract",
+        "contract",
+        "editable",
+        "format",
+        "installed_skills",
+        "output",
+        "overlay",
+        "required_output",
+    }
+    requirements = {
+        key: constraints[key]
+        for key in routing_keys
+        if key in constraints
+    }
+    requirements["adapter_preferences"] = list(envelope["adapter_preferences"])
+    requirements["preferred_adapter"] = current_adapter
+    if "installed_skills" not in requirements:
+        requirements["installed_skills"] = [
+            manifests[adapter_id]["installed_skill"]
+            for adapter_id in envelope["adapter_preferences"]
+            if adapter_id in manifests
+        ]
+    if not ({"output", "required_output"} & requirements.keys()):
+        output_contract = envelope["output_contract"]
+        if any(output_contract in manifest.get("outputs", []) for manifest in manifests.values()):
+            requirements["output"] = output_contract
+
+    selected = select_adapter(envelope["capability"], requirements, manifests)
+    fallback = selected["fallback"]
+    return None if fallback is None else fallback["id"]
 
 
 def _has_newer_approved_lineage(

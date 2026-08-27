@@ -13,10 +13,10 @@ from uuid import uuid4
 
 try:
     from scripts.toolkit.runtime_paths import project_path, project_root
-    from scripts.toolkit.validation import resolve_active_timeline, validate_project
+    from scripts.toolkit.validation import read_effective_artifacts, resolve_active_timeline, validate_project
 except ModuleNotFoundError:
     from toolkit.runtime_paths import project_path, project_root
-    from toolkit.validation import resolve_active_timeline, validate_project
+    from toolkit.validation import read_effective_artifacts, resolve_active_timeline, validate_project
 
 
 PREVIEW_SUFFIXES = {".html", ".htm", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".webm", ".wav", ".mp3"}
@@ -73,14 +73,29 @@ def _preview_links(root: Path, output: Path) -> list[dict[str, str]]:
     if not preview_root.is_dir():
         return []
     links = []
-    for path in sorted(preview_root.rglob("*")):
+    artifacts = read_effective_artifacts(root)
+    for artifact_id in sorted(artifacts):
+        artifact = artifacts[artifact_id]
+        if artifact["status"] != "approved":
+            continue
+        try:
+            path = project_path(root, artifact["path"])
+        except ValueError:
+            continue
         if not path.is_file() or path.suffix.lower() not in PREVIEW_SUFFIXES:
             continue
         try:
-            path.resolve().relative_to(root)
+            label = path.relative_to(preview_root).as_posix()
         except ValueError:
             continue
-        links.append({"label": path.relative_to(preview_root).as_posix(), "href": os.path.relpath(path, output).replace(os.sep, "/")})
+        links.append(
+            {
+                "artifact_id": artifact_id,
+                "label": label,
+                "href": os.path.relpath(path, output).replace(os.sep, "/"),
+                "status": artifact["status"],
+            }
+        )
     return links
 
 
@@ -124,7 +139,7 @@ def _publish_bundle(output: Path, review: dict[str, Any], rendered_html: str) ->
 
 def _render_html(previews: list[dict[str, str]], scenes: list[dict[str, Any]], validation: dict[str, list[dict[str, Any]]], decision_requests: list[dict[str, str]]) -> str:
     preview_items = "\n".join(
-        f'<li><a href="{html.escape(item["href"], quote=True)}">{html.escape(item["label"])}</a></li>'
+        f'<li><a href="{html.escape(item["href"], quote=True)}">{html.escape(item["label"])} [{html.escape(item["status"])}]</a></li>'
         for item in previews
     ) or "<li>No preview files were found.</li>"
     scene_items = "\n".join(

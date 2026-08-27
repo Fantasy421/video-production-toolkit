@@ -248,7 +248,13 @@ def _score(entry: Mapping[str, Any], query: Mapping[str, Any]) -> int:
 def _supports_canvas(entry: Mapping[str, Any], requested: Any) -> bool:
     if requested in (None, "", [], ()):
         return True
-    return bool(_values(entry.get("canvas")) & _values(requested))
+    compatibility = entry.get("compatibility")
+    supported = (
+        compatibility.get("canvases")
+        if isinstance(compatibility, Mapping) and "canvases" in compatibility
+        else entry.get("canvas")
+    )
+    return bool(_values(supported) & _values(requested))
 
 
 def _exact_match(value: Any, requested: Any) -> bool:

@@ -438,6 +438,39 @@ class TaskTests(unittest.TestCase):
             ),
         )
 
+    def test_retry_blocks_video_shotcraft_for_a_rendered_video_contract(self):
+        """Catches retry bypassing the selected adapter's full routing contract."""
+        envelope = {
+            **self.envelope,
+            "task_id": "produce-rendered-video",
+            "capability": "motion.produce",
+            "adapter_preferences": ["remotion", "video-shotcraft"],
+            "output_contract": "rendered-video",
+            "constraints": {
+                "contract": "scene-contract-v1",
+                "output": "rendered-video",
+                "editable": True,
+                "installed_skills": [
+                    "remotion-best-practices",
+                    "video-shotcraft:video-shotcraft",
+                ],
+            },
+        }
+        create_task(self.root, envelope)
+
+        self.assertEqual(
+            {"action": "retry", "adapter": "remotion"},
+            retry_decision(
+                self.root, "produce-rendered-video", {"error": "adapter_error"}
+            ),
+        )
+        self.assertEqual(
+            {"action": "block", "reason": "no-fallback-adapter"},
+            retry_decision(
+                self.root, "produce-rendered-video", {"error": "adapter_error"}
+            ),
+        )
+
     def test_concurrent_retry_updates_do_not_lose_an_attempt(self):
         """Catches two failed attempts racing and both persisting an attempt count of one."""
         create_task(self.root, self.envelope)

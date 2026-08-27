@@ -82,6 +82,21 @@ def validate_project(root: Path) -> dict[str, list[dict[str, Any]]]:
     return {"errors": _sorted_issues(errors), "warnings": _sorted_issues(warnings)}
 
 
+def read_effective_artifacts(root: Path) -> dict[str, dict[str, Any]]:
+    """Return valid artifact metadata with event invalidation overlaid as stale."""
+    root = project_root(root)
+    artifacts = _read_artifacts(root, [])
+    invalidated = invalidated_artifact_ids(root)
+    return {
+        artifact_id: (
+            {**artifact, "status": "stale"}
+            if artifact_id in invalidated
+            else artifact
+        )
+        for artifact_id, artifact in artifacts.items()
+    }
+
+
 def _read_project(root: Path, errors: list[dict[str, Any]]) -> dict[str, Any]:
     try:
         snapshot_path = project_path(root, "project.json")
@@ -679,8 +694,8 @@ def _check_timeline(root: Path, timeline_id: str, timeline: dict[str, Any], arti
     for track_id, _, primary, clips in tracks:
         _check_track(timeline_id, track_id, primary or primary_count != 1, clips, duration, artifacts, errors, warnings)
     _check_captions(timeline_id, timeline.get("captions", []), duration, errors)
-    _check_contracts(root, timeline_id, timeline, artifacts, errors)
-    _check_demo_lifecycle(timeline_id, timeline, errors)
+    contracted_clips = _check_contracts(root, timeline_id, timeline, artifacts, errors)
+    _check_demo_lifecycle(timeline_id, timeline, contracted_clips, errors)
 
 
 def _timeline_tracks(timeline: dict[str, Any]) -> list[tuple[str, str, bool, list[dict[str, Any]]]]:
@@ -759,8 +774,15 @@ def _requires_scene_contract(track_kind: str, clip: dict[str, Any]) -> bool:
     return normalized not in NON_SEMANTIC_TRACK_KINDS
 
 
-def _check_contracts(root: Path, timeline_id: str, timeline: dict[str, Any], artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]]) -> None:
+def _check_contracts(
+    root: Path,
+    timeline_id: str,
+    timeline: dict[str, Any],
+    artifacts: dict[str, dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
     referenced: dict[str, list[dict[str, Any]]] = {}
+    contracted_clips: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for _, track_kind, _, clips in _timeline_tracks(timeline):
         for clip in clips:
             if not _requires_scene_contract(track_kind, clip):
@@ -792,6 +814,7 @@ def _check_contracts(root: Path, timeline_id: str, timeline: dict[str, Any], art
             )
             continue
         for clip in referenced[contract_id]:
+            contracted_clips.append((clip, payload))
             scene_id = clip.get("scene_id")
             if isinstance(scene_id, str) and scene_id and payload.get("scene_id") != scene_id:
                 errors.append(_issue("contract-scene-mismatch", contract_id=contract_id, scene_id=scene_id, timeline_id=timeline_id))
@@ -809,23 +832,28 @@ def _check_contracts(root: Path, timeline_id: str, timeline: dict[str, Any], art
                         timeline_id=timeline_id,
                     )
                 )
+    return contracted_clips
 
 
-def _check_demo_lifecycle(timeline_id: str, timeline: dict[str, Any], errors: list[dict[str, Any]]) -> None:
+def _check_demo_lifecycle(
+    timeline_id: str,
+    timeline: dict[str, Any],
+    contracted_clips: list[tuple[dict[str, Any], dict[str, Any]]],
+    errors: list[dict[str, Any]],
+) -> None:
     demos = timeline.get("demos", [])
     records = {
         demo.get("demo_id"): demo
         for demo in _object_list(demos)
         if isinstance(demo.get("demo_id"), str) and demo["demo_id"]
     }
-    for _, _, _, clips in _timeline_tracks(timeline):
-        for clip in clips:
-            if clip.get("primary_carrier") != "demo":
-                continue
-            demo_id = clip.get("demo_id")
-            record = records.get(demo_id) if isinstance(demo_id, str) else None
-            if record is None or record.get("status") not in {"captured", "recorded", "approved"}:
-                errors.append(_issue("demo-lifecycle-incomplete", timeline_id=timeline_id, demo_id=demo_id or "unknown"))
+    for clip, contract in contracted_clips:
+        if contract["primary_carrier"] != "demo":
+            continue
+        demo_id = clip.get("demo_id")
+        record = records.get(demo_id) if isinstance(demo_id, str) else None
+        if record is None or record.get("status") not in {"captured", "recorded", "approved"}:
+            errors.append(_issue("demo-lifecycle-incomplete", timeline_id=timeline_id, demo_id=demo_id or "unknown"))
 
 
 def _check_required_approvals(project: dict[str, Any], artifacts: dict[str, dict[str, Any]], approvals: list[dict[str, Any]], errors: list[dict[str, Any]]) -> None:

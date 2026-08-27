@@ -365,6 +365,27 @@ class RegistryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 search_registry(root, "styles", {})
 
+    def test_style_search_uses_authoritative_compatibility_canvases(self):
+        """Catches a schema-valid Style Pack needing the optional legacy canvas alias."""
+        source = json.loads(
+            (
+                ROOT
+                / "registries/styles/editorial-clean/v1/manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+        source.pop("canvas")
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            registry = root / "registries" / "styles"
+            registry.mkdir(parents=True)
+            (registry / "style.json").write_text(json.dumps(source), encoding="utf-8")
+
+            matching = search_registry(root, "styles", {"canvas": "16:9"})
+            incompatible = search_registry(root, "styles", {"canvas": "1:1"})
+
+        self.assertEqual(["editorial-clean"], [entry["id"] for entry in matching])
+        self.assertEqual([], incompatible)
+
     @staticmethod
     def recipe(recipe_id, canvas, duration=None):
         return {

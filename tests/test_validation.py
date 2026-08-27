@@ -800,6 +800,29 @@ class ValidationTests(unittest.TestCase):
             {item["code"] for item in result["errors"]},
         )
 
+    def test_canonical_demo_contract_requires_a_lifecycle_record(self):
+        """Catches lifecycle validation relying on a duplicate carrier field on the clip."""
+        contract_path = self.root / "contracts" / "S01.json"
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        contract["primary_carrier"] = "demo"
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+        timeline_path = self.root / "timeline" / "timeline-v1.json"
+        timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
+        timeline["tracks"][0]["clips"][0]["demo_id"] = "demo-S01"
+        timeline_path.write_text(json.dumps(timeline), encoding="utf-8")
+
+        result = validate_project(self.root)
+
+        lifecycle_errors = [
+            item
+            for item in result["errors"]
+            if item["code"] == "demo-lifecycle-incomplete"
+        ]
+        self.assertEqual(
+            [{"code": "demo-lifecycle-incomplete", "demo_id": "demo-S01", "timeline_id": "timeline-v1"}],
+            lifecycle_errors,
+        )
+
     def test_project_snapshot_rejects_an_unknown_phase(self):
         """Catches structural validation accepting a phase replay cannot produce."""
         project_path = self.root / "project.json"

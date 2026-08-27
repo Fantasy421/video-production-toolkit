@@ -16,6 +16,7 @@ class ReviewPackTests(unittest.TestCase):
         (self.root / "timeline").mkdir()
         (self.root / "approvals").mkdir()
         (self.root / "artifacts" / "timeline").mkdir(parents=True)
+        (self.root / "artifacts" / "visual-preview").mkdir()
         (self.root / "previews" / "S01-preview.jpg").write_bytes(b"jpg")
         (self.root / "timeline" / "editable.project").write_text("saved", encoding="utf-8")
         (self.root / "timeline" / "timeline.json").write_text(
@@ -38,6 +39,19 @@ class ReviewPackTests(unittest.TestCase):
             json.dumps({"artifact_id": "timeline-v1", "type": "timeline", "version": 1, "status": "approved", "parents": [], "path": "timeline/timeline.json"}),
             encoding="utf-8",
         )
+        (self.root / "artifacts" / "visual-preview" / "preview-S01-v1.json").write_text(
+            json.dumps(
+                {
+                    "artifact_id": "preview-S01-v1",
+                    "type": "visual-preview",
+                    "version": 1,
+                    "status": "approved",
+                    "parents": [],
+                    "path": "previews/S01-preview.jpg",
+                }
+            ),
+            encoding="utf-8",
+        )
 
     def tearDown(self):
         self.folder.cleanup()
@@ -51,6 +65,43 @@ class ReviewPackTests(unittest.TestCase):
         self.assertNotIn("data:image/", html)
         self.assertIn("../previews/S01-preview.jpg", html)
         self.assertEqual("Representative slice and final draft", review["decision_requests"][0]["gate"])
+
+    def test_review_pack_labels_only_effectively_approved_preview_artifacts(self):
+        """Catches event-invalidated preview metadata still being presented as current."""
+        initialize_project(self.root, "review-preview-status", "knowledge-video")
+        (self.root / "previews" / "S02-preview.jpg").write_bytes(b"stale jpg")
+        (self.root / "artifacts" / "visual-preview" / "preview-S02-v1.json").write_text(
+            json.dumps(
+                {
+                    "artifact_id": "preview-S02-v1",
+                    "type": "visual-preview",
+                    "version": 1,
+                    "status": "approved",
+                    "parents": [],
+                    "path": "previews/S02-preview.jpg",
+                }
+            ),
+            encoding="utf-8",
+        )
+        append_event(
+            self.root,
+            {
+                "event": "artifacts.invalidated",
+                "changed_id": "preview-S02-v1",
+                "artifact_ids": ["preview-S02-v1"],
+            },
+        )
+
+        path = build_review_pack(self.root, self.root / "review")
+        review = json.loads((path.parent / "review.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            [{"artifact_id": "preview-S01-v1", "label": "S01-preview.jpg", "href": "../../previews/S01-preview.jpg", "status": "approved"}],
+            review["previews"],
+        )
+        html = path.read_text(encoding="utf-8")
+        self.assertIn("S01-preview.jpg [approved]", html)
+        self.assertNotIn("S02-preview.jpg", html)
 
     def test_review_pack_excludes_a_timeline_staled_by_an_event_overlay(self):
         """Catches review packaging presenting a timeline invalidated only in the event log."""
@@ -130,6 +181,19 @@ class ReviewPackTests(unittest.TestCase):
         external = self.root.parent / "outside-preview.jpg"
         external.write_bytes(b"outside")
         (self.root / "previews" / "outside.jpg").symlink_to(external)
+        (self.root / "artifacts" / "visual-preview" / "preview-outside-v1.json").write_text(
+            json.dumps(
+                {
+                    "artifact_id": "preview-outside-v1",
+                    "type": "visual-preview",
+                    "version": 1,
+                    "status": "approved",
+                    "parents": [],
+                    "path": "previews/outside.jpg",
+                }
+            ),
+            encoding="utf-8",
+        )
 
         path = build_review_pack(self.root, self.root / "review")
 
