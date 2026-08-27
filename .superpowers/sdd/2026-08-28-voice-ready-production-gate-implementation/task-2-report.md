@@ -62,3 +62,26 @@ Fix verification:
 - Full suite — 242 passed.
 - `PYTHONPYCACHEPREFIX=/private/tmp/voice-ready-task2-fix1-final-full-compile python3 -m py_compile scripts/toolkit/voice.py scripts/validate_package.py tests/test_voice.py` — passed.
 - JSON parsing, `scripts/validate_package.py .`, and `git diff --check` — passed.
+
+## Fix round 2
+
+Root cause: the runtime's hand-written ID and path predicates were broader than
+the closed JSON-schema patterns. They accepted schema-invalid `@`, Unicode,
+and malformed-dot IDs, and `Path` normalization hid a leading `./` path.
+
+Fix: `scripts.toolkit.voice` now exposes one compiled `SAFE_ID_RE` from the
+exact `SAFE_ID_PATTERN` used by every voice schema, plus a compiled
+`PROJECT_PATH_RE` from the exact `projectPath` pattern. All artifact IDs,
+lineage links, parents, and voice IDs use that one ID regex; lexical path
+checks use the shared path regex while retaining control-character rejection.
+Tests compare both exported pattern strings against every voice schema to stop
+future drift.
+
+TDD evidence: before the change, the readiness validator accepted `@`,
+Unicode, leading/trailing/repeated-dot profile IDs and `./` artifact/media
+paths; runtime/schema pattern comparison failed because the constants were
+absent. The focused suite is green after the compiled-pattern implementation.
+
+Fix round 2 verification: `python3 -m unittest discover -s tests -v` — 246
+passed; `py_compile`, JSON schema parsing, package validation, and diff checks
+passed.

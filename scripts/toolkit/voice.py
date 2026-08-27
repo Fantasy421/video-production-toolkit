@@ -1,7 +1,7 @@
 """Pure validation for immutable narration voice artifacts."""
 
 from collections.abc import Iterable, Mapping
-from pathlib import Path
+import re
 from typing import Any, Optional
 
 
@@ -9,6 +9,10 @@ VOICE_SOURCE = "voice-source-decision"
 VOICE_PROFILE = "voice-profile"
 VOICEOVER = "voiceover"
 VOICE_TIMING = "voice-timing"
+SAFE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"
+PROJECT_PATH_PATTERN = r"^(?!/)(?![A-Za-z]:)(?!\.{1,2}(?:/|$))(?!.*\/\.{1,2}(?:/|$))[^\\]+$"
+SAFE_ID_RE = re.compile(SAFE_ID_PATTERN)
+PROJECT_PATH_RE = re.compile(PROJECT_PATH_PATTERN)
 _VOICE_TYPES = frozenset({VOICE_SOURCE, VOICE_PROFILE, VOICEOVER, VOICE_TIMING})
 _ARTIFACT_REQUIRED_FIELDS = (
     "artifact_id",
@@ -396,25 +400,11 @@ def _validate_segments(
 
 
 def _safe_project_relative_path(value: Any) -> bool:
-    if not _nonempty_text(value) or "\\" in value:
-        return False
-    path = Path(value)
-    return (
-        not path.is_absolute()
-        and not (len(value) >= 2 and value[0].isalpha() and value[1] == ":")
-        and bool(path.parts)
-        and all(part not in {"", ".", ".."} for part in path.parts)
-    )
+    return _nonempty_text(value) and PROJECT_PATH_RE.fullmatch(value) is not None
 
 
 def _safe_id(value: Any) -> bool:
-    return (
-        _nonempty_text(value)
-        and not any(character.isspace() for character in value)
-        and value not in {".", ".."}
-        and "/" not in value
-        and "\\" not in value
-    )
+    return _nonempty_text(value) and SAFE_ID_RE.fullmatch(value) is not None
 
 
 def _valid_mode(value: Any) -> bool:

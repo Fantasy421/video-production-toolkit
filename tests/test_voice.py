@@ -2,6 +2,7 @@ import json
 import unittest
 from pathlib import Path
 
+from scripts.toolkit import voice
 from scripts.toolkit.voice import has_current_voice_lineage, validate_voice_bundle
 
 
@@ -234,6 +235,38 @@ class VoiceBundleTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("invalid-voice-profile", self.codes(result))
 
+    def test_schema_rejected_ids_never_satisfy_current_lineage(self):
+        for invalid_id in ("profile@v2", "声音-v2", ".profile-v2", "profile-v2.", "profile..v2"):
+            with self.subTest(invalid_id=invalid_id):
+                artifacts = self.bundle()
+                artifacts[1]["artifact_id"] = invalid_id
+                artifacts[2]["profile_id"] = invalid_id
+                artifacts[2]["parents"] = ["narration-v2", invalid_id]
+
+                result = validate_voice_bundle(artifacts, "narration-v2")
+
+                self.assertFalse(result["ok"])
+                self.assertFalse(has_current_voice_lineage(artifacts, "narration-v2"))
+                self.assertIn("malformed-voice-artifact", self.codes(result))
+
+    def test_schema_rejected_dot_path_is_not_a_persisted_artifact_path(self):
+        artifacts = self.bundle()
+        artifacts[2]["path"] = "./media/voiceover-v2.wav"
+
+        result = validate_voice_bundle(artifacts, "narration-v2")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("malformed-voice-artifact", self.codes(result))
+
+    def test_schema_rejected_dot_path_is_not_a_voiceover_media_path(self):
+        artifacts = self.bundle()
+        artifacts[2]["media_path"] = "./media/voiceover-v2.wav"
+
+        result = validate_voice_bundle(artifacts, "narration-v2")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("unsafe-voiceover-media-path", self.codes(result))
+
 
 class VoiceSchemaTests(unittest.TestCase):
     REQUIRED = {
@@ -315,6 +348,20 @@ class VoiceSchemaTests(unittest.TestCase):
                 self.assertTrue(set(schema["required"]).issubset(artifact))
                 self.assertTrue(set(artifact).issubset(schema["properties"]))
                 self.assertEqual(artifact["type"], schema["properties"]["type"]["const"])
+
+    def test_runtime_patterns_are_the_schema_patterns(self):
+        for artifact_type in self.REQUIRED:
+            schema = json.loads(
+                (ROOT / "references/schemas" / f"{artifact_type}.schema.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            with self.subTest(artifact_type=artifact_type):
+                self.assertEqual(voice.SAFE_ID_PATTERN, schema["$defs"]["safeId"]["pattern"])
+                self.assertEqual(
+                    voice.PROJECT_PATH_PATTERN,
+                    schema["$defs"]["projectPath"]["pattern"],
+                )
 
 
 if __name__ == "__main__":
