@@ -169,6 +169,51 @@ The user review pack displays:
 It links media rather than embedding large audio payloads. A stale voiceover or
 timing artifact is never presented as current.
 
+## Image Context Isolation
+
+The primary conversation and `video-director` must never generate, edit, open,
+or visually inspect image payloads. Every image operation runs in an isolated
+child task with a bounded context. Generation and inspection use the same
+isolation rule; moving inspection to the coordinator is not an allowed shortcut.
+
+Each image task handles exactly one Scene Contract or one character-asset batch.
+Its immutable envelope declares:
+
+- `allowed_image_artifact_ids`;
+- `allowed_character_pack_ids`;
+- `forbidden_scene_image_access: true` when historical resources are queried;
+- `max_review_previews`; and
+- `context_budget`.
+
+The worker may not discover or load additional images. An undeclared image read
+is a contract error, not permission to broaden the task.
+
+The worker returns only compact handoff data: Artifact IDs, project-contained
+paths, dimensions and other structural metadata, a short summary, stable issue
+codes, user-decision status, and at most the declared number of review-preview
+paths. It must not return image bytes, verbose generation history, complete
+prompt iteration transcripts, or multiple rendered images to the primary
+conversation.
+
+When consulting historical projects, the allowlist is restricted to independent
+character assets: approved model sheets, character turnarounds, clothing,
+expression or pose references, transparent character actions, and their
+identity metadata. Historical scene images, storyboards, B-roll, Motion Graphic
+screenshots, scene previews, and unrelated images are forbidden. A scene image
+containing the same character is still a scene image and cannot be loaded as a
+character reference.
+
+Scene-to-scene consistency comes from approved Style, Layout, and Character
+Packs plus the current Scene Contract, not from loading neighboring scene
+renders. A current-project scene image may be referenced only when the user
+explicitly names it for a continuity operation. That exception must identify
+the exact Artifact ID and record its reason in the task envelope; it does not
+authorize browsing other scene images.
+
+Image QA also runs in an isolated child task. Machine output is structural and
+compact. Aesthetic acceptance remains a user decision, normally through one
+declared review preview rather than autonomous repeated inspection.
+
 ## Verification
 
 Implementation is accepted only when tests demonstrate:
@@ -190,6 +235,13 @@ Implementation is accepted only when tests demonstrate:
 8. Review packs expose current audio/timing links and exclude stale versions.
 9. Full package, state replay, concurrency, schema, resume-smoke, installation,
    and legacy-retirement tests remain green.
+10. The primary coordinator cannot invoke image generation, editing, or visual
+    inspection and receives no image payloads.
+11. Historical asset resolution exposes approved character assets only and
+    rejects every historical scene-image class, including scenes containing the
+    same character.
+12. Image task results stay within the declared preview and context budgets;
+    undeclared image access fails as a contract error.
 
 ## Out of Scope
 
@@ -199,3 +251,5 @@ Implementation is accepted only when tests demonstrate:
 - mixing, mastering, music ducking, or final loudness normalization beyond
   structural readiness checks;
 - automatic fallback to an undeclared provider or voice.
+- coordinator-side image generation or inspection;
+- historical scene-image browsing for style or character consistency.

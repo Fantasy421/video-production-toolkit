@@ -19,6 +19,9 @@
 - Artifact versions remain immutable and project-contained; revisions use DAG invalidation.
 - Existing pre-voice event logs are not rewritten.
 - External providers cannot change the approved script, voice profile, routing, or decision gates.
+- The primary coordinator never generates, edits, opens, or visually inspects image payloads.
+- Historical image access is allowlisted to independent approved character assets; historical scene images are always forbidden.
+- Image workers return compact Artifact handoffs and at most their declared review-preview count.
 - No automatic voice cloning, undeclared fallback, script rewriting, or final audio mastering is added.
 
 ---
@@ -41,6 +44,9 @@
 - `scripts/toolkit/validation.py`: project-wide voice lineage and timing checks.
 - `scripts/build_review_pack.py`: current voice review links and blockers.
 - `scripts/verify_installation.py`: end-to-end voice-ready recovery smoke.
+- `references/schemas/image-task-context.schema.json`: image allowlist and context budget.
+- `scripts/toolkit/image_context.py`: deterministic image access and result-envelope enforcement.
+- `skills/scene-producer/SKILL.md`, `skills/structural-validator/SKILL.md`: isolated image generation and inspection boundaries.
 
 ---
 
@@ -430,7 +436,103 @@ git commit -m "feat: validate and review voice lineage"
 
 ---
 
-### Task 7: Verify End-to-End Recovery and Installed Plugin Behavior
+### Task 7: Isolate Image Generation, Inspection, and Historical Asset Access
+
+**Files:**
+- Create: `references/schemas/image-task-context.schema.json`
+- Create: `scripts/toolkit/image_context.py`
+- Modify: `references/schemas/task-envelope.schema.json`
+- Modify: `references/schemas/task-result.schema.json`
+- Modify: `skills/video-director/SKILL.md`
+- Modify: `skills/scene-producer/SKILL.md`
+- Modify: `skills/structural-validator/SKILL.md`
+- Modify: `references/policies/project-assets.md`
+- Create: `tests/test_image_context.py`
+- Modify: `tests/test_skill_contracts.py`
+
+**Interfaces:**
+- Produces: `authorize_image_access(context: Mapping, artifact: Mapping, *, historical: bool) -> None`; `compact_image_result(context: Mapping, result: Mapping) -> dict`.
+- Image context fields: `allowed_image_artifact_ids`, `allowed_character_pack_ids`, `forbidden_scene_image_access`, `max_review_previews`, `context_budget`, and optional `continuity_exception`.
+
+- [ ] **Step 1: Write failing historical-access tests**
+
+```python
+def test_historical_character_model_sheet_is_allowed(self):
+    authorize_image_access(self.context(), self.artifact("character-model-sheet"), historical=True)
+
+def test_historical_scene_with_same_character_is_forbidden(self):
+    artifact = self.artifact("scene-image", character_ids=["host-v1"])
+    with self.assertRaisesRegex(PermissionError, "historical scene image"):
+        authorize_image_access(self.context(allowed=[artifact["artifact_id"]]), artifact, historical=True)
+
+def test_neighbor_scene_image_is_not_implicitly_available(self):
+    with self.assertRaisesRegex(PermissionError, "undeclared image"):
+        authorize_image_access(self.context(allowed=[]), self.artifact("scene-image", artifact_id="S01-image-v2"), historical=False)
+```
+
+- [ ] **Step 2: Write failing compact-result tests**
+
+```python
+def test_image_result_rejects_payloads_and_preview_overflow(self):
+    with self.assertRaisesRegex(ValueError, "image payload"):
+        compact_image_result(self.context(max_previews=1), {"image_bytes": "base64", "review_previews": []})
+    with self.assertRaisesRegex(ValueError, "preview budget"):
+        compact_image_result(self.context(max_previews=1), {"review_previews": ["a.jpg", "b.jpg"]})
+
+def test_compact_result_keeps_only_artifact_handoff(self):
+    result = compact_image_result(self.context(max_previews=1), {
+        "artifact_ids": ["scene-S02-v3"],
+        "paths": ["artifacts/media/scene-S02-v3.json"],
+        "summary": "角色一致；等待用户审美确认",
+        "metadata": {"width": 1920, "height": 1080},
+        "issues": [{"code": "needs-user-aesthetic-review"}],
+        "review_previews": ["previews/scene-S02-v3.jpg"],
+    })
+    self.assertNotIn("images", result)
+    self.assertEqual(1, len(result["review_previews"]))
+```
+
+- [ ] **Step 3: Run and verify RED**
+
+Run: `python3 -m unittest tests.test_image_context tests.test_skill_contracts -v`
+
+Expected: missing schema/module and missing Skill isolation language.
+
+- [ ] **Step 4: Add the closed image-context schema**
+
+Use `additionalProperties: false`. IDs are unique safe Artifact IDs;
+`max_review_previews` is an integer from 0 to 1 by default; `context_budget` is
+a positive integer; `continuity_exception`, when present, requires exact
+`artifact_id`, `user_requested: true`, and a non-empty reason.
+
+- [ ] **Step 5: Implement deterministic authorization**
+
+Classify independent character assets separately from scene images. Historical
+access requires both declaration and an approved character-asset class.
+`scene-image`, `storyboard-image`, `b-roll-image`, `motion-preview`, and
+`scene-preview` are rejected for historical access regardless of embedded
+character IDs. Current scene access requires an exact allowlist entry or the
+single explicit continuity exception.
+
+- [ ] **Step 6: Enforce compact task results and Skill boundaries**
+
+Reject binary/base64/data-URL image payload fields, verbose prompt histories,
+undeclared paths, and preview overflow. Update Skills so `video-director` cannot
+invoke image tools, while scene generation and image inspection always occur in
+isolated child tasks handling one Scene Contract or character batch.
+
+- [ ] **Step 7: Run tests and commit**
+
+Run: `python3 -m unittest tests.test_image_context tests.test_skill_contracts tests.test_tasks -v`
+
+```bash
+git add references/schemas/image-task-context.schema.json references/schemas/task-envelope.schema.json references/schemas/task-result.schema.json scripts/toolkit/image_context.py skills/video-director/SKILL.md skills/scene-producer/SKILL.md skills/structural-validator/SKILL.md references/policies/project-assets.md tests/test_image_context.py tests/test_skill_contracts.py
+git commit -m "feat: isolate image task context"
+```
+
+---
+
+### Task 8: Verify End-to-End Recovery and Installed Plugin Behavior
 
 **Files:**
 - Modify: `scripts/verify_installation.py`
@@ -502,11 +604,14 @@ git commit -m "feat: verify voice-ready production workflow"
 
 Before installing the new patch version or retiring the old Skill:
 
-1. Run the full verification matrix from Task 7 on the final commit.
+1. Run the full verification matrix from Task 8 on the final commit.
 2. Perform a whole-branch review against the voice-ready design spec.
 3. Install and enable the new personal plugin version.
 4. Run the verifier against the host-installed cache, not the repository.
 5. Confirm `video-director`, `voiceover-producer`, ChatCut Voice, real timing,
    recovery smoke, and representative-slice timing provenance.
-6. Request explicit execution-time approval before deleting
+6. Run image-isolation probes proving coordinator image-tool denial, compact
+   handoffs, character-only historical access, scene-image rejection, and the
+   one-preview budget.
+7. Request explicit execution-time approval before deleting
    `/Users/fantasy/.codex/skills/knowledge-video-visual-director`.
