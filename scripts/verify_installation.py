@@ -23,6 +23,7 @@ from scripts.toolkit.orchestrator import (
 )
 from scripts.toolkit.project_state import append_event, initialize_project
 from scripts.toolkit.tasks import create_task
+from scripts.toolkit.validation import validate_project
 from scripts.toolkit.voice import validate_authoritative_voice_bundle
 from scripts.validate_package import validate_package
 
@@ -95,7 +96,8 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
         }
     checks["direction_ready_blocks_production"] = "passed"
 
-    records = resumed["artifacts"]
+    pre_revision = resumed["pre_timing_revision"]
+    records = pre_revision["artifacts"]
     voice_source = [
         item
         for item in records
@@ -115,13 +117,21 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
         }
     checks["voice_source_decision"] = "passed"
     bundle = validate_authoritative_voice_bundle(records)
-    if not bundle["ok"] or bundle["voice_timing_id"] != "voice-timing-v1":
+    validation_issues = resumed["voice_timing_revision"]["voice_validation_issue_codes"]
+    if (
+        not bundle["ok"]
+        or bundle["voice_timing_id"] != "voice-timing-v1"
+        or validation_issues
+    ):
         return {
             "ok": False,
             "checks": checks,
             "blocker": {
                 "code": "real-voice-timing-required",
-                "detail": bundle["issues"],
+                "detail": {
+                    "lineage_issues": bundle["issues"],
+                    "file_duration_issues": validation_issues,
+                },
             },
         }
     checks["real_voice_timing"] = "passed"
@@ -145,6 +155,9 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
     if (
         revision["invalidated_artifact_ids"] != revision["declared_descendant_ids"]
         or revision["preserved_artifact_ids"] != ["style-v1", "voice-timing-v2"]
+        or revision["current_voice_timing_id"] != "voice-timing-v2"
+        or revision["style_status"] != "approved"
+        or revision["stale_descendant_ids"] != revision["declared_descendant_ids"]
     ):
         return {
             "ok": False,
@@ -185,13 +198,16 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
             },
         }
     checks["representative_slice"] = "passed"
-    if resumed["ready_tasks"] != ["scene.produce:S02"]:
+    if pre_revision["ready_tasks"] != ["scene.produce:S02"]:
         return {
             "ok": False,
             "checks": checks,
-            "blocker": {"code": "local-rebuild-failed", "detail": resumed["ready_tasks"]},
+            "blocker": {
+                "code": "local-rebuild-failed",
+                "detail": pre_revision["ready_tasks"],
+            },
         }
-    effective = {item["artifact_id"]: item for item in resumed["artifacts"]}
+    effective = {item["artifact_id"]: item for item in pre_revision["artifacts"]}
     if (
         effective["scene-S01-v1"]["status"] != "approved"
         or effective["scene-S02-v1"]["status"] != "stale"
@@ -478,15 +494,29 @@ def _check_four_gates() -> bool:
     return True
 
 
-def _run_resume_scenario() -> dict[str, Any]:
+def _run_resume_scenario(
+    *,
+    voice_fixture: Optional[bytes] = None,
+    voiceover_duration_ms: int = 15_000,
+    voice_timing_duration_ms: int = 15_000,
+) -> dict[str, Any]:
+    """Build one persisted recovery scenario with controllable voice metadata."""
     with TemporaryDirectory() as folder:
         project = Path(folder) / "project"
         initialize_project(project, "kv-resume-smoke", "knowledge-video")
-        voice_fixture = _voice_fixture_wav(duration_ms=15_000)
+        voice_fixture = (
+            _voice_fixture_wav(duration_ms=15_000)
+            if voice_fixture is None
+            else voice_fixture
+        )
         voice_fixture_path = project / "media" / "voiceover-v1.wav"
         voice_fixture_path.write_bytes(voice_fixture)
         create_artifact(project, _artifact("style-v1", "style-pack"))
-        for item in _voice_bundle():
+        voice_artifacts = _voice_bundle(
+            voiceover_duration_ms=voiceover_duration_ms,
+            voice_timing_duration_ms=voice_timing_duration_ms,
+        )
+        for item in voice_artifacts:
             create_artifact(project, item)
         create_artifact(
             project,
@@ -528,14 +558,14 @@ def _run_resume_scenario() -> dict[str, Any]:
         append_event(project, {"event": "project.phase_changed", "phase": "direction_ready"})
         direction_ready_actions = calculate_ready_tasks(
             {"phase": "direction_ready", "candidate_tasks": [storyboard_task, scene_task]},
-            [_artifact("style-v1", "style-pack"), *_voice_bundle()],
+            [_artifact("style-v1", "style-pack"), *voice_artifacts],
             [direction_approval],
         )
         append_event(project, {"event": "project.phase_changed", "phase": "voice_ready"})
         voice_ready_phase = "voice_ready"
         voice_ready_actions = calculate_ready_tasks(
             {"phase": voice_ready_phase, "candidate_tasks": [storyboard_task, scene_task]},
-            [_artifact("style-v1", "style-pack"), *_voice_bundle()],
+            [_artifact("style-v1", "style-pack"), *voice_artifacts],
             [direction_approval],
         )
         for item in (
@@ -567,18 +597,19 @@ def _run_resume_scenario() -> dict[str, Any]:
             "storyboard-and-cost",
             "representative production approved",
         )
-        create_task(
-            project,
-            _candidate(
-                "rebuild-S02",
-                "scene.produce",
-                ["contract-S02-v2", "storyboard-v1"],
-                "storyboard-and-cost",
-                "storyboard-v1",
-                production_scope="representative-slice",
-                scene_id="S02",
-            ),
-        )
+        if validate_authoritative_voice_bundle(voice_artifacts)["ok"]:
+            create_task(
+                project,
+                _candidate(
+                    "rebuild-S02",
+                    "scene.produce",
+                    ["contract-S02-v2", "storyboard-v1"],
+                    "storyboard-and-cost",
+                    "storyboard-v1",
+                    production_scope="representative-slice",
+                    scene_id="S02",
+                ),
+            )
         append_event(project, {"event": "project.phase_changed", "phase": "storyboard_ready"})
         invalidate_artifact_descendants(
             project,
@@ -602,12 +633,8 @@ def _run_resume_scenario() -> dict[str, Any]:
                 parents=["voiceover-v1"],
                 voiceover_id="voiceover-v1",
                 timing_kind="real",
-                duration_ms=15000,
-                segments=[
-                    {"start_ms": 0, "end_ms": 5000, "text": "first"},
-                    {"start_ms": 5000, "end_ms": 10000, "text": "second"},
-                    {"start_ms": 10000, "end_ms": 15000, "text": "third"},
-                ],
+                duration_ms=voice_timing_duration_ms,
+                segments=_timing_segments(voice_timing_duration_ms),
             ),
         )
         declared_descendants = [
@@ -628,8 +655,30 @@ def _run_resume_scenario() -> dict[str, Any]:
                 )
             ),
         )
+        post_revision = resume_project(project)
+        post_artifacts = {
+            item["artifact_id"]: item for item in post_revision["artifacts"]
+        }
+        post_bundle = validate_authoritative_voice_bundle(post_artifacts.values())
+        structural = validate_project(project)
+        voice_validation_issue_codes = sorted(
+            {
+                issue["code"]
+                for issue in structural["errors"]
+                if isinstance(issue, dict)
+                and isinstance(issue.get("code"), str)
+                and (
+                    issue["code"].startswith("voice")
+                    or issue["code"] == "real-voice-timing-required"
+                )
+            }
+        )
         return {
-            **first,
+            **post_revision,
+            "pre_timing_revision": {
+                "artifacts": first["artifacts"],
+                "ready_tasks": first["ready_tasks"],
+            },
             "direction_ready_actions": direction_ready_actions,
             "voice_ready_phase": voice_ready_phase,
             "voice_ready_actions": voice_ready_actions,
@@ -641,6 +690,14 @@ def _run_resume_scenario() -> dict[str, Any]:
                     for artifact_id in ("style-v1", "voice-timing-v2")
                     if artifact_id not in invalidated
                 ),
+                "stale_descendant_ids": sorted(
+                    artifact_id
+                    for artifact_id in declared_descendants
+                    if post_artifacts[artifact_id]["status"] == "stale"
+                ),
+                "current_voice_timing_id": post_bundle["voice_timing_id"],
+                "style_status": post_artifacts["style-v1"]["status"],
+                "voice_validation_issue_codes": voice_validation_issue_codes,
             },
             "media_files": sorted(path.name for path in (project / "media").iterdir()),
             "seeded_media_files": [voice_fixture_path.name],
@@ -954,7 +1011,18 @@ def _candidate(
     }
 
 
-def _voice_bundle() -> list[dict[str, Any]]:
+def _timing_segments(duration_ms: int) -> list[dict[str, Any]]:
+    """Return the fixed smoke transcript with a final segment ending at duration."""
+    return [
+        {"start_ms": 0, "end_ms": 5000, "text": "first"},
+        {"start_ms": 5000, "end_ms": 10000, "text": "second"},
+        {"start_ms": 10000, "end_ms": duration_ms, "text": "third"},
+    ]
+
+
+def _voice_bundle(
+    *, voiceover_duration_ms: int = 15_000, voice_timing_duration_ms: int = 15_000
+) -> list[dict[str, Any]]:
     return [
         _artifact("narration-v1", "narration"),
         _artifact(
@@ -983,7 +1051,7 @@ def _voice_bundle() -> list[dict[str, Any]]:
             narration_id="narration-v1",
             profile_id="voice-profile-v1",
             media_path="media/voiceover-v1.wav",
-            duration_ms=15000,
+            duration_ms=voiceover_duration_ms,
             provenance="smoke-fixture",
         ),
         _artifact(
@@ -992,12 +1060,8 @@ def _voice_bundle() -> list[dict[str, Any]]:
             parents=["voiceover-v1"],
             voiceover_id="voiceover-v1",
             timing_kind="real",
-            duration_ms=15000,
-            segments=[
-                {"start_ms": 0, "end_ms": 5000, "text": "first"},
-                {"start_ms": 5000, "end_ms": 10000, "text": "second"},
-                {"start_ms": 10000, "end_ms": 15000, "text": "third"},
-            ],
+            duration_ms=voice_timing_duration_ms,
+            segments=_timing_segments(voice_timing_duration_ms),
         ),
     ]
 

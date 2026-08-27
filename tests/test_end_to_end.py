@@ -1156,6 +1156,45 @@ class SmokeAndInstallationTests(unittest.TestCase):
             "voice-timing-v1", result["representative_slice"]["voice_timing_id"]
         )
 
+    def test_resume_smoke_rejects_voice_metadata_that_disagrees_with_audio_file(self):
+        """Catches real voice readiness trusting declared durations over the WAV header."""
+        cases = (
+            (
+                {"voiceover_duration_ms": 14_000},
+                "voiceover-duration-mismatch",
+            ),
+            (
+                {"voice_timing_duration_ms": 14_000},
+                "voice-timing-out-of-bounds",
+            ),
+            (
+                {"voice_fixture": b"not-a-wave-file"},
+                "voiceover-media-duration-unverifiable",
+            ),
+        )
+        for overrides, expected_issue in cases:
+            with self.subTest(overrides=overrides):
+                result = _run_resume_scenario(**overrides)
+
+                self.assertIn(
+                    expected_issue,
+                    result["voice_timing_revision"]["voice_validation_issue_codes"],
+                )
+
+    def test_resume_smoke_returns_the_post_timing_revision_recovery(self):
+        """Catches the reported recovery snapshot hiding v2 invalidation effects."""
+        result = _run_resume_scenario()
+        artifacts = {item["artifact_id"]: item for item in result["artifacts"]}
+
+        self.assertEqual(
+            "voice-timing-v2",
+            result["voice_timing_revision"]["current_voice_timing_id"],
+        )
+        self.assertEqual("approved", artifacts["voice-timing-v2"]["status"])
+        self.assertEqual("approved", artifacts["style-v1"]["status"])
+        for artifact_id in result["voice_timing_revision"]["declared_descendant_ids"]:
+            self.assertEqual("stale", artifacts[artifact_id]["status"])
+
     def test_resume_smoke_seeds_and_preserves_the_declared_voice_fixture(self):
         """Catches metadata-only voiceover smoke passing without real audio bytes."""
         observed = []
@@ -1172,9 +1211,10 @@ class SmokeAndInstallationTests(unittest.TestCase):
         ):
             result = _run_resume_scenario()
 
-        self.assertEqual(2, len(observed))
+        self.assertEqual(3, len(observed))
         self.assertGreater(len(observed[0]), 44)
         self.assertEqual(observed[0], observed[1])
+        self.assertEqual(observed[1], observed[2])
         self.assertEqual(["voiceover-v1.wav"], result["media_files"])
         self.assertEqual(["voiceover-v1.wav"], result["seeded_media_files"])
         self.assertTrue(result["voice_fixture_unchanged"])
@@ -1588,6 +1628,13 @@ class RetirementSafetyTests(unittest.TestCase):
             "scripts/toolkit/voice_tasks.py",
             "references/policies/decision-gates.md",
             "references/policies/invalidation.json",
+            "scripts/toolkit/image_context.py",
+            "references/policies/project-assets.md",
+            "references/schemas/task-envelope.schema.json",
+            "references/schemas/task-result.schema.json",
+            "skills/scene-producer/SKILL.md",
+            "skills/structural-validator/SKILL.md",
+            "registries/adapters/chatcut.json",
         )
         with TemporaryDirectory() as folder:
             repo = Path(folder) / "repo"
