@@ -66,7 +66,7 @@ class VisualMediaContextTests(unittest.TestCase):
             "checks": ["render-complete", "safe-region-valid"],
             "issues": [],
             "summary": "Scene S03 render is ready for review.",
-            "review_preview_path": "previews/media-S03-v4-low.mp4",
+            "review_preview_path": "previews/media-S03-v4/low.mp4",
             **extra,
         }
 
@@ -287,12 +287,41 @@ class VisualMediaContextTests(unittest.TestCase):
                 media_kind="video",
                 path="media/asset-10.mp4",
             ),
+            self.artifact(
+                "asset-1",
+                "scene-video",
+                media_kind="video",
+                path="media/asset-1-neighbor.mp4",
+            ),
         )
         for artifact in invalid_artifacts:
             with self.subTest(artifact=artifact), self.assertRaisesRegex(
                 ValueError, "project-contained|Artifact ID"
             ):
                 classify_visual_media_artifact(artifact)
+
+        self.assertEqual(
+            "video",
+            classify_visual_media_artifact(
+                self.artifact(
+                    "asset-1",
+                    "scene-video",
+                    media_kind="video",
+                    path="media/asset-1.mp4",
+                )
+            ),
+        )
+        self.assertEqual(
+            "video",
+            classify_visual_media_artifact(
+                self.artifact(
+                    "asset-1",
+                    "scene-video",
+                    media_kind="video",
+                    path="media/asset-1/output.mp4",
+                )
+            ),
+        )
 
         with self.assertRaisesRegex(ValueError, "undeclared path"):
             compact_visual_media_result(
@@ -303,6 +332,12 @@ class VisualMediaContextTests(unittest.TestCase):
                     review_preview_path="previews/asset-1-low.mp4",
                 ),
             )
+        exact = self.handoff(
+            artifact_ids=["asset-1"],
+            paths=["artifacts/media/asset-1.json"],
+            review_preview_path="previews/asset-1/low.mp4",
+        )
+        self.assertEqual(exact, compact_visual_media_result(self.context(), exact))
 
     def test_task_classification_uses_capability_output_and_returned_artifacts(self):
         """Catches any runtime classification signal being treated as worker-controlled."""
@@ -646,9 +681,9 @@ class VisualMediaContextTests(unittest.TestCase):
 
     def test_universal_scrub_rejects_recursive_visual_payload_forms(self):
         """Catches non-visual task results relaying visual payloads or inspection history."""
-        png_header = b"\x89PNG\r\n\x1a\n"
+        png_header = b"\x89PNG\r\n\x1a\n" + b"0" * 88
         encoded = base64.b64encode(png_header).decode("ascii")
-        wav_header = b"RIFF" + b"0" * 4 + b"WAVE"
+        wav_header = b"RIFF" + b"0" * 4 + b"WAVE" + b"0" * 84
         encoded_wav = base64.b64encode(wav_header).decode("ascii")
         cases = (
             ({"checks": [b"raw"]}, "payload"),
@@ -675,15 +710,14 @@ class VisualMediaContextTests(unittest.TestCase):
             }
         )
 
-    def test_universal_scrub_rejects_all_data_urls_embedded_html_and_short_magic(self):
-        """Catches non-image data URLs, raw SVG/embed tags, and tiny encoded signatures."""
-        short_jpeg = base64.b64encode(b"\xff\xd8\xff").decode("ascii")
+    def test_universal_scrub_uses_token_and_field_semantics_for_ambiguous_text(self):
+        """Catches Metadata false positives and context-free short-token decoding."""
         cases = (
             {"checks": ["data:text/plain,hidden"]},
             {"checks": ["<svg viewBox='0 0 1 1'></svg>"]},
             {"checks": ["<object data='asset'></object>"]},
             {"checks": ["<embed src='asset'>"]},
-            {"checks": [short_jpeg]},
+            {"checks": [{"payload": "SUQz"}]},
         )
         for result in cases:
             with self.subTest(result=result), self.assertRaisesRegex(
@@ -692,7 +726,13 @@ class VisualMediaContextTests(unittest.TestCase):
                 validate_result_envelope(result)
 
         validate_result_envelope(
-            {"checks": ["S03", "id-1", "Short ordinary summary."]}
+            {
+                "artifact_ids": ["SUQz"],
+                "checks": ["SUQz"],
+                "issues": [{"code": "SUQz"}],
+                "summary": "SUQz",
+                "warnings": ["Metadata: value, next item."],
+            }
         )
 
     def test_visual_result_envelope_applies_context_budget_and_closed_handoff(self):

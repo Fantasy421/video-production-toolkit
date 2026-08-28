@@ -26,7 +26,9 @@ BASE64_TOKEN_RE = re.compile(
     r"(?![A-Za-z0-9+/=])"
 )
 HTTP_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
-DATA_URL_RE = re.compile(r"data\s*:[^,\r\n]*,", re.IGNORECASE)
+DATA_URL_RE = re.compile(
+    r"(?<![A-Za-z0-9_])data\s*:[^,\r\n]*,", re.IGNORECASE
+)
 HTML_MEDIA_RE = re.compile(
     r"<(?:audio|canvas|embed|img|object|picture|source|svg|video)\b",
     re.IGNORECASE,
@@ -245,6 +247,7 @@ PAYLOAD_KEYS = frozenset(
         "bytes",
         "contact_sheet",
         "contact_sheets",
+        "data",
         "data_url",
         "decoded_frames",
         "frame_array",
@@ -267,6 +270,18 @@ PAYLOAD_KEYS = frozenset(
         "video_data",
         "video_payload",
         "video_url",
+    }
+)
+PAYLOAD_KEY_TOKENS = frozenset(
+    {
+        "base64",
+        "binary",
+        "blob",
+        "blobs",
+        "bytes",
+        "data",
+        "payload",
+        "payloads",
     }
 )
 
@@ -775,10 +790,16 @@ def _scrub_value(value: Any, *, key: str = "") -> int:
         and ("history" in normalized_key or "iteration" in normalized_key)
     ):
         raise ValueError("visual media result must not contain prompt history")
-    if normalized_key in PAYLOAD_KEYS or any(
-        marker in normalized_key
-        for marker in ("base64", "image_bytes", "video_bytes", "pixel_array")
-    ):
+    payload_key_tokens = set(filter(None, normalized_key.split("_")))
+    has_payload_semantics = (
+        normalized_key in PAYLOAD_KEYS
+        or bool(payload_key_tokens & PAYLOAD_KEY_TOKENS)
+        or any(
+            marker in normalized_key
+            for marker in ("base64", "image_bytes", "video_bytes", "pixel_array")
+        )
+    )
+    if has_payload_semantics:
         raise ValueError(
             "visual media result must not contain an image payload or other media payload"
         )
@@ -852,7 +873,7 @@ def _scrub_value(value: Any, *, key: str = "") -> int:
 def _contains_media_base64(value: str) -> bool:
     for match in BASE64_TOKEN_RE.finditer(value):
         payload_text = "".join(re.split(r"\s+", match.group(1).strip()))
-        if len(payload_text) < 4 or len(payload_text) % 4:
+        if len(payload_text) < 64 or len(payload_text) % 4:
             continue
         try:
             decoded = base64.b64decode(payload_text, validate=True)
@@ -1078,12 +1099,7 @@ def _project_path(value: Any) -> bool:
 
 def _path_is_bound_to_artifact(path: str, artifact_id: str) -> bool:
     parsed = PurePosixPath(path)
-    if artifact_id in parsed.parts or parsed.stem == artifact_id:
-        return True
-    return any(
-        parsed.stem.startswith(artifact_id + boundary)
-        for boundary in ("-", "_", ".")
-    )
+    return artifact_id in parsed.parts or parsed.stem == artifact_id
 
 
 def _safe_id(value: Any) -> bool:
