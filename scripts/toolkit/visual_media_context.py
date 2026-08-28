@@ -26,8 +26,10 @@ BASE64_TOKEN_RE = re.compile(
     r"(?![A-Za-z0-9+/=])"
 )
 HTTP_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+DATA_URL_RE = re.compile(r"data\s*:[^,\r\n]*,", re.IGNORECASE)
 HTML_MEDIA_RE = re.compile(
-    r"<(?:img|video|picture|source|canvas)\b", re.IGNORECASE
+    r"<(?:audio|canvas|embed|img|object|picture|source|svg|video)\b",
+    re.IGNORECASE,
 )
 
 VISUAL_MEDIA_OPERATIONS = frozenset(
@@ -409,6 +411,15 @@ def classify_visual_media_artifact(artifact: Mapping[str, Any]) -> str:
     path = artifact.get("path")
     suffix = PurePosixPath(path).suffix.lower() if isinstance(path, str) else ""
 
+    if "path" in artifact:
+        if not _project_path(path):
+            raise ValueError("Artifact path must be project-contained")
+        artifact_id = artifact.get("artifact_id")
+        if not _safe_id(artifact_id) or not _path_is_bound_to_artifact(
+            path, artifact_id
+        ):
+            raise ValueError("Artifact path must be bound to its exact Artifact ID")
+
     if media_kind is not None and media_kind not in MEDIA_KINDS:
         raise ValueError("media_kind is not recognized")
     mime_kind = _mime_kind(mime_type)
@@ -561,8 +572,10 @@ def validate_declared_visual_media_inputs(
     }
     if scope_kind == "review-batch":
         review_ids = set(scope["id"])
-        if not review_ids <= input_set:
-            raise PermissionError("review-batch scope must equal its declared task inputs")
+        if review_ids != input_set:
+            raise PermissionError(
+                "review-batch scope must be the exact declared task input set"
+            )
     else:
         scope_id = scope["id"]
         scope_artifact = artifacts.get(scope_id)
@@ -571,6 +584,13 @@ def validate_declared_visual_media_inputs(
             or scope_artifact.get("type") not in scope_types[scope_kind]
         ):
             raise PermissionError("visual media scope identity does not match its Artifact")
+        if (
+            scope_kind == "character-asset-batch"
+            and scope_artifact.get("status") != "approved"
+        ):
+            raise PermissionError(
+                "character-asset-batch scope Artifact must be approved"
+            )
         scene_scope_ids = {
             item
             for item in inputs
@@ -615,6 +635,10 @@ def validate_declared_visual_media_inputs(
             "undeclared visual media input is forbidden: "
             + ", ".join(sorted(undeclared_visual))
         )
+    if continuity_id is not None and continuity_id not in visual_input_ids:
+        raise PermissionError(
+            "continuity exception must name one exact current visual Artifact"
+        )
     for artifact_id in allowed - visual_input_ids:
         artifact = artifacts[artifact_id]
         if not (
@@ -629,9 +653,13 @@ def validate_declared_visual_media_inputs(
 
     for artifact_id in visual_input_ids:
         artifact = artifacts[artifact_id]
-        historical = artifact.get("historical", False)
-        if not isinstance(historical, bool):
-            raise ValueError("visual Artifact historical metadata must be boolean")
+        if "historical" not in artifact or not isinstance(
+            artifact["historical"], bool
+        ):
+            raise ValueError(
+                "visual Artifact requires explicit historical origin metadata"
+            )
+        historical = artifact["historical"]
         if historical and not _is_approved_character_asset(artifact):
             raise PermissionError(
                 "historical visual access is limited to approved character assets"
@@ -786,9 +814,7 @@ def _scrub_value(value: Any, *, key: str = "") -> int:
         lowered = compact.lower()
         if not compact:
             raise ValueError("visual media result text must be non-empty compact prose")
-        if lowered.startswith("binary:") or re.search(
-            r"data\s*:\s*(?:image|video)\s*/", lowered
-        ):
+        if lowered.startswith("binary:") or DATA_URL_RE.search(value):
             raise ValueError(
                 "visual media result must not contain an image payload or other media payload"
             )
@@ -826,7 +852,7 @@ def _scrub_value(value: Any, *, key: str = "") -> int:
 def _contains_media_base64(value: str) -> bool:
     for match in BASE64_TOKEN_RE.finditer(value):
         payload_text = "".join(re.split(r"\s+", match.group(1).strip()))
-        if len(payload_text) < 12 or len(payload_text) % 4:
+        if len(payload_text) < 4 or len(payload_text) % 4:
             continue
         try:
             decoded = base64.b64decode(payload_text, validate=True)
@@ -1052,7 +1078,12 @@ def _project_path(value: Any) -> bool:
 
 def _path_is_bound_to_artifact(path: str, artifact_id: str) -> bool:
     parsed = PurePosixPath(path)
-    return artifact_id in parsed.parts or artifact_id in parsed.stem
+    if artifact_id in parsed.parts or parsed.stem == artifact_id:
+        return True
+    return any(
+        parsed.stem.startswith(artifact_id + boundary)
+        for boundary in ("-", "_", ".")
+    )
 
 
 def _safe_id(value: Any) -> bool:

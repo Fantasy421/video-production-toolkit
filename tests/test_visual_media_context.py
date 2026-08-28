@@ -192,13 +192,19 @@ class VisualMediaContextTests(unittest.TestCase):
         cases = (
             (
                 self.artifact(
-                    "still-v1", "media", media_kind="image", path="media/still.png"
+                    "still-v1",
+                    "media",
+                    media_kind="image",
+                    path="media/still-v1.png",
                 ),
                 "image",
             ),
             (
                 self.artifact(
-                    "clip-v1", "media", mime_type="video/mp4", path="media/clip.mp4"
+                    "clip-v1",
+                    "media",
+                    mime_type="video/mp4",
+                    path="media/clip-v1.mp4",
                 ),
                 "video",
             ),
@@ -259,6 +265,44 @@ class VisualMediaContextTests(unittest.TestCase):
                 ValueError, "conflict|does not match"
             ):
                 classify_visual_media_artifact(artifact)
+
+    def test_artifact_and_handoff_paths_are_safe_and_exactly_id_bound(self):
+        """Catches path traversal and prefix/sub-string Artifact authority confusion."""
+        invalid_artifacts = (
+            self.artifact(
+                "asset-1",
+                "scene-video",
+                media_kind="video",
+                path="../media/asset-1.mp4",
+            ),
+            self.artifact(
+                "asset-1",
+                "scene-video",
+                media_kind="video",
+                path="media/neighbor-asset-1.mp4",
+            ),
+            self.artifact(
+                "asset-1",
+                "scene-video",
+                media_kind="video",
+                path="media/asset-10.mp4",
+            ),
+        )
+        for artifact in invalid_artifacts:
+            with self.subTest(artifact=artifact), self.assertRaisesRegex(
+                ValueError, "project-contained|Artifact ID"
+            ):
+                classify_visual_media_artifact(artifact)
+
+        with self.assertRaisesRegex(ValueError, "undeclared path"):
+            compact_visual_media_result(
+                self.context(),
+                self.handoff(
+                    artifact_ids=["asset-1"],
+                    paths=["artifacts/media/neighbor-asset-10.json"],
+                    review_preview_path="previews/asset-1-low.mp4",
+                ),
+            )
 
     def test_task_classification_uses_capability_output_and_returned_artifacts(self):
         """Catches any runtime classification signal being treated as worker-controlled."""
@@ -382,14 +426,122 @@ class VisualMediaContextTests(unittest.TestCase):
             output_contract="review-package-v1",
         )
         artifacts = {
-            "asset-1": self.artifact("asset-1", "scene-video", path="media/asset-1.mp4"),
-            "asset-2": self.artifact("asset-2", "scene-image", path="media/asset-2.png"),
+            "asset-1": self.artifact(
+                "asset-1",
+                "scene-video",
+                path="media/asset-1.mp4",
+                historical=False,
+            ),
+            "asset-2": self.artifact(
+                "asset-2",
+                "scene-image",
+                path="media/asset-2.png",
+                historical=False,
+            ),
         }
         validate_declared_visual_media_inputs(envelope, artifacts)
         with self.assertRaisesRegex(PermissionError, "review-batch"):
             validate_declared_visual_media_inputs(
                 {**envelope, "inputs": ["asset-1"]}, artifacts
             )
+
+        artifacts["notes-v1"] = self.artifact("notes-v1", "document")
+        with self.assertRaisesRegex(PermissionError, "review-batch.*exact"):
+            validate_declared_visual_media_inputs(
+                {**envelope, "inputs": ["asset-1", "asset-2", "notes-v1"]},
+                artifacts,
+            )
+
+    def test_character_batch_scope_requires_approved_provenance(self):
+        """Catches draft character batches granting visual-media scope authority."""
+        context = self.context(
+            scope={"kind": "character-asset-batch", "id": "characters-main-v2"}
+        )
+        envelope = self.envelope(
+            inputs=["characters-main-v2"],
+            context=context,
+            capability="visual.preview",
+            output_contract="character-preview-v1",
+        )
+        with self.assertRaisesRegex(PermissionError, "approved"):
+            validate_declared_visual_media_inputs(
+                envelope,
+                {
+                    "characters-main-v2": self.artifact(
+                        "characters-main-v2",
+                        "character-asset-batch",
+                        status="draft",
+                    )
+                },
+            )
+        validate_declared_visual_media_inputs(
+            envelope,
+            {
+                "characters-main-v2": self.artifact(
+                    "characters-main-v2",
+                    "character-asset-batch",
+                    status="approved",
+                )
+            },
+        )
+
+    def test_visual_history_requires_explicit_origin_and_continuity_is_current_visual(self):
+        """Catches missing origin metadata or a non-visual continuity exception."""
+        context = self.context(allowed=["scene-S02-v3"])
+        envelope = self.envelope(
+            inputs=["scene-contract-S03-v2", "scene-S02-v3"], context=context
+        )
+        scope = self.artifact("scene-contract-S03-v2", "scene-contract")
+        with self.assertRaisesRegex(ValueError, "historical.*explicit|origin"):
+            validate_declared_visual_media_inputs(
+                envelope,
+                {
+                    "scene-contract-S03-v2": scope,
+                    "scene-S02-v3": self.artifact(
+                        "scene-S02-v3",
+                        "scene-image",
+                        path="media/scene-S02-v3.png",
+                    ),
+                },
+            )
+
+        continuity_context = self.context(
+            continuity_exception={
+                "artifact_id": "continuity-v1",
+                "user_requested": True,
+                "reason": "Use this exact current reference.",
+            }
+        )
+        continuity_envelope = self.envelope(
+            inputs=["scene-contract-S03-v2", "continuity-v1"],
+            context=continuity_context,
+        )
+        with self.assertRaisesRegex(PermissionError, "continuity.*visual"):
+            validate_declared_visual_media_inputs(
+                continuity_envelope,
+                {
+                    "scene-contract-S03-v2": scope,
+                    "continuity-v1": self.artifact(
+                        "continuity-v1",
+                        "document",
+                        path="artifacts/continuity-v1.md",
+                        historical=False,
+                    ),
+                },
+            )
+
+        validate_declared_visual_media_inputs(
+            continuity_envelope,
+            {
+                "scene-contract-S03-v2": scope,
+                "continuity-v1": self.artifact(
+                    "continuity-v1",
+                    "scene-image",
+                    path="media/continuity-v1.png",
+                    historical=False,
+                ),
+            },
+        )
 
     def test_historical_access_is_character_only(self):
         """Catches historical scene media being authorized by an ordinary allowlist."""
@@ -521,6 +673,26 @@ class VisualMediaContextTests(unittest.TestCase):
                 "checks": ["sha512=" + "0123456789abcdef" * 8],
                 "warnings": ["Audio loudness metadata is ready."],
             }
+        )
+
+    def test_universal_scrub_rejects_all_data_urls_embedded_html_and_short_magic(self):
+        """Catches non-image data URLs, raw SVG/embed tags, and tiny encoded signatures."""
+        short_jpeg = base64.b64encode(b"\xff\xd8\xff").decode("ascii")
+        cases = (
+            {"checks": ["data:text/plain,hidden"]},
+            {"checks": ["<svg viewBox='0 0 1 1'></svg>"]},
+            {"checks": ["<object data='asset'></object>"]},
+            {"checks": ["<embed src='asset'>"]},
+            {"checks": [short_jpeg]},
+        )
+        for result in cases:
+            with self.subTest(result=result), self.assertRaisesRegex(
+                ValueError, "data URL|HTML|Base64|payload"
+            ):
+                validate_result_envelope(result)
+
+        validate_result_envelope(
+            {"checks": ["S03", "id-1", "Short ordinary summary."]}
         )
 
     def test_visual_result_envelope_applies_context_budget_and_closed_handoff(self):
