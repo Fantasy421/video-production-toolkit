@@ -15,6 +15,14 @@ Allowed inputs: accept only one claimed task-envelope with capability
 `review.package` and declared approved timeline, validation, preview, and
 version references.
 
+Visual-media boundary: visual execution is isolated child agent only. A child
+uses one claimed immutable envelope, one exact `scope_identity`, and its exact
+Artifact allowlist; it must not crawl the project or discover neighboring
+scenes. Metadata-only review planning is non-visual and needs no child, but its
+result is still scrubbed. Pixel inspection, preview dereference, rendering,
+screenshots, frame extraction, contact sheets, and media QA are child-only and
+return compact `visual_media_handoff`; a review preview is for the user only.
+
 Required output: Return a task-result envelope with review-pack artifact IDs,
 included checks and warnings, and the Representative slice and final draft
 decision request.
@@ -25,4 +33,6 @@ missing and return `waiting_user` or `blocked` with compact references.
 
 Follow `../../references/schemas/task-envelope.schema.json`,
 `../../references/schemas/task-result.schema.json`, and
-`../../references/policies/decision-gates.md`.
+`../../references/schemas/visual-media-task-context.schema.json`,
+`../../references/policies/decision-gates.md`, and
+`../../references/policies/visual-media-isolation.md`.

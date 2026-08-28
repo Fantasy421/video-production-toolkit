@@ -26,6 +26,14 @@ an approved motion contract. It requires Motion-contract approval; require
 Representative slice and final draft approval before full expansion or a final
 draft, while allowing its approved representative slice to be produced first.
 
+Visual-media boundary: visual execution is isolated child agent only. A child
+uses one claimed immutable envelope, one exact `scope_identity`, and its exact
+Artifact allowlist; it must not crawl the project or discover neighboring
+scenes. Contract selection is non-visual and needs no child, but its result is
+still scrubbed. Pixel inspection, preview dereference, rendering, screenshots,
+frame extraction, contact sheets, and media QA are child-only and return
+compact `visual_media_handoff`; the selected adapter is child-only.
+
 Required output: Return a task-result envelope deterministically: preview returns
 `waiting_user` with preview and contract artifact IDs; production returns
 `succeeded`, `waiting_external`, `waiting_user`, `blocked`, or `failed`
@@ -39,4 +47,6 @@ Follow `../../references/schemas/task-envelope.schema.json`,
 `../../references/schemas/task-result.schema.json`,
 `../../references/policies/decision-gates.md`,
 `../../references/policies/visual-carriers.md`, and
-`../../references/policies/retry.md`.
+`../../references/policies/retry.md`,
+`../../references/schemas/visual-media-task-context.schema.json`, and
+`../../references/policies/visual-media-isolation.md`.

@@ -5,6 +5,21 @@ description: Route Chinese talking-head and tutorial knowledge-video requests ab
 
 # Video Director
 
+## Highest-priority visual-media isolation
+
+Before any routing, keep the coordinator non-visual. It must never perform
+`image-generate`, `image-edit`, `image-inspect`, `video-generate`,
+`video-edit`, `video-render`, `video-inspect`, `frame-extract`, or
+`contact-sheet`; it must never open, dereference, preview, or visually inspect
+media or invoke a visual adapter. A visual operation requires exactly one isolated child agent with its claimed immutable envelope and closed scope. The
+coordinator may make a compact metadata relay only: Artifact IDs,
+project-contained paths, structural metadata, checks, issue codes, summary,
+decision status, and one declared review-preview path, which it must never
+open, dereference, or visually inspect. Audio-only work is excluded from this
+visual-media rule. Follow `../../references/policies/visual-media-isolation.md`.
+
+## Routing
+
 For a Chinese talking-head and tutorial knowledge-video request about a topic,
 script, voice, or A-roll:
 
@@ -32,4 +47,5 @@ script, voice, or A-roll:
 
 Follow `../../references/schemas/task-envelope.schema.json`,
 `../../references/schemas/task-result.schema.json`, and
-`../../references/policies/decision-gates.md`.
+`../../references/policies/decision-gates.md`, and
+`../../references/policies/visual-media-isolation.md`.

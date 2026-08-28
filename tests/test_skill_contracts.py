@@ -134,6 +134,63 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("may relay the single declared review-preview path", text)
         self.assertIn("must never open, dereference, or visually inspect it", text)
 
+    def test_video_director_makes_visual_media_isolation_its_highest_priority_rule(self):
+        """Catches routing or adapter use preceding coordinator visual-media isolation."""
+        text = (ROOT / "skills/video-director/SKILL.md").read_text(encoding="utf-8")
+
+        isolation = text.index("## Highest-priority visual-media isolation")
+        routing = text.index("## Routing")
+        self.assertLess(isolation, routing)
+        for prohibition in (
+            "image-generate",
+            "image-edit",
+            "image-inspect",
+            "video-generate",
+            "video-edit",
+            "video-render",
+            "video-inspect",
+            "frame-extract",
+            "contact-sheet",
+            "must never open, dereference, preview, or visually inspect",
+            "exactly one isolated child agent",
+            "compact metadata relay",
+        ):
+            with self.subTest(prohibition=prohibition):
+                self.assertIn(prohibition, text)
+
+    def test_all_visual_workers_require_isolated_child_execution(self):
+        """Catches a visual worker escaping its one immutable media scope."""
+        workers = (
+            "visual-system-designer",
+            "storyboard-director",
+            "scene-producer",
+            "motion-director",
+            "structural-validator",
+            "timeline-assembler",
+            "video-review-packager",
+        )
+        for worker in workers:
+            text = (ROOT / "skills" / worker / "SKILL.md").read_text(encoding="utf-8")
+            with self.subTest(worker=worker):
+                self.assertIn("isolated child agent only", text)
+                self.assertIn("one exact `scope_identity`", text)
+                self.assertIn("must not crawl the project", text)
+                self.assertRegex(
+                    text, r"must not crawl the project or discover neighboring\s+scenes"
+                )
+                self.assertIn("visual_media_handoff", text)
+                self.assertIn("visual-media-task-context.schema.json", text)
+
+    def test_visual_adapters_are_limited_to_the_isolated_child_boundary(self):
+        """Catches primary-context routing gaining a visual adapter execution path."""
+        policy = (ROOT / "references/policies/visual-media-isolation.md").read_text(
+            encoding="utf-8"
+        )
+        boundary = policy.index("## Child-only visual adapters")
+        for adapter in ("HyperFrames", "VideoShotCraft", "Remotion", "ChatCut"):
+            with self.subTest(adapter=adapter):
+                self.assertIn(adapter, policy[boundary:])
+
     def test_image_workers_use_one_bounded_scope_and_return_compact_metadata(self):
         """Catches generation or inspection escaping its one-contract child context."""
         scene = (ROOT / "skills/scene-producer/SKILL.md").read_text(encoding="utf-8")

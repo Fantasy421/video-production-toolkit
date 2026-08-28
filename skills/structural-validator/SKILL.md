@@ -29,6 +29,15 @@ Immediately before every image read or image-tool invocation, resolve the
 declared Artifact metadata and call `authorize_image_access`; a denial is a
 contract error and cannot broaden the context.
 
+Visual-media boundary: visual execution is isolated child agent only. A child
+uses one claimed immutable envelope, one exact `scope_identity`, and its exact
+Artifact allowlist; it must not crawl the project or discover neighboring
+scenes. `visual_media_operation: none` and `image_operation: structure-only`
+are non-visual and need no child, but their result is still scrubbed. Pixel
+inspection, preview dereference, rendering, screenshots, frame extraction,
+contact sheets, and media QA are child-only and return compact
+`visual_media_handoff`.
+
 Required output: Return a task-result envelope with validation artifact IDs,
 objective checks, compact warnings, and blockers or user decision requests.
 For image inspection, return only a compact image handoff of Artifact IDs,
@@ -42,4 +51,6 @@ return `blocked`; leave subjective findings for the review package.
 Follow `../../references/schemas/task-envelope.schema.json`,
 `../../references/schemas/task-result.schema.json`, and
 `../../references/schemas/image-task-context.schema.json`, and
-`../../references/policies/decision-gates.md`.
+`../../references/schemas/visual-media-task-context.schema.json`,
+`../../references/policies/decision-gates.md`, and
+`../../references/policies/visual-media-isolation.md`.
