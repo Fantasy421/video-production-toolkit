@@ -28,43 +28,53 @@
       "properties": {
         "artifact_ids": {
           "type": "array",
-          "items": {"$ref": "#/$defs/safeId"},
+          "items": {"$ref": "#/$defs/safeId", "maxLength": 128},
           "uniqueItems": true,
-          "maxItems": 16
+          "maxItems": 8
         },
         "paths": {
           "type": "array",
-          "items": {"$ref": "#/$defs/artifactPath"},
+          "items": {
+            "$ref": "#/$defs/artifactPath",
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+          },
           "uniqueItems": true,
-          "maxItems": 16
+          "maxItems": 8
         },
         "media": {
           "type": "array",
-          "items": {"$ref": "#/$defs/compactScalar"},
+          "items": {"type": "string", "minLength": 1, "maxLength": 64},
           "uniqueItems": true,
-          "maxItems": 16
+          "maxItems": 8
         },
         "checks": {
           "type": "array",
-          "items": {"type": "string", "minLength": 1, "maxLength": 500},
-          "uniqueItems": true
+          "items": {"type": "string", "minLength": 1, "maxLength": 64},
+          "uniqueItems": true,
+          "maxItems": 8
         },
         "issues": {
           "type": "array",
+          "maxItems": 8,
           "items": {
             "type": "object",
             "required": ["code"],
             "properties": {
-              "code": {"$ref": "#/$defs/safeId"},
-              "artifact_id": {"$ref": "#/$defs/safeId"},
-              "message": {"type": "string", "minLength": 1, "maxLength": 500},
-              "severity": {"type": "string", "minLength": 1, "maxLength": 500}
+              "code": {"$ref": "#/$defs/safeId", "maxLength": 128},
+              "artifact_id": {"$ref": "#/$defs/safeId", "maxLength": 128},
+              "message": {"type": "string", "minLength": 1, "maxLength": 64},
+              "severity": {"type": "string", "minLength": 1, "maxLength": 64}
             },
             "additionalProperties": false
           }
         },
-        "summary": {"type": "string", "minLength": 1, "maxLength": 500},
-        "review_preview_path": {"$ref": "#/$defs/previewPath"}
+        "summary": {"type": "string", "minLength": 1, "maxLength": 64},
+        "review_preview_path": {
+          "$ref": "#/$defs/previewPath",
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+        }
       },
       "additionalProperties": false
     },

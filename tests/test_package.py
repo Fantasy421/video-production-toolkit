@@ -119,6 +119,60 @@ class PackageTests(unittest.TestCase):
         self.assertEqual("#/$defs/previewPath", handoff["properties"]["review_preview_path"]["$ref"])
         self.assertTrue(schema["properties"]["image_handoff"]["deprecated"])
 
+    def test_visual_media_handoff_has_a_bounded_compact_result_shape(self):
+        """Catches a visual-media result whose variable handoff fields exceed its budget."""
+        schema = json.loads(
+            (ROOT / "references/schemas/task-result.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        handoff = schema["properties"]["visual_media_handoff"]["properties"]
+
+        for name in ("artifact_ids", "paths", "media", "checks", "issues"):
+            with self.subTest(name=name):
+                self.assertEqual(8, handoff[name]["maxItems"])
+        self.assertEqual(128, handoff["artifact_ids"]["items"]["maxLength"])
+        self.assertEqual(256, handoff["paths"]["items"]["maxLength"])
+        self.assertEqual(
+            "^[A-Za-z0-9][A-Za-z0-9._/-]*$", handoff["paths"]["items"]["pattern"]
+        )
+        self.assertEqual(64, handoff["media"]["items"]["maxLength"])
+        self.assertEqual(64, handoff["checks"]["items"]["maxLength"])
+        issue = handoff["issues"]["items"]["properties"]
+        self.assertEqual(128, issue["code"]["maxLength"])
+        self.assertEqual(128, issue["artifact_id"]["maxLength"])
+        self.assertEqual(64, issue["message"]["maxLength"])
+        self.assertEqual(64, issue["severity"]["maxLength"])
+        self.assertEqual(64, handoff["summary"]["maxLength"])
+        self.assertEqual(256, handoff["review_preview_path"]["maxLength"])
+        self.assertEqual(
+            "^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+            handoff["review_preview_path"]["pattern"],
+        )
+
+        high_codepoint = "\U0010ffff" * 63
+        payload = {
+            "artifact_ids": [f"a{'a' * 126}{index}" for index in range(8)],
+            "paths": [f"artifacts/{'a' * 245}{index}" for index in range(8)],
+            "media": [f"{high_codepoint}{index}" for index in range(8)],
+            "checks": [f"{high_codepoint}{index}" for index in range(8)],
+            "issues": [
+                {
+                    "code": f"c{'a' * 126}{index}",
+                    "artifact_id": f"a{'a' * 126}{index}",
+                    "message": f"{high_codepoint}{index}",
+                    "severity": f"{high_codepoint}{index}",
+                }
+                for index in range(8)
+            ],
+            "summary": f"{high_codepoint}s",
+            "review_preview_path": f"previews/{'a' * 246}x",
+        }
+        self.assertLess(
+            len(json.dumps(payload, ensure_ascii=True).encode("utf-8")),
+            32768,
+        )
+
     def test_required_plugin_entrypoints_exist(self):
         self.assertEqual([], validate_package(ROOT))
 
