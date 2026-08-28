@@ -28,8 +28,31 @@
     "constraints": {
       "type": "object",
       "properties": {
-        "image_operation": {"enum": ["generate", "structure-only", "image-inspect"]},
-        "image_context": {"$ref": "image-task-context.schema.json"},
+        "image_operation": {
+          "enum": ["generate", "structure-only", "image-inspect"],
+          "deprecated": true,
+          "readOnly": true
+        },
+        "image_context": {
+          "$ref": "image-task-context.schema.json",
+          "deprecated": true,
+          "readOnly": true
+        },
+        "visual_media_operation": {
+          "enum": [
+            "none",
+            "image-generate",
+            "image-edit",
+            "image-inspect",
+            "video-generate",
+            "video-edit",
+            "video-render",
+            "video-inspect",
+            "frame-extract",
+            "contact-sheet"
+          ]
+        },
+        "visual_media_context": {"$ref": "visual-media-task-context.schema.json"},
         "visual_operation": {"enum": ["image-generation", "non-image"]}
       },
       "allOf": [
@@ -50,6 +73,38 @@
             "required": ["image_operation"]
           },
           "then": {"not": {"required": ["image_context"]}}
+        },
+        {
+          "if": {
+            "properties": {"visual_media_operation": {"const": "none"}},
+            "required": ["visual_media_operation"]
+          },
+          "then": {"not": {"required": ["visual_media_context"]}}
+        },
+        {
+          "if": {
+            "properties": {
+              "visual_media_operation": {
+                "enum": [
+                  "image-generate",
+                  "image-edit",
+                  "image-inspect",
+                  "video-generate",
+                  "video-edit",
+                  "video-render",
+                  "video-inspect",
+                  "frame-extract",
+                  "contact-sheet"
+                ]
+              }
+            },
+            "required": ["visual_media_operation"]
+          },
+          "then": {"required": ["visual_media_context"]}
+        },
+        {
+          "if": {"required": ["visual_media_context"]},
+          "then": {"required": ["visual_media_operation"]}
         },
         {
           "if": {

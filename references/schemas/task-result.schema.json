@@ -14,7 +14,63 @@
     "claim_token": {"type": "string", "minLength": 1},
     "error": {"type": "string", "minLength": 1},
     "user_decision_request": {"type": "string", "minLength": 1},
+    "visual_media_handoff": {
+      "type": "object",
+      "required": [
+        "artifact_ids",
+        "paths",
+        "media",
+        "checks",
+        "issues",
+        "summary",
+        "review_preview_path"
+      ],
+      "properties": {
+        "artifact_ids": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/safeId"},
+          "uniqueItems": true,
+          "maxItems": 16
+        },
+        "paths": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/artifactPath"},
+          "uniqueItems": true,
+          "maxItems": 16
+        },
+        "media": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/compactScalar"},
+          "uniqueItems": true,
+          "maxItems": 16
+        },
+        "checks": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1, "maxLength": 500},
+          "uniqueItems": true
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code"],
+            "properties": {
+              "code": {"$ref": "#/$defs/safeId"},
+              "artifact_id": {"$ref": "#/$defs/safeId"},
+              "message": {"type": "string", "minLength": 1, "maxLength": 500},
+              "severity": {"type": "string", "minLength": 1, "maxLength": 500}
+            },
+            "additionalProperties": false
+          }
+        },
+        "summary": {"type": "string", "minLength": 1, "maxLength": 500},
+        "review_preview_path": {"$ref": "#/$defs/previewPath"}
+      },
+      "additionalProperties": false
+    },
     "image_handoff": {
+      "deprecated": true,
+      "readOnly": true,
       "type": "object",
       "properties": {
         "artifact_ids": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},

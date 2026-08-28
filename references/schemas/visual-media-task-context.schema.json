@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Video Production Toolkit Visual-Media Task Context",
+  "type": "object",
+  "required": [
+    "scope_identity",
+    "allowed_artifact_ids",
+    "historical_access",
+    "continuity_exception",
+    "max_review_previews",
+    "context_budget_bytes"
+  ],
+  "properties": {
+    "scope_identity": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "scene-contract",
+            "character-asset-batch",
+            "review-batch"
+          ]
+        },
+        "id": {}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {"enum": ["scene-contract", "character-asset-batch"]}
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": {"id": {"$ref": "#/$defs/safeId"}}
+          }
+        },
+        {
+          "if": {
+            "properties": {"kind": {"const": "review-batch"}},
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": {"id": {"$ref": "#/$defs/reviewScopeIds"}}
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "allowed_artifact_ids": {"$ref": "#/$defs/uniqueSafeArtifactIds"},
+    "historical_access": {"const": "character-only"},
+    "continuity_exception": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["artifact_id", "user_requested", "reason"],
+          "properties": {
+            "artifact_id": {"$ref": "#/$defs/safeId"},
+            "user_requested": {"const": true},
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500,
+              "pattern": "^\\S(?:.*\\S)?$"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "max_review_previews": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 1
+    },
+    "context_budget_bytes": {"type": "integer", "minimum": 1, "maximum": 32768}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"
+    },
+    "uniqueSafeArtifactIds": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/safeId"},
+      "uniqueItems": true,
+      "maxItems": 16
+    },
+    "reviewScopeIds": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/safeId"},
+      "uniqueItems": true,
+      "minItems": 1,
+      "maxItems": 8
+    }
+  }
+}

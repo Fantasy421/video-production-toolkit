@@ -11,6 +11,114 @@ ROOT = Path(__file__).parents[1]
 
 
 class PackageTests(unittest.TestCase):
+    def test_visual_media_schema_is_closed_and_bounded(self):
+        """Catches a visual-media task context that expands beyond its isolated scope."""
+        schema = json.loads(
+            (ROOT / "references/schemas/visual-media-task-context.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertEqual(
+            [
+                "scene-contract",
+                "character-asset-batch",
+                "review-batch",
+            ],
+            schema["properties"]["scope_identity"]["properties"]["kind"]["enum"],
+        )
+        self.assertEqual("character-only", schema["properties"]["historical_access"]["const"])
+        self.assertEqual(1, schema["properties"]["max_review_previews"]["maximum"])
+        self.assertEqual(32768, schema["properties"]["context_budget_bytes"]["maximum"])
+        self.assertFalse(schema["additionalProperties"])
+        self.assertEqual(
+            [
+                "scope_identity",
+                "allowed_artifact_ids",
+                "historical_access",
+                "continuity_exception",
+                "max_review_previews",
+                "context_budget_bytes",
+            ],
+            schema["required"],
+        )
+
+    def test_task_envelope_declares_exact_visual_media_operations(self):
+        """Catches envelope operations that omit or broaden the visual-media context gate."""
+        envelope = json.loads(
+            (ROOT / "references/schemas/task-envelope.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        operations = envelope["properties"]["constraints"]["properties"][
+            "visual_media_operation"
+        ]["enum"]
+        self.assertEqual(
+            [
+                "none",
+                "image-generate",
+                "image-edit",
+                "image-inspect",
+                "video-generate",
+                "video-edit",
+                "video-render",
+                "video-inspect",
+                "frame-extract",
+                "contact-sheet",
+            ],
+            operations,
+        )
+        conditionals = envelope["properties"]["constraints"]["allOf"]
+        self.assertIn(
+            {
+                "if": {
+                    "properties": {"visual_media_operation": {"const": "none"}},
+                    "required": ["visual_media_operation"],
+                },
+                "then": {"not": {"required": ["visual_media_context"]}},
+            },
+            conditionals,
+        )
+        self.assertIn(
+            {
+                "if": {
+                    "properties": {
+                        "visual_media_operation": {
+                            "enum": operations[1:],
+                        }
+                    },
+                    "required": ["visual_media_operation"],
+                },
+                "then": {"required": ["visual_media_context"]},
+            },
+            conditionals,
+        )
+
+    def test_task_result_visual_media_handoff_uses_one_review_preview_path(self):
+        """Catches result handoffs reopening visual-media fields or preview fan-out."""
+        schema = json.loads(
+            (ROOT / "references/schemas/task-result.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        handoff = schema["properties"]["visual_media_handoff"]
+
+        self.assertEqual(
+            [
+                "artifact_ids",
+                "paths",
+                "media",
+                "checks",
+                "issues",
+                "summary",
+                "review_preview_path",
+            ],
+            list(handoff["properties"]),
+        )
+        self.assertFalse(handoff["additionalProperties"])
+        self.assertEqual("#/$defs/previewPath", handoff["properties"]["review_preview_path"]["$ref"])
+        self.assertTrue(schema["properties"]["image_handoff"]["deprecated"])
+
     def test_required_plugin_entrypoints_exist(self):
         self.assertEqual([], validate_package(ROOT))
 
