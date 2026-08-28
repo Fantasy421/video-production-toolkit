@@ -479,8 +479,16 @@ def validate_declared_image_inputs(
         cross_scope_ids = {
             artifact_id
             for artifact_id in declared_inputs
-            if (artifact := artifacts.get(artifact_id)) is not None
-            and artifact.get("type") == "character-asset-batch"
+            if (
+                (artifact := artifacts.get(artifact_id)) is not None
+                and (
+                    artifact.get("type") == "character-asset-batch"
+                    or (
+                        artifact.get("type") == "character-pack"
+                        and artifact_id not in pack_ids
+                    )
+                )
+            )
         }
         matching_scope_ids = {
             artifact_id

@@ -78,3 +78,20 @@ when there are no duplicate candidates within the selected family.
 No schema change was needed: the existing closed image-context schema already
 defines the member-role field as a unique, safe, maximum-eight list. The
 runtime applies its role semantics when relating that context to task inputs.
+
+## Correction Round 2
+
+The scene-contract branch initially treated only a
+`character-asset-batch` as a cross-family scope. It now applies the same
+member-role distinction as the character branch: an unlisted
+`character-pack` is an independent cross-family scope candidate, while a pack
+listed in `allowed_character_pack_ids` remains an exact member/reference.
+
+### TDD Evidence
+
+- RED: a scene-contract context with an unlisted character pack passed at
+  `create_task`, `claim_task`, and persisted `validate_project`; the explicit
+  member-pack control passed.
+- GREEN: all four focused regressions passed after the symmetric candidate
+  rule was added.
+- Focused: `python -m unittest tests.test_image_context tests.test_tasks tests.test_validation tests.test_package -v` — 136 passed.

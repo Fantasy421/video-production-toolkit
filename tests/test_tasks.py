@@ -662,6 +662,53 @@ class TaskTests(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "exactly one scene-contract"):
             create_task(self.root, envelope)
 
+    def test_scene_contract_scope_allows_an_explicit_member_pack(self):
+        """Catches a listed character pack being treated as a scene conflict."""
+        self.create_image_context_artifacts()
+        envelope = {
+            **self.envelope,
+            "task_id": "scene-scope-with-member-pack",
+            "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
+            "constraints": {
+                **self.envelope["constraints"],
+                "image_operation": "image-inspect",
+                "image_context": self.image_context(),
+            },
+        }
+
+        self.assertEqual(
+            self.root / "tasks" / "scene-scope-with-member-pack.json",
+            create_task(self.root, envelope),
+        )
+
+    def test_scene_contract_scope_rejects_an_unlisted_character_pack_input(self):
+        """Catches a scene scope gaining an unlisted independent character pack."""
+        self.create_image_context_artifacts()
+        self.create_artifact(
+            "unlisted-pack-a",
+            "character-pack",
+            1,
+            identity_provenance="unlisted-pack-v1",
+        )
+        envelope = {
+            **self.envelope,
+            "task_id": "scene-scope-with-unlisted-pack",
+            "inputs": [
+                *self.envelope["inputs"],
+                "scene-S03-v1",
+                "host-pack-v1",
+                "unlisted-pack-a",
+            ],
+            "constraints": {
+                **self.envelope["constraints"],
+                "image_operation": "image-inspect",
+                "image_context": self.image_context(),
+            },
+        }
+
+        with self.assertRaisesRegex(PermissionError, "exactly one scene-contract"):
+            create_task(self.root, envelope)
+
     def test_character_batch_scope_rejects_a_scene_contract_input(self):
         """Catches a character scope gaining an independent Scene Contract."""
         self.create_artifact("character-batch-a", "character-asset-batch", 1)
@@ -711,6 +758,33 @@ class TaskTests(unittest.TestCase):
         self.create_artifact("scene-contract-S04-v1", "scene-contract", 1)
         persisted = json.loads(task_path.read_text(encoding="utf-8"))
         persisted["inputs"].append("scene-contract-S04-v1")
+        task_path.write_text(json.dumps(persisted), encoding="utf-8")
+
+        with self.assertRaisesRegex(PermissionError, "exactly one scene-contract"):
+            claim_task(self.root, envelope["task_id"], "worker-a")
+
+    def test_claim_revalidates_an_unlisted_character_pack_scope_input(self):
+        """Catches a persisted scene task gaining an unlisted pack before claim."""
+        self.create_image_context_artifacts()
+        envelope = {
+            **self.envelope,
+            "task_id": "claim-rechecks-unlisted-character-pack",
+            "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
+            "constraints": {
+                **self.envelope["constraints"],
+                "image_operation": "image-inspect",
+                "image_context": self.image_context(),
+            },
+        }
+        task_path = create_task(self.root, envelope)
+        self.create_artifact(
+            "unlisted-pack-a",
+            "character-pack",
+            1,
+            identity_provenance="unlisted-pack-v1",
+        )
+        persisted = json.loads(task_path.read_text(encoding="utf-8"))
+        persisted["inputs"].append("unlisted-pack-a")
         task_path.write_text(json.dumps(persisted), encoding="utf-8")
 
         with self.assertRaisesRegex(PermissionError, "exactly one scene-contract"):

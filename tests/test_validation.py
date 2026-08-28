@@ -868,6 +868,57 @@ class ValidationTests(unittest.TestCase):
 
         self.assertIn("invalid-task-envelope", {item["code"] for item in result["errors"]})
 
+    def test_validator_rejects_scene_scope_with_an_unlisted_character_pack(self):
+        """Catches persisted scene tasks acquiring an independent pack scope."""
+        self.write_artifact(
+            "unlisted-pack-a",
+            "character-pack",
+            1,
+            "approved",
+            "metadata/unlisted-pack-a.json",
+            identity_provenance="unlisted-pack-v1",
+        )
+        tasks = self.root / "tasks"
+        tasks.mkdir()
+        task_id = "scene-scope-with-unlisted-pack"
+        (tasks / f"{task_id}.json").write_text(
+            json.dumps(
+                {
+                    "task_id": task_id,
+                    "capability": "structure.validate",
+                    "inputs": ["scene-contract-S01-v1", "unlisted-pack-a"],
+                    "adapter_preferences": ["chatcut"],
+                    "output_contract": "task-result-v1",
+                    "constraints": {
+                        "image_operation": "image-inspect",
+                        "image_context": {
+                            "scope_identity": {
+                                "kind": "scene-contract",
+                                "id": "scene-contract-S01-v1",
+                            },
+                            "allowed_image_artifact_ids": [],
+                            "allowed_character_pack_ids": [],
+                            "forbidden_scene_image_access": True,
+                            "max_review_previews": 0,
+                            "context_budget": 1024,
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = validate_project(self.root)
+
+        self.assertIn(
+            "tasks/scene-scope-with-unlisted-pack.json",
+            {
+                item["path"]
+                for item in result["errors"]
+                if item["code"] == "invalid-task-envelope"
+            },
+        )
+
     def test_validator_requires_exact_structure_validation_image_operation(self):
         """Catches persisted structure validators bypassing the inspection discriminator."""
         tasks = self.root / "tasks"
