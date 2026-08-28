@@ -385,6 +385,10 @@ def _validate_task_envelope_schema(
     properties = _mapping(schema.get("properties"))
     constraints = _mapping(properties.get("constraints"))
     constraint_properties = _mapping(constraints.get("properties"))
+    if constraint_properties.get("visual_media_context") != {
+        "$ref": "visual-media-task-context.schema.json"
+    }:
+        errors.append("invalid:visual-media-context-ref")
     operations = _mapping(constraint_properties.get("visual_media_operation")).get(
         "enum"
     )

@@ -466,6 +466,35 @@ class PackageTests(unittest.TestCase):
                 self.assertNotIn("invalid:release-fingerprint", errors)
                 self.assertIn(expected, errors)
 
+    def test_invalid_visual_media_context_refs_fail_after_fingerprint_refresh(self):
+        """Catches the envelope dropping or redirecting its visual context schema."""
+        cases = (
+            ("empty-schema", lambda context: context.clear()),
+            ("missing-ref", lambda context: context.pop("$ref")),
+            (
+                "incorrect-ref",
+                lambda context: context.update(
+                    {"$ref": "image-task-context.schema.json"}
+                ),
+            ),
+        )
+        for name, mutate in cases:
+            with self.subTest(name=name), TemporaryDirectory() as folder:
+                package = self.copy_package(folder)
+                path = package / "references/schemas/task-envelope.schema.json"
+                schema = json.loads(path.read_text(encoding="utf-8"))
+                context = schema["properties"]["constraints"]["properties"][
+                    "visual_media_context"
+                ]
+                mutate(context)
+                path.write_text(json.dumps(schema), encoding="utf-8")
+                self.refresh_release_fingerprint(package)
+
+                errors = validate_package(package)
+
+                self.assertNotIn("invalid:release-fingerprint", errors)
+                self.assertIn("invalid:visual-media-context-ref", errors)
+
     def test_weakened_visual_scope_mapping_fails_after_fingerprint_refresh(self):
         """Catches single-scope or review-batch IDs no longer using their exact defs."""
         cases = (
