@@ -89,7 +89,7 @@ class PersistedVisualMediaValidationTests(unittest.TestCase):
         }
         return {
             "task_id": task_id,
-            "capability": "scene.produce",
+            "capability": "visual.preview",
             "inputs": list(inputs or ["scene-contract-S01-v1"]),
             "adapter_preferences": ["chatcut"],
             "output_contract": "scene-video-v1",
@@ -149,6 +149,30 @@ class PersistedVisualMediaValidationTests(unittest.TestCase):
         )
 
     @staticmethod
+    def nonvisual_task(task_id, *, inputs=None):
+        return {
+            "task_id": task_id,
+            "capability": "project.manage",
+            "inputs": list(inputs or []),
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "task-result-v1",
+            "constraints": {"visual_media_operation": "none"},
+        }
+
+    @staticmethod
+    def plain_result(task_id, *, status, inputs=None, artifacts=None):
+        return {
+            "task_id": task_id,
+            "status": status,
+            "inputs": list(inputs or []),
+            "artifacts": list(artifacts or []),
+            "checks": [],
+            "warnings": [],
+            "worker_id": "worker",
+            "claim_token": "claim-token",
+        }
+
+    @staticmethod
     def legacy_video_task_without_scope():
         return {
             "task_id": "legacy-video-without-scope",
@@ -157,6 +181,20 @@ class PersistedVisualMediaValidationTests(unittest.TestCase):
             "adapter_preferences": ["chatcut"],
             "output_contract": "scene-video-v1",
             "constraints": {"visual_operation": "non-image"},
+        }
+
+    @staticmethod
+    def legacy_image_context():
+        return {
+            "scope_identity": {
+                "kind": "scene-contract",
+                "id": "scene-contract-S01-v1",
+            },
+            "allowed_image_artifact_ids": [],
+            "allowed_character_pack_ids": [],
+            "forbidden_scene_image_access": True,
+            "max_review_previews": 0,
+            "context_budget": 1024,
         }
 
     def test_ambiguous_legacy_visual_task_is_blocked_without_history_rewrite(self):
@@ -171,6 +209,92 @@ class PersistedVisualMediaValidationTests(unittest.TestCase):
         self.assert_only_issue_for(result, path, "legacy-visual-task-blocked")
         self.assertEqual(before_task, path.read_bytes())
         self.assertEqual(before_events, event_path.read_bytes())
+
+    def test_legacy_visual_task_missing_image_context_has_stable_blocked_issue(self):
+        """Catches generic envelope validation hiding ambiguous legacy authority."""
+        task = self.legacy_video_task_without_scope()
+        task["task_id"] = "legacy-generate-without-context"
+        task["constraints"] = {
+            "visual_operation": "image-generation",
+            "image_operation": "generate",
+        }
+        path = self.write_task(task)
+
+        result = self.assert_validation_preserves(path)
+
+        self.assert_only_issue_for(result, path, "legacy-visual-task-blocked")
+
+    def test_clear_persisted_legacy_visual_authority_remains_readable(self):
+        """Catches current-only enforcement removing explicit legacy compatibility."""
+        self.write_artifact("scene-contract-S01-v1", "scene-contract")
+        task = self.legacy_video_task_without_scope()
+        task["task_id"] = "legacy-image-generation"
+        task["inputs"] = ["scene-contract-S01-v1"]
+        task["output_contract"] = "scene-image-v1"
+        task["constraints"] = {
+            "visual_operation": "image-generation",
+            "image_operation": "generate",
+            "image_context": self.legacy_image_context(),
+        }
+        path = self.write_task(task)
+
+        result = self.assert_validation_preserves(path)
+
+        self.assertNotIn(
+            path.relative_to(self.root).as_posix(),
+            {issue.get("path") for issue in result["errors"]},
+        )
+
+    def test_persisted_record_cannot_mix_current_and_deprecated_visual_authority(self):
+        """Catches legacy compatibility broadening a current persisted record."""
+        self.write_artifact("scene-contract-S01-v1", "scene-contract")
+        task = self.current_visual_task(task_id="mixed-current-deprecated")
+        task["constraints"]["visual_operation"] = "non-image"
+        path = self.write_task(task)
+
+        result = self.assert_validation_preserves(path)
+
+        self.assert_only_issue_for(result, path, "invalid-task-envelope")
+
+    def test_unsafe_tasks_parent_stops_all_result_directory_traversal(self):
+        """Catches result recovery following a parent tasks symlink outside root."""
+        shutil.rmtree(self.root / "tasks")
+        with TemporaryDirectory() as outside_folder:
+            outside_tasks = Path(outside_folder) / "tasks"
+            (outside_tasks / "results").mkdir(parents=True)
+            probe = outside_tasks / "results" / "foreign-probe.json"
+            probe.write_text(json.dumps({"external_probe": True}), encoding="utf-8")
+            before = probe.read_bytes()
+            (self.root / "tasks").symlink_to(
+                outside_tasks, target_is_directory=True
+            )
+
+            result = validate_project(self.root)
+
+            self.assertEqual(before, probe.read_bytes())
+        self.assertIn(
+            {"code": "unsafe-runtime-storage", "storage": "tasks"},
+            result["errors"],
+        )
+        self.assertNotIn(
+            "tasks/results/foreign-probe.json",
+            {issue.get("path") for issue in result["errors"]},
+        )
+
+    def test_nondirectory_tasks_storage_is_rejected(self):
+        """Catches a regular file silently replacing the tasks storage boundary."""
+        shutil.rmtree(self.root / "tasks")
+        tasks_path = self.root / "tasks"
+        tasks_path.write_text(json.dumps({"not": "task storage"}), encoding="utf-8")
+        before = tasks_path.read_bytes()
+
+        result = validate_project(self.root)
+
+        self.assertEqual(before, tasks_path.read_bytes())
+        self.assertIn(
+            {"code": "unsafe-runtime-storage", "storage": "tasks"},
+            result["errors"],
+        )
 
     def test_malformed_visual_scope_has_stable_context_issue(self):
         """Catches recovery collapsing a malformed scope into a generic envelope error."""
@@ -386,6 +510,187 @@ class PersistedVisualMediaValidationTests(unittest.TestCase):
         self.assertNotIn(
             "visual-media-result-invalid",
             {issue["code"] for issue in result["errors"]},
+        )
+
+    def test_result_directories_reject_statuses_from_the_wrong_lifecycle(self):
+        """Catches terminal and resumable records being accepted in either directory."""
+        self.write_artifact(
+            "report-v1", "report", output_contract="task-result-v1"
+        )
+        terminal_task = self.nonvisual_task("failed-in-results")
+        resumable_task = self.nonvisual_task("success-in-status")
+        terminal_task_path = self.write_task(terminal_task)
+        resumable_task_path = self.write_task(resumable_task)
+        failed_path = self.write_result(
+            terminal_task["task_id"],
+            self.plain_result(terminal_task["task_id"], status="failed"),
+            directory="results",
+        )
+        succeeded_path = self.write_result(
+            resumable_task["task_id"],
+            self.plain_result(
+                resumable_task["task_id"],
+                status="succeeded",
+                artifacts=["report-v1"],
+            ),
+            directory="status",
+        )
+
+        result = self.assert_validation_preserves(
+            terminal_task_path,
+            resumable_task_path,
+            failed_path,
+            succeeded_path,
+        )
+
+        self.assert_only_issue_for(
+            result, failed_path, "visual-media-result-invalid"
+        )
+        self.assert_only_issue_for(
+            result, succeeded_path, "visual-media-result-invalid"
+        )
+
+    def test_duplicate_task_result_across_directories_is_rejected(self):
+        """Catches one task reaching conflicting persisted lifecycle states."""
+        self.write_artifact(
+            "report-v1", "report", output_contract="task-result-v1"
+        )
+        task = self.nonvisual_task("duplicate-result")
+        task_path = self.write_task(task)
+        result_path = self.write_result(
+            task["task_id"],
+            self.plain_result(
+                task["task_id"],
+                status="succeeded",
+                artifacts=["report-v1"],
+            ),
+            directory="results",
+        )
+        status_path = self.write_result(
+            task["task_id"],
+            self.plain_result(task["task_id"], status="failed"),
+            directory="status",
+        )
+
+        result = self.assert_validation_preserves(
+            task_path, result_path, status_path
+        )
+
+        self.assert_only_issue_for(
+            result, result_path, "visual-media-result-invalid"
+        )
+        self.assert_only_issue_for(
+            result, status_path, "visual-media-result-invalid"
+        )
+
+    def test_malformed_duplicate_cannot_hide_a_conflicting_valid_result(self):
+        """Catches duplicate detection trusting only an invalid record's body ID."""
+        self.write_artifact(
+            "report-v1", "report", output_contract="task-result-v1"
+        )
+        task = self.nonvisual_task("duplicate-malformed")
+        task_path = self.write_task(task)
+        result_path = self.write_result(
+            task["task_id"],
+            self.plain_result(
+                task["task_id"],
+                status="succeeded",
+                artifacts=["report-v1"],
+            ),
+            directory="results",
+        )
+        status_path = self.write_result(
+            task["task_id"], {}, directory="status"
+        )
+
+        result = self.assert_validation_preserves(
+            task_path, result_path, status_path
+        )
+
+        self.assert_only_issue_for(
+            result, result_path, "visual-media-result-invalid"
+        )
+        self.assert_only_issue_for(
+            result, status_path, "visual-media-result-invalid"
+        )
+
+    def test_stale_result_requires_a_noncurrent_input(self):
+        """Catches a current-input success being mislabeled as stale recovery."""
+        self.write_artifact("input-v1", "input")
+        self.write_artifact(
+            "report-v1", "report", output_contract="task-result-v1"
+        )
+        task = self.nonvisual_task("fake-stale", inputs=["input-v1"])
+        task_path = self.write_task(task)
+        result_path = self.write_result(
+            task["task_id"],
+            self.plain_result(
+                task["task_id"],
+                status="succeeded",
+                inputs=["input-v1"],
+                artifacts=["report-v1"],
+            ),
+            directory="stale-results",
+        )
+
+        result = self.assert_validation_preserves(task_path, result_path)
+
+        self.assert_only_issue_for(
+            result, result_path, "visual-media-result-invalid"
+        )
+
+    def test_each_result_directory_accepts_its_legal_lifecycle_record(self):
+        """Catches lifecycle placement checks rejecting valid persisted recovery."""
+        self.write_artifact("stale-input-v1", "input", status="stale")
+        for artifact_id in ("terminal-report-v1", "stale-report-v1"):
+            self.write_artifact(
+                artifact_id, "report", output_contract="task-result-v1"
+            )
+        terminal = self.nonvisual_task("terminal-result")
+        resumable = self.nonvisual_task("resumable-status")
+        stale = self.nonvisual_task(
+            "real-stale-result", inputs=["stale-input-v1"]
+        )
+        task_paths = [self.write_task(task) for task in (terminal, resumable, stale)]
+        result_paths = [
+            self.write_result(
+                terminal["task_id"],
+                self.plain_result(
+                    terminal["task_id"],
+                    status="succeeded",
+                    artifacts=["terminal-report-v1"],
+                ),
+                directory="results",
+            ),
+            self.write_result(
+                resumable["task_id"],
+                self.plain_result(resumable["task_id"], status="waiting_user"),
+                directory="status",
+            ),
+            self.write_result(
+                stale["task_id"],
+                self.plain_result(
+                    stale["task_id"],
+                    status="succeeded",
+                    inputs=["stale-input-v1"],
+                    artifacts=["stale-report-v1"],
+                ),
+                directory="stale-results",
+            ),
+        ]
+
+        result = self.assert_validation_preserves(*task_paths, *result_paths)
+
+        self.assertFalse(
+            {
+                path.relative_to(self.root).as_posix()
+                for path in result_paths
+            }
+            & {
+                issue.get("path")
+                for issue in result["errors"]
+                if issue["code"] == "visual-media-result-invalid"
+            }
         )
 
 

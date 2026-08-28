@@ -16,6 +16,43 @@ from scripts.toolkit.tasks import claim_task, complete_task, create_task, retry_
 from scripts.toolkit.visual_media_context import ACTIVE_VISUAL_MEDIA_OPERATIONS
 
 
+class CurrentTaskEnvelopeMetadataTests(unittest.TestCase):
+    @staticmethod
+    def envelope(**constraints):
+        return {
+            "task_id": "metadata-only-task",
+            "capability": "project.manage",
+            "inputs": [],
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "task-result-v1",
+            "constraints": constraints,
+        }
+
+    def test_current_validator_rejects_all_deprecated_authority_keys(self):
+        for key, value in (
+            ("visual_operation", "non-image"),
+            ("image_operation", "structure-only"),
+            ("image_context", {}),
+        ):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                tasks.validate_current_task_envelope(self.envelope(**{key: value}))
+
+    def test_persisted_validator_keeps_explicit_legacy_separate_from_current(self):
+        tasks._validate_persisted_envelope(
+            self.envelope(
+                visual_operation="non-image",
+                image_operation="structure-only",
+            )
+        )
+        with self.assertRaises(ValueError):
+            tasks._validate_persisted_envelope(
+                self.envelope(
+                    visual_media_operation="none",
+                    visual_operation="non-image",
+                )
+            )
+
+
 class TaskTests(unittest.TestCase):
     def setUp(self):
         self.folder = TemporaryDirectory()

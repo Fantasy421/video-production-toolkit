@@ -743,6 +743,8 @@ def _validate_current_envelope(envelope: dict[str, Any]) -> None:
     """Validate a newly minted envelope without granting deprecated authority."""
     _validate_envelope_shape(envelope)
     constraints = envelope["constraints"]
+    if "visual_operation" in constraints:
+        raise ValueError("legacy visual authority is read-only")
     if {"image_operation", "image_context"} & constraints.keys():
         raise ValueError("legacy image authority is read-only")
     validate_image_task_constraints(constraints)
@@ -762,7 +764,7 @@ def _validate_persisted_envelope(envelope: dict[str, Any]) -> None:
         {"visual_media_operation", "visual_media_context"} & constraints.keys()
     )
     has_legacy = bool({"image_operation", "image_context"} & constraints.keys())
-    if has_current and has_legacy:
+    if has_current and (has_legacy or "visual_operation" in constraints):
         raise ValueError("task must not mix visual media and legacy image authority")
     if has_current:
         _validate_current_visual_operation_subset(envelope)

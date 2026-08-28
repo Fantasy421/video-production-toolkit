@@ -445,6 +445,36 @@ class SmokeFixtureMetadataTests(unittest.TestCase):
                 {"phase": "initialized", "candidate_tasks": [legacy]}, [], []
             )
 
+    def test_orchestrator_rejects_every_deprecated_current_authority_key(self):
+        """Catches current candidate routing accepting any read-only authority key."""
+        for key, value in (
+            ("visual_operation", "non-image"),
+            ("image_operation", "structure-only"),
+            ("image_context", {}),
+        ):
+            with self.subTest(key=key):
+                candidate_record = smoke_candidate(
+                    f"deprecated-{key}",
+                    "project.manage",
+                    [],
+                    None,
+                    "project-v1",
+                )
+                candidate_record["constraints"].pop("visual_media_operation")
+                candidate_record["constraints"][key] = value
+
+                with self.assertRaisesRegex(
+                    ValueError, "legacy .* authority is read-only"
+                ):
+                    calculate_ready_tasks(
+                        {
+                            "phase": "initialized",
+                            "candidate_tasks": [candidate_record],
+                        },
+                        [],
+                        [],
+                    )
+
 
 class CoordinatorTests(unittest.TestCase):
     def setUp(self):

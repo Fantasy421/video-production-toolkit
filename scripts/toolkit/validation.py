@@ -20,7 +20,9 @@ from .invalidation import invalidated_artifact_ids
 from .packs import validate_layout_pack, validate_style_pack
 from .runtime_paths import project_path, project_root
 from .tasks import (
+    _is_current_result,
     _validate_conditional_visual_media_result,
+    _validate_envelope_shape,
     _validate_persisted_envelope,
     _validate_result,
     _validate_result_artifacts,
@@ -671,7 +673,7 @@ def _check_tasks(
 ) -> dict[str, tuple[dict[str, Any], str]]:
     validated: dict[str, tuple[dict[str, Any], str]] = {}
     task_root = root / "tasks"
-    if task_root.is_symlink():
+    if task_root.is_symlink() or (task_root.exists() and not task_root.is_dir()):
         errors.append(_issue("unsafe-runtime-storage", storage="tasks"))
         return validated
     if not task_root.is_dir():
@@ -683,7 +685,17 @@ def _check_tasks(
             )
             continue
         envelope = _read_json_object(path)
-        if envelope is None or not _valid_task_envelope(envelope) or path.name != f"{envelope.get('task_id')}.json":
+        if envelope is None or path.name != f"{envelope.get('task_id')}.json":
+            errors.append(_issue("invalid-task-envelope", path=_relative(root, path)))
+            continue
+        if _is_unprovable_legacy_visual_task(envelope, artifacts):
+            errors.append(
+                _issue(
+                    "legacy-visual-task-blocked", path=_relative(root, path)
+                )
+            )
+            continue
+        if not _valid_task_envelope(envelope):
             errors.append(_issue("invalid-task-envelope", path=_relative(root, path)))
             continue
         for artifact_id in envelope["inputs"]:
@@ -697,6 +709,26 @@ def _check_tasks(
         if classification is not None:
             validated[envelope["task_id"]] = (envelope, classification)
     return validated
+
+
+def _is_unprovable_legacy_visual_task(
+    envelope: dict[str, Any], artifacts: dict[str, dict[str, Any]]
+) -> bool:
+    """Identify shaped legacy visual authority that cannot prove one scope."""
+    try:
+        _validate_envelope_shape(envelope)
+        classification = classify_visual_media_task(envelope, artifacts)
+    except ValueError:
+        return False
+    constraints = envelope["constraints"]
+    if classification != "visual" or not (
+        {"image_operation", "image_context"} & constraints.keys()
+    ):
+        return False
+    try:
+        return project_legacy_image_context(envelope) is None
+    except ValueError:
+        return True
 
 
 def _check_persisted_visual_media_authority(
@@ -772,8 +804,12 @@ def _check_task_results(
     artifacts: dict[str, dict[str, Any]],
     errors: list[dict[str, Any]],
 ) -> None:
+    task_root = root / "tasks"
+    if task_root.is_symlink() or not task_root.is_dir():
+        return
+    records: list[tuple[str, Path, Optional[dict[str, Any]]]] = []
     for directory in ("results", "status", "stale-results"):
-        result_root = root / "tasks" / directory
+        result_root = task_root / directory
         if result_root.is_symlink():
             errors.append(
                 _issue(
@@ -789,26 +825,58 @@ def _check_task_results(
             if path.is_symlink():
                 errors.append(_issue("unsafe-runtime-storage", storage=relative))
                 continue
-            result = _read_json_object(path)
-            try:
-                validate_result_envelope(result)
-                _validate_result(result)
-                task_id = result["task_id"]
-                if path.name != f"{task_id}.json" or task_id not in tasks:
-                    raise ValueError("task result does not match one valid task")
-                envelope, declared_classification = tasks[task_id]
-                if result["inputs"] != envelope["inputs"]:
-                    raise ValueError("task result inputs do not match its task")
-                produced = _validate_result_artifacts(envelope, result, artifacts)
-                _validate_conditional_visual_media_result(
-                    envelope,
-                    result,
-                    produced,
-                    artifacts,
-                    declared_classification,
-                )
-            except (KeyError, PermissionError, TypeError, ValueError):
-                errors.append(_issue("visual-media-result-invalid", path=relative))
+            records.append((directory, path, _read_json_object(path)))
+
+    by_persisted_id: dict[str, list[Path]] = {}
+    by_task_id: dict[str, list[Path]] = {}
+    for _, path, result in records:
+        by_persisted_id.setdefault(path.stem, []).append(path)
+        task_id = result.get("task_id") if isinstance(result, dict) else None
+        if isinstance(task_id, str):
+            by_task_id.setdefault(task_id, []).append(path)
+    duplicate_paths = {
+        path
+        for grouped in (by_persisted_id, by_task_id)
+        for paths in grouped.values()
+        if len(paths) > 1
+        for path in paths
+    }
+
+    for directory, path, result in records:
+        relative = _relative(root, path)
+        try:
+            validate_result_envelope(result)
+            _validate_result(result)
+            task_id = result["task_id"]
+            if (
+                path.name != f"{task_id}.json"
+                or task_id not in tasks
+                or path in duplicate_paths
+            ):
+                raise ValueError("task result does not match one unique valid task")
+            envelope, declared_classification = tasks[task_id]
+            if result["inputs"] != envelope["inputs"]:
+                raise ValueError("task result inputs do not match its task")
+            if directory == "results" and result["status"] != "succeeded":
+                raise ValueError("terminal task results must have succeeded")
+            if directory == "status" and result["status"] == "succeeded":
+                raise ValueError("resumable task status must not have succeeded")
+            is_current = _is_current_result(root, envelope, result)
+            if directory == "stale-results":
+                if is_current:
+                    raise ValueError("stale task result requires non-current inputs")
+            elif not is_current:
+                raise ValueError("current task result requires current inputs")
+            produced = _validate_result_artifacts(envelope, result, artifacts)
+            _validate_conditional_visual_media_result(
+                envelope,
+                result,
+                produced,
+                artifacts,
+                declared_classification,
+            )
+        except (KeyError, PermissionError, TypeError, ValueError):
+            errors.append(_issue("visual-media-result-invalid", path=relative))
 
 
 def _valid_task_envelope(envelope: dict[str, Any]) -> bool:
