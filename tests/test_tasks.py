@@ -13,6 +13,7 @@ from unittest.mock import patch
 from scripts.toolkit.artifacts import create_artifact
 from scripts.toolkit import tasks
 from scripts.toolkit.tasks import claim_task, complete_task, create_task, retry_decision
+from scripts.toolkit.visual_media_context import ACTIVE_VISUAL_MEDIA_OPERATIONS
 
 
 class TaskTests(unittest.TestCase):
@@ -90,6 +91,19 @@ class TaskTests(unittest.TestCase):
             "visual-preview",
             2,
             parents=self.inputs,
+            path="media/motion-preview-S03-v2.mp4",
+            media_kind="video",
+            historical=False,
+            output_contract="motion-preview-v1",
+        )
+        self.create_artifact(
+            "image-preview-S03-v2",
+            "scene-image",
+            2,
+            parents=self.inputs,
+            path="media/image-preview-S03-v2.png",
+            media_kind="image",
+            historical=False,
             output_contract="motion-preview-v1",
         )
         self.envelope = {
@@ -102,6 +116,9 @@ class TaskTests(unittest.TestCase):
                 "do_not_rewrite_script": True,
                 "max_attempts": 2,
                 "voice_timing_id": "voice-timing-v1",
+                "visual_media_operation": "video-render",
+                "visual_media_context": self.visual_context(),
+                "execution_context": "isolated-child-agent",
             },
         }
 
@@ -136,6 +153,29 @@ class TaskTests(unittest.TestCase):
             **claim,
         }
         result.update(updates)
+        task_path = self.root / "tasks" / f"{result['task_id']}.json"
+        if task_path.is_file():
+            envelope = json.loads(task_path.read_text(encoding="utf-8"))
+            operation = envelope["constraints"].get("visual_media_operation")
+            if operation not in {None, "none"} and not {
+                "visual_media_handoff",
+                "image_handoff",
+            } & result.keys():
+                artifacts = tasks._artifacts_by_id(self.root / "artifacts")
+                paths = [
+                    artifacts[artifact_id]["path"]
+                    for artifact_id in result["artifacts"]
+                    if artifact_id in artifacts
+                ]
+                result["visual_media_handoff"] = {
+                    "artifact_ids": list(result["artifacts"]),
+                    "paths": paths,
+                    "media": {"kind": "video", "format": "mp4"},
+                    "checks": [],
+                    "issues": [],
+                    "summary": "Visual task result is ready.",
+                    "review_preview_path": None,
+                }
         return result
 
     def image_context(self):
@@ -156,6 +196,228 @@ class TaskTests(unittest.TestCase):
             },
         }
 
+    def visual_context(self):
+        return {
+            "scope_identity": {
+                "kind": "scene-contract",
+                "id": "scene-contract-S03-v4",
+            },
+            "allowed_artifact_ids": [],
+            "historical_access": "character-only",
+            "continuity_exception": None,
+            "max_review_previews": 1,
+            "context_budget_bytes": 4096,
+        }
+
+    def visual_envelope(self, *, task_id, operation):
+        return {
+            **self.envelope,
+            "task_id": task_id,
+            "constraints": {
+                **self.envelope["constraints"],
+                "visual_media_operation": operation,
+                "visual_media_context": self.visual_context(),
+                "execution_context": "isolated-child-agent",
+            },
+        }
+
+    def visual_input_envelope(self, *, task_id, artifact_id, operation="video-inspect"):
+        envelope = self.visual_envelope(task_id=task_id, operation=operation)
+        envelope["inputs"] = [*envelope["inputs"], artifact_id]
+        envelope["constraints"]["visual_media_context"][
+            "allowed_artifact_ids"
+        ] = [artifact_id]
+        return envelope
+
+    def legacy_constraints(self, **updates):
+        constraints = {
+            key: value
+            for key, value in self.envelope["constraints"].items()
+            if key
+            not in {
+                "visual_media_operation",
+                "visual_media_context",
+                "execution_context",
+            }
+        }
+        constraints.update(updates)
+        return constraints
+
+    def non_visual_envelope(self, *, task_id="non-visual-task"):
+        return {
+            "task_id": task_id,
+            "capability": "project.manage",
+            "inputs": ["narration-v1"],
+            "adapter_preferences": ["hyperframes"],
+            "output_contract": "project-plan-v1",
+            "constraints": {"visual_media_operation": "none"},
+        }
+
+    def test_every_visual_operation_requires_isolated_child_at_create_and_claim(self):
+        """Catches any active visual mode executing outside an isolated child."""
+        for index, operation in enumerate(sorted(ACTIVE_VISUAL_MEDIA_OPERATIONS), 1):
+            rejected = self.visual_envelope(
+                task_id=f"reject-context-{index}", operation=operation
+            )
+            rejected["constraints"]["execution_context"] = "primary-coordinator"
+            with self.subTest(operation=operation, phase="create"), self.assertRaisesRegex(
+                ValueError, "isolated child"
+            ):
+                create_task(self.root, rejected)
+
+            persisted = self.visual_envelope(
+                task_id=f"recheck-context-{index}", operation=operation
+            )
+            task_path = create_task(self.root, persisted)
+            stored = json.loads(task_path.read_text(encoding="utf-8"))
+            stored["constraints"]["execution_context"] = "primary-coordinator"
+            task_path.write_text(json.dumps(stored), encoding="utf-8")
+            with self.subTest(operation=operation, phase="claim"), self.assertRaisesRegex(
+                ValueError, "isolated child"
+            ):
+                claim_task(self.root, persisted["task_id"], "worker-a")
+
+    def test_none_task_cannot_return_visual_artifact(self):
+        """Catches worker self-report hiding a visual output behind operation none."""
+        envelope = self.non_visual_envelope()
+        create_task(self.root, envelope)
+        claim = claim_task(self.root, envelope["task_id"], "worker-a")
+        self.create_artifact(
+            "hidden-video-v1",
+            "scene-video",
+            1,
+            media_kind="video",
+            path="media/hidden-video-v1.mp4",
+            historical=False,
+            output_contract=envelope["output_contract"],
+        )
+        result = {
+            "task_id": envelope["task_id"],
+            "status": "succeeded",
+            "inputs": envelope["inputs"],
+            "artifacts": ["hidden-video-v1"],
+            "checks": [],
+            "warnings": [],
+            **claim,
+        }
+
+        with self.assertRaisesRegex(ValueError, "visual media"):
+            complete_task(self.root, result)
+
+    def test_every_visual_operation_requires_context_at_create_and_claim(self):
+        """Catches an active operation losing its bounded scope before execution."""
+        for index, operation in enumerate(sorted(ACTIVE_VISUAL_MEDIA_OPERATIONS), 1):
+            missing = self.visual_envelope(
+                task_id=f"missing-context-{index}", operation=operation
+            )
+            missing["constraints"].pop("visual_media_context")
+            with self.subTest(operation=operation, phase="create"), self.assertRaisesRegex(
+                ValueError, "visual_media_context"
+            ):
+                create_task(self.root, missing)
+
+            persisted = self.visual_envelope(
+                task_id=f"claim-missing-context-{index}", operation=operation
+            )
+            task_path = create_task(self.root, persisted)
+            stored = json.loads(task_path.read_text(encoding="utf-8"))
+            stored["constraints"].pop("visual_media_context")
+            task_path.write_text(json.dumps(stored), encoding="utf-8")
+            with self.subTest(operation=operation, phase="claim"), self.assertRaisesRegex(
+                ValueError, "visual_media_context"
+            ):
+                claim_task(self.root, persisted["task_id"], "worker-a")
+
+    def test_none_rejects_visual_capability_input_and_output_at_create_and_claim(self):
+        """Catches operation none laundering any immutable visual task signal."""
+        self.create_artifact(
+            "none-hidden-video-v1",
+            "scene-video",
+            1,
+            path="media/none-hidden-video-v1.mp4",
+            media_kind="video",
+            historical=False,
+        )
+        mutations = (
+            ("capability", lambda envelope: envelope.update(capability="visual.preview")),
+            (
+                "input",
+                lambda envelope: envelope["inputs"].append("none-hidden-video-v1"),
+            ),
+            (
+                "output",
+                lambda envelope: envelope.update(output_contract="rendered-video"),
+            ),
+        )
+        for index, (signal, mutate) in enumerate(mutations, 1):
+            rejected = self.non_visual_envelope(task_id=f"none-create-{index}")
+            mutate(rejected)
+            with self.subTest(signal=signal, phase="create"), self.assertRaisesRegex(
+                ValueError, "visual media.*none"
+            ):
+                create_task(self.root, rejected)
+
+            persisted = self.non_visual_envelope(task_id=f"none-claim-{index}")
+            task_path = create_task(self.root, persisted)
+            stored = json.loads(task_path.read_text(encoding="utf-8"))
+            mutate(stored)
+            task_path.write_text(json.dumps(stored), encoding="utf-8")
+            with self.subTest(signal=signal, phase="claim"), self.assertRaisesRegex(
+                ValueError, "visual media.*none"
+            ):
+                claim_task(self.root, persisted["task_id"], "worker-a")
+
+    def test_visual_completion_requires_exact_handoff_and_one_preview(self):
+        """Catches ambiguous IDs, paths, or previews crossing completion."""
+        envelope = self.visual_envelope(
+            task_id="exact-visual-handoff", operation="video-render"
+        )
+        create_task(self.root, envelope)
+        claim = claim_task(self.root, envelope["task_id"], "worker-a")
+        valid = self.result_for(claim, task_id=envelope["task_id"])
+
+        missing_preview = json.loads(json.dumps(valid))
+        missing_preview["visual_media_handoff"].pop("review_preview_path")
+        with self.assertRaisesRegex(ValueError, "missing fields.*review_preview_path"):
+            complete_task(self.root, missing_preview)
+
+        multiple_previews = json.loads(json.dumps(valid))
+        multiple_previews["visual_media_handoff"]["review_preview_path"] = [
+            "previews/motion-preview-S03-v2-a.mp4",
+            "previews/motion-preview-S03-v2-b.mp4",
+        ]
+        with self.assertRaisesRegex(ValueError, "more than one preview"):
+            complete_task(self.root, multiple_previews)
+
+        undeclared_id = json.loads(json.dumps(valid))
+        undeclared_id["visual_media_handoff"]["artifact_ids"].append("extra-v1")
+        with self.assertRaisesRegex(ValueError, "artifact_ids must match"):
+            complete_task(self.root, undeclared_id)
+
+        undeclared_path = json.loads(json.dumps(valid))
+        undeclared_path["visual_media_handoff"]["paths"] = [
+            "media/undeclared-v1.mp4"
+        ]
+        with self.assertRaisesRegex(ValueError, "undeclared path"):
+            complete_task(self.root, undeclared_path)
+
+        mixed = json.loads(json.dumps(valid))
+        mixed["image_handoff"] = {"artifact_ids": valid["artifacts"]}
+        with self.assertRaisesRegex(ValueError, "must not mix"):
+            complete_task(self.root, mixed)
+
+        self.assertEqual("completed", complete_task(self.root, valid))
+        persisted = json.loads(
+            (
+                self.root
+                / "tasks"
+                / "results"
+                / f"{envelope['task_id']}.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertIn("visual_media_handoff", persisted)
+        self.assertNotIn("image_handoff", persisted)
+
     def test_every_result_rejects_payloads_histories_and_oversized_envelopes(self):
         """Catches non-image task results bypassing the shared result scrub."""
         leaks = (
@@ -175,12 +437,17 @@ class TaskTests(unittest.TestCase):
         )
         for index, (field, value, message) in enumerate(leaks, 1):
             task_id = f"non-image-result-leak-{index}"
-            envelope = {**self.envelope, "task_id": task_id}
+            envelope = self.non_visual_envelope(task_id=task_id)
             create_task(self.root, envelope)
             claim = claim_task(self.root, task_id, "worker-a")
             result = {
-                **self.result_for(claim),
                 "task_id": task_id,
+                "status": "blocked",
+                "inputs": envelope["inputs"],
+                "artifacts": [],
+                "checks": [],
+                "warnings": [],
+                **claim,
                 field: value,
             }
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, message):
@@ -189,14 +456,23 @@ class TaskTests(unittest.TestCase):
     def test_general_result_scrub_preserves_harmless_digest_metadata(self):
         """Catches the payload heuristic rejecting hashes or ordinary base64 prose."""
         task_id = "non-image-result-harmless-metadata"
-        envelope = {**self.envelope, "task_id": task_id}
+        envelope = self.non_visual_envelope(task_id=task_id)
+        self.create_artifact(
+            "project-plan-v1",
+            "project-plan",
+            1,
+            output_contract=envelope["output_contract"],
+        )
         create_task(self.root, envelope)
         claim = claim_task(self.root, task_id, "worker-a")
         result = {
-            **self.result_for(claim),
             "task_id": task_id,
+            "status": "succeeded",
+            "inputs": envelope["inputs"],
+            "artifacts": ["project-plan-v1"],
             "checks": ["sha512=" + "0123456789abcdef" * 8],
             "warnings": ["The exporter may mention base64 without embedding payloads."],
+            **claim,
         }
 
         self.assertEqual("completed", complete_task(self.root, result))
@@ -212,6 +488,8 @@ class TaskTests(unittest.TestCase):
             "scene-S03-v1",
             image_type,
             1,
+            path="media/scene-S03-v1.png",
+            media_kind="image",
             character_pack_id="host-pack-v1",
             historical=historical,
         )
@@ -417,7 +695,7 @@ class TaskTests(unittest.TestCase):
             **self.envelope,
             "task_id": "image-inspect-without-context",
             "constraints": {
-                **self.envelope["constraints"],
+                **self.legacy_constraints(),
                 "image_operation": "image-inspect",
             },
         }
@@ -428,7 +706,7 @@ class TaskTests(unittest.TestCase):
             **self.envelope,
             "task_id": "context-without-image-operation",
             "constraints": {
-                **self.envelope["constraints"],
+                **self.legacy_constraints(),
                 "image_context": self.image_context(),
             },
         }
@@ -439,7 +717,7 @@ class TaskTests(unittest.TestCase):
             **self.envelope,
             "task_id": "null-image-context",
             "constraints": {
-                **self.envelope["constraints"],
+                **self.legacy_constraints(),
                 "image_operation": "image-inspect",
                 "image_context": None,
             },
@@ -452,6 +730,7 @@ class TaskTests(unittest.TestCase):
         base = {
             **self.envelope,
             "capability": "structure.validate",
+            "constraints": self.legacy_constraints(),
         }
         with self.assertRaisesRegex(ValueError, "image_operation"):
             create_task(self.root, {**base, "task_id": "structure-mode-missing"})
@@ -518,7 +797,7 @@ class TaskTests(unittest.TestCase):
             "task_id": "historical-scene-inspect",
             "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
             "constraints": {
-                **self.envelope["constraints"],
+                **self.legacy_constraints(),
                 "image_operation": "image-inspect",
                 "image_context": self.image_context(),
             },
@@ -556,7 +835,7 @@ class TaskTests(unittest.TestCase):
                 "host-pack-v1",
             ],
             "constraints": {
-                **self.envelope["constraints"],
+                **self.legacy_constraints(),
                 "image_operation": "image-inspect",
                 "image_context": self.image_context(),
             },
@@ -583,7 +862,7 @@ class TaskTests(unittest.TestCase):
                 "member-pack-a",
             ],
             "constraints": {
-                **self.envelope["constraints"],
+                **self.legacy_constraints(),
                 "image_operation": "image-inspect",
                 "image_context": {
                     **self.image_context(),
@@ -620,7 +899,7 @@ class TaskTests(unittest.TestCase):
                         extra_scope_id,
                     ],
                     "constraints": {
-                        **self.envelope["constraints"],
+                        **self.legacy_constraints(),
                         "image_operation": "image-inspect",
                         "image_context": {
                             **self.image_context(),
@@ -653,7 +932,7 @@ class TaskTests(unittest.TestCase):
                 "character-batch-a",
             ],
             "constraints": {
-                **self.envelope["constraints"],
+                **self.legacy_constraints(),
                 "image_operation": "image-inspect",
                 "image_context": self.image_context(),
             },
@@ -670,7 +949,7 @@ class TaskTests(unittest.TestCase):
             "task_id": "scene-scope-with-member-pack",
             "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
             "constraints": {
-                **self.envelope["constraints"],
+                **self.legacy_constraints(),
                 "image_operation": "image-inspect",
                 "image_context": self.image_context(),
             },
@@ -700,7 +979,7 @@ class TaskTests(unittest.TestCase):
                 "unlisted-pack-a",
             ],
             "constraints": {
-                **self.envelope["constraints"],
+                **self.legacy_constraints(),
                 "image_operation": "image-inspect",
                 "image_context": self.image_context(),
             },
@@ -722,7 +1001,7 @@ class TaskTests(unittest.TestCase):
                 "scene-contract-S04-v1",
             ],
             "constraints": {
-                **self.envelope["constraints"],
+                **self.legacy_constraints(),
                 "image_operation": "image-inspect",
                 "image_context": {
                     **self.image_context(),
@@ -749,7 +1028,7 @@ class TaskTests(unittest.TestCase):
             "task_id": "claim-rechecks-image-scope",
             "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
             "constraints": {
-                **self.envelope["constraints"],
+                **self.legacy_constraints(),
                 "image_operation": "image-inspect",
                 "image_context": self.image_context(),
             },
@@ -771,7 +1050,7 @@ class TaskTests(unittest.TestCase):
             "task_id": "claim-rechecks-unlisted-character-pack",
             "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
             "constraints": {
-                **self.envelope["constraints"],
+                **self.legacy_constraints(),
                 "image_operation": "image-inspect",
                 "image_context": self.image_context(),
             },
@@ -799,7 +1078,7 @@ class TaskTests(unittest.TestCase):
             "task_id": "image-input-without-context",
             "inputs": inputs,
         }
-        with self.assertRaisesRegex(PermissionError, "image_context"):
+        with self.assertRaisesRegex(PermissionError, "visual media|scope"):
             create_task(self.root, without_context)
 
         empty_allowlist = {
@@ -807,7 +1086,7 @@ class TaskTests(unittest.TestCase):
             "task_id": "image-input-outside-allowlist",
             "inputs": inputs,
             "constraints": {
-                **self.envelope["constraints"],
+                **self.legacy_constraints(),
                 "image_operation": "image-inspect",
                 "image_context": {
                     **self.image_context(),
@@ -829,8 +1108,9 @@ class TaskTests(unittest.TestCase):
             **self.envelope,
             "task_id": "scene-without-visual-operation",
             "capability": "scene.produce",
+            "constraints": self.legacy_constraints(),
         }
-        with self.assertRaisesRegex(ValueError, "visual_operation"):
+        with self.assertRaisesRegex(ValueError, "visual_media_operation"):
             create_task(self.root, scene_envelope)
 
         image_generation = {
@@ -839,13 +1119,15 @@ class TaskTests(unittest.TestCase):
             "constraints": {
                 **scene_envelope["constraints"],
                 "visual_operation": "image-generation",
+                "visual_media_operation": "image-generate",
+                "execution_context": "isolated-child-agent",
             },
         }
-        with self.assertRaisesRegex(PermissionError, "image_context"):
+        with self.assertRaisesRegex(ValueError, "visual_media_context"):
             create_task(self.root, image_generation)
 
-    def test_generic_media_input_requires_canonical_media_kind(self):
-        """Catches unlisted image formats bypassing suffix-based classification."""
+    def test_generic_media_input_is_classified_from_its_suffix(self):
+        """Catches an image suffix bypassing visual input authorization."""
         self.create_artifact(
             "generic-media-v1",
             "media",
@@ -858,14 +1140,14 @@ class TaskTests(unittest.TestCase):
             "task_id": "generic-media-without-kind",
             "inputs": [*self.envelope["inputs"], "generic-media-v1"],
         }
-        with self.assertRaisesRegex(ValueError, "media_kind"):
+        with self.assertRaisesRegex(PermissionError, "undeclared visual media"):
             create_task(self.root, envelope)
 
         path = self.root / "artifacts" / "media" / "generic-media-v1.json"
         artifact = json.loads(path.read_text(encoding="utf-8"))
         artifact["media_kind"] = "image"
         path.write_text(json.dumps(artifact), encoding="utf-8")
-        with self.assertRaisesRegex(PermissionError, "image_context"):
+        with self.assertRaisesRegex(PermissionError, "undeclared visual media"):
             create_task(self.root, {**envelope, "task_id": "generic-image-without-context"})
 
         self.create_artifact(
@@ -882,7 +1164,7 @@ class TaskTests(unittest.TestCase):
             "task_id": "conflicting-media-kind",
             "inputs": [*self.envelope["inputs"], "conflicting-media-v1"],
         }
-        with self.assertRaisesRegex(ValueError, "canonical mime_type|image suffix"):
+        with self.assertRaisesRegex(ValueError, "mime_type|conflicts"):
             create_task(self.root, conflicting)
 
     def test_media_kind_mime_and_suffix_are_bidirectionally_consistent(self):
@@ -909,7 +1191,7 @@ class TaskTests(unittest.TestCase):
                 "inputs": [*self.envelope["inputs"], artifact_id],
             }
             with self.subTest(artifact_id=artifact_id), self.assertRaisesRegex(
-                ValueError, "suffix|extension"
+                ValueError, "suffix|extension|conflicts"
             ):
                 create_task(self.root, envelope)
 
@@ -925,12 +1207,19 @@ class TaskTests(unittest.TestCase):
                 path=path,
                 media_kind=media_kind,
                 mime_type=mime_type,
+                historical=False,
             )
-            envelope = {
-                **self.envelope,
-                "task_id": f"task-{artifact_id}",
-                "inputs": [*self.envelope["inputs"], artifact_id],
-            }
+            envelope = (
+                self.visual_input_envelope(
+                    task_id=f"task-{artifact_id}", artifact_id=artifact_id
+                )
+                if media_kind == "video"
+                else {
+                    **self.envelope,
+                    "task_id": f"task-{artifact_id}",
+                    "inputs": [*self.envelope["inputs"], artifact_id],
+                }
+            )
             with self.subTest(artifact_id=artifact_id):
                 self.assertEqual(
                     self.root / "tasks" / f"task-{artifact_id}.json",
@@ -952,17 +1241,20 @@ class TaskTests(unittest.TestCase):
                 media_kind="video",
                 mime_type=mime_type,
             )
+            envelope = {
+                **self.envelope,
+                "task_id": f"task-{artifact_id}",
+                "inputs": [*self.envelope["inputs"], artifact_id],
+            }
+            expected_error = (
+                (ValueError, "suffix|extension|conflicts")
+                if artifact_id == "apng-as-video"
+                else (PermissionError, "undeclared visual media")
+            )
             with self.subTest(artifact_id=artifact_id), self.assertRaisesRegex(
-                ValueError, "suffix|extension"
+                expected_error[0], expected_error[1]
             ):
-                create_task(
-                    self.root,
-                    {
-                        **self.envelope,
-                        "task_id": f"task-{artifact_id}",
-                        "inputs": [*self.envelope["inputs"], artifact_id],
-                    },
-                )
+                create_task(self.root, envelope)
 
         self.create_artifact(
             "valid-matroska",
@@ -971,12 +1263,11 @@ class TaskTests(unittest.TestCase):
             path="media/valid-matroska.mkv",
             media_kind="video",
             mime_type="video/x-matroska",
+            historical=False,
         )
-        valid = {
-            **self.envelope,
-            "task_id": "task-valid-matroska",
-            "inputs": [*self.envelope["inputs"], "valid-matroska"],
-        }
+        valid = self.visual_input_envelope(
+            task_id="task-valid-matroska", artifact_id="valid-matroska"
+        )
         self.assertEqual(
             self.root / "tasks" / "task-valid-matroska.json",
             create_task(self.root, valid),
@@ -985,12 +1276,12 @@ class TaskTests(unittest.TestCase):
     def test_declared_data_and_document_media_kinds_have_closed_mappings(self):
         """Catches fail-closed media validation making declared non-AV kinds unusable."""
         valid = (
-            ("pdf-document", "media/brief.pdf", "document", "application/pdf"),
-            ("text-document", "media/notes.txt", "document", "text/plain"),
-            ("markdown-document", "media/outline.md", "document", "text/markdown"),
-            ("json-data", "media/manifest.json", "data", "application/json"),
-            ("csv-data", "media/cues.csv", "data", "text/csv"),
-            ("tsv-data", "media/cues.tsv", "data", "text/tab-separated-values"),
+            ("pdf-document", "media/pdf-document.pdf", "document", "application/pdf"),
+            ("text-document", "media/text-document.txt", "document", "text/plain"),
+            ("markdown-document", "media/markdown-document.md", "document", "text/markdown"),
+            ("json-data", "media/json-data.json", "data", "application/json"),
+            ("csv-data", "media/csv-data.csv", "data", "text/csv"),
+            ("tsv-data", "media/tsv-data.tsv", "data", "text/tab-separated-values"),
         )
         for artifact_id, path, media_kind, mime_type in valid:
             self.create_artifact(
@@ -1022,16 +1313,19 @@ class TaskTests(unittest.TestCase):
             "task_id": "image-inspect-S03-v2",
             "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
             "constraints": {
-                **self.envelope["constraints"],
+                **self.legacy_constraints(),
                 "image_operation": "image-inspect",
                 "image_context": self.image_context(),
             },
         }
         create_task(self.root, envelope)
         claim = claim_task(self.root, envelope["task_id"], "worker-a")
-        result = self.result_for(claim)
-        result["task_id"] = envelope["task_id"]
-        result["inputs"] = envelope["inputs"]
+        result = self.result_for(
+            claim,
+            task_id=envelope["task_id"],
+            inputs=envelope["inputs"],
+            artifacts=["image-preview-S03-v2"],
+        )
 
         with self.assertRaisesRegex(ValueError, "image_handoff"):
             complete_task(self.root, result)
@@ -1050,12 +1344,12 @@ class TaskTests(unittest.TestCase):
 
         handoff = {
             "artifact_ids": result["artifacts"],
-            "paths": ["media/motion-preview-S03-v2.json"],
+            "paths": ["media/image-preview-S03-v2.png"],
             "summary": "Structural image QA complete.",
             "metadata": {"width": 1920, "height": 1080},
             "issues": [],
             "status": "succeeded",
-            "review_previews": ["previews/motion-preview-S03-v2.jpg"],
+            "review_previews": ["previews/image-preview-S03-v2.jpg"],
         }
         self.assertEqual(
             "completed",
@@ -1079,7 +1373,7 @@ class TaskTests(unittest.TestCase):
                 "capability": "structure.validate",
                 "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
                 "constraints": {
-                    **self.envelope["constraints"],
+                    **self.legacy_constraints(),
                     "image_operation": "image-inspect",
                     "image_context": self.image_context(),
                 },
@@ -1087,13 +1381,16 @@ class TaskTests(unittest.TestCase):
             create_task(self.root, envelope)
             claim = claim_task(self.root, task_id, "worker-a")
             result = {
-                **self.result_for(claim),
-                "task_id": task_id,
-                "inputs": envelope["inputs"],
+                **self.result_for(
+                    claim,
+                    task_id=task_id,
+                    inputs=envelope["inputs"],
+                    artifacts=["image-preview-S03-v2"],
+                ),
                 field: value,
                 "image_handoff": {
-                    "artifact_ids": ["motion-preview-S03-v2"],
-                    "paths": ["media/motion-preview-S03-v2.json"],
+                    "artifact_ids": ["image-preview-S03-v2"],
+                    "paths": ["media/image-preview-S03-v2.png"],
                     "summary": "Structural image inspection complete.",
                     "status": "succeeded",
                 },
@@ -1113,7 +1410,7 @@ class TaskTests(unittest.TestCase):
             "capability": "structure.validate",
             "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
             "constraints": {
-                **self.envelope["constraints"],
+                **self.legacy_constraints(),
                 "image_operation": "image-inspect",
                 "image_context": {**self.image_context(), "context_budget": 512},
             },
@@ -1121,13 +1418,16 @@ class TaskTests(unittest.TestCase):
         create_task(self.root, envelope)
         claim = claim_task(self.root, task_id, "worker-a")
         result = {
-            **self.result_for(claim),
-            "task_id": task_id,
-            "inputs": envelope["inputs"],
+            **self.result_for(
+                claim,
+                task_id=task_id,
+                inputs=envelope["inputs"],
+                artifacts=["image-preview-S03-v2"],
+            ),
             "checks": ["structural-check-" + "x" * 400],
             "image_handoff": {
-                "artifact_ids": ["motion-preview-S03-v2"],
-                "paths": ["media/motion-preview-S03-v2.json"],
+                "artifact_ids": ["image-preview-S03-v2"],
+                "paths": ["media/image-preview-S03-v2.png"],
                 "summary": "Structural image inspection complete.",
                 "status": "succeeded",
             },
@@ -1144,26 +1444,24 @@ class TaskTests(unittest.TestCase):
             1,
             path="media/scene-image-output-v1.png",
             historical=False,
-            output_contract="motion-preview-v1",
+            output_contract="project-plan-v1",
         )
-        non_image_scene = {
-            **self.envelope,
-            "task_id": "non-image-scene-output",
-            "capability": "scene.produce",
-            "constraints": {
-                **self.envelope["constraints"],
-                "visual_operation": "non-image",
-            },
-        }
+        non_image_scene = self.non_visual_envelope(
+            task_id="non-image-scene-output"
+        )
         create_task(self.root, non_image_scene)
         non_image_claim = claim_task(self.root, non_image_scene["task_id"], "worker-a")
-        with self.assertRaisesRegex(ValueError, "image artifact|image operation|non-image"):
+        with self.assertRaisesRegex(ValueError, "visual media"):
             complete_task(
                 self.root,
                 {
-                    **self.result_for(non_image_claim),
                     "task_id": non_image_scene["task_id"],
+                    "status": "succeeded",
+                    "inputs": non_image_scene["inputs"],
                     "artifacts": ["scene-image-output-v1"],
+                    "checks": [],
+                    "warnings": [],
+                    **non_image_claim,
                 },
             )
 
@@ -1179,7 +1477,7 @@ class TaskTests(unittest.TestCase):
         malformed_task = {**self.envelope, "task_id": "malformed-media-output"}
         create_task(self.root, malformed_task)
         malformed_claim = claim_task(self.root, malformed_task["task_id"], "worker-a")
-        with self.assertRaisesRegex(ValueError, "suffix"):
+        with self.assertRaisesRegex(ValueError, "suffix|conflicts"):
             complete_task(
                 self.root,
                 {
@@ -1205,7 +1503,7 @@ class TaskTests(unittest.TestCase):
             "task_id": "image-generation-without-image-output",
             "capability": "scene.produce",
             "constraints": {
-                **self.envelope["constraints"],
+                **self.legacy_constraints(),
                 "visual_operation": "image-generation",
                 "image_operation": "generate",
                 "image_context": generation_context,
@@ -1217,11 +1515,12 @@ class TaskTests(unittest.TestCase):
             complete_task(
                 self.root,
                 {
-                    **self.result_for(generation_claim),
-                    "task_id": generation_task["task_id"],
+                    **self.result_for(
+                        generation_claim, task_id=generation_task["task_id"]
+                    ),
                     "image_handoff": {
                         "artifact_ids": ["motion-preview-S03-v2"],
-                        "paths": ["media/motion-preview-S03-v2.json"],
+                        "paths": ["media/motion-preview-S03-v2.mp4"],
                         "summary": "Generation returned metadata only.",
                         "status": "succeeded",
                     },
@@ -1230,12 +1529,20 @@ class TaskTests(unittest.TestCase):
 
     def test_non_image_result_cannot_attach_an_image_handoff(self):
         """Catches generic workers smuggling image metadata through an optional field."""
-        claim = self.dispatch_and_claim()
-        with self.assertRaisesRegex(ValueError, "non-image"):
+        envelope = self.non_visual_envelope(task_id="non-visual-with-image-handoff")
+        create_task(self.root, envelope)
+        claim = claim_task(self.root, envelope["task_id"], "worker-a")
+        with self.assertRaisesRegex(ValueError, "non-visual"):
             complete_task(
                 self.root,
                 {
-                    **self.result_for(claim),
+                    "task_id": envelope["task_id"],
+                    "status": "blocked",
+                    "inputs": envelope["inputs"],
+                    "artifacts": [],
+                    "checks": [],
+                    "warnings": [],
+                    **claim,
                     "image_handoff": {"artifact_ids": ["motion-contract-S03-v1"]},
                 },
             )
@@ -1439,6 +1746,15 @@ class TaskTests(unittest.TestCase):
                     user_decision_request="choose a direction" if status == "waiting_user" else None,
                 )
                 checkpoint = {key: value for key, value in checkpoint.items() if value is not None}
+                checkpoint["visual_media_handoff"] = {
+                    "artifact_ids": [],
+                    "paths": [],
+                    "media": {},
+                    "checks": [],
+                    "issues": [],
+                    "summary": "Visual task checkpoint recorded.",
+                    "review_preview_path": None,
+                }
 
                 self.assertEqual("resumable", complete_task(root, checkpoint))
                 self.assertFalse((root / "tasks" / "results" / "preview-S03-v2.json").exists())
@@ -1574,6 +1890,7 @@ class TaskTests(unittest.TestCase):
             "adapter_preferences": ["remotion", "video-shotcraft"],
             "output_contract": "rendered-video",
             "constraints": {
+                **self.envelope["constraints"],
                 "contract": "scene-contract-v1",
                 "output": "rendered-video",
                 "editable": True,
@@ -1581,7 +1898,6 @@ class TaskTests(unittest.TestCase):
                     "remotion-best-practices",
                     "video-shotcraft:video-shotcraft",
                 ],
-                "voice_timing_id": "voice-timing-v1",
             },
         }
         create_task(self.root, envelope)
