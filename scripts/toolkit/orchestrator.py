@@ -22,8 +22,8 @@ from scripts.toolkit.project_state import (
 from scripts.toolkit.runtime_paths import project_path, project_root
 from scripts.toolkit.tasks import (
     _read_envelope,
-    _validate_envelope,
     active_claim_task_ids,
+    validate_current_task_envelope,
     voice_timing_input_is_current,
 )
 
@@ -112,7 +112,7 @@ def calculate_ready_tasks(
     for candidate in candidates:
         if not isinstance(candidate, dict):
             raise ValueError("candidate task must be an object")
-        _validate_envelope(candidate)
+        validate_current_task_envelope(candidate)
         task_id = candidate["task_id"]
         if task_id in seen_task_ids:
             raise ValueError(f"candidate task ID is duplicated: {task_id}")

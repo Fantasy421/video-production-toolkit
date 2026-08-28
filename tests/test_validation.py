@@ -9,6 +9,386 @@ import zlib
 from scripts.toolkit.validation import validate_project
 
 
+class PersistedVisualMediaValidationTests(unittest.TestCase):
+    """Metadata-only recovery checks for immutable visual task records."""
+
+    def setUp(self):
+        self.folder = TemporaryDirectory()
+        self.root = Path(self.folder.name)
+        (self.root / "artifacts").mkdir()
+        (self.root / "approvals").mkdir()
+        (self.root / "tasks").mkdir()
+        (self.root / "events").mkdir()
+        project = {
+            "schema_version": 1,
+            "project_id": "persisted-visual-validation",
+            "workflow": "knowledge-video",
+            "phase": "initialized",
+        }
+        (self.root / "project.json").write_text(
+            json.dumps(project), encoding="utf-8"
+        )
+        initialized = {
+            "event": "project.initialized",
+            "schema_version": 1,
+            "project_id": project["project_id"],
+            "workflow": project["workflow"],
+        }
+        (self.root / "events" / "events.jsonl").write_text(
+            json.dumps(initialized) + "\n", encoding="utf-8"
+        )
+
+    def tearDown(self):
+        self.folder.cleanup()
+
+    def write_task(self, task):
+        path = self.root / "tasks" / f"{task['task_id']}.json"
+        path.write_text(json.dumps(task), encoding="utf-8")
+        return path
+
+    def write_artifact(self, artifact_id, artifact_type, **metadata):
+        artifact = {
+            "artifact_id": artifact_id,
+            "type": artifact_type,
+            "version": 1,
+            "status": "approved",
+            "parents": [],
+            "path": f"metadata/{artifact_id}.json",
+            **metadata,
+        }
+        directory = self.root / "artifacts" / artifact_type
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{artifact_id}.json").write_text(
+            json.dumps(artifact), encoding="utf-8"
+        )
+        return artifact
+
+    def write_result(self, task_id, result, *, directory="results"):
+        destination = self.root / "tasks" / directory / f"{task_id}.json"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(result), encoding="utf-8")
+        return destination
+
+    @staticmethod
+    def scene_context(scene_id="scene-contract-S01-v1", *, allowed=None):
+        return {
+            "scope_identity": {"kind": "scene-contract", "id": scene_id},
+            "allowed_artifact_ids": list(allowed or []),
+            "historical_access": "character-only",
+            "continuity_exception": None,
+            "max_review_previews": 0,
+            "context_budget_bytes": 32_768,
+        }
+
+    def current_visual_task(self, *, task_id="visual-task", inputs=None, **constraints):
+        values = {
+            "visual_media_operation": "video-generate",
+            "visual_media_context": self.scene_context(),
+            "execution_context": "isolated-child-agent",
+            **constraints,
+        }
+        return {
+            "task_id": task_id,
+            "capability": "scene.produce",
+            "inputs": list(inputs or ["scene-contract-S01-v1"]),
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "scene-video-v1",
+            "constraints": values,
+        }
+
+    @staticmethod
+    def result_for(task_id, artifact_ids, *, handoff=None, **extra):
+        result = {
+            "task_id": task_id,
+            "status": "succeeded",
+            "inputs": ["scene-contract-S01-v1"],
+            "artifacts": list(artifact_ids),
+            "checks": [],
+            "warnings": [],
+            "worker_id": "isolated-worker",
+            "claim_token": "claim-token",
+            **extra,
+        }
+        if handoff is not None:
+            result["visual_media_handoff"] = handoff
+        return result
+
+    @staticmethod
+    def video_handoff(artifact_id="scene-output-v1"):
+        return {
+            "artifact_ids": [artifact_id],
+            "paths": [f"media/{artifact_id}.mp4"],
+            "media": {
+                "kind": "video",
+                "format": "mp4",
+                "mime_type": "video/mp4",
+            },
+            "checks": [],
+            "issues": [],
+            "summary": "ready",
+            "review_preview_path": None,
+        }
+
+    def assert_validation_preserves(self, *paths):
+        event_path = self.root / "events" / "events.jsonl"
+        observed = (event_path, *paths)
+        before = {path: path.read_bytes() for path in observed}
+        result = validate_project(self.root)
+        for path, contents in before.items():
+            self.assertEqual(contents, path.read_bytes())
+        return result
+
+    def assert_only_issue_for(self, result, path, code):
+        self.assertEqual(
+            {code},
+            {
+                issue["code"]
+                for issue in result["errors"]
+                if issue.get("path") == path.relative_to(self.root).as_posix()
+            },
+        )
+
+    @staticmethod
+    def legacy_video_task_without_scope():
+        return {
+            "task_id": "legacy-video-without-scope",
+            "capability": "scene.produce",
+            "inputs": [],
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "scene-video-v1",
+            "constraints": {"visual_operation": "non-image"},
+        }
+
+    def test_ambiguous_legacy_visual_task_is_blocked_without_history_rewrite(self):
+        """Catches recovery granting visual authority to an unscoped old record."""
+        path = self.write_task(self.legacy_video_task_without_scope())
+        event_path = self.root / "events" / "events.jsonl"
+        before_task = path.read_bytes()
+        before_events = event_path.read_bytes()
+
+        result = validate_project(self.root)
+
+        self.assert_only_issue_for(result, path, "legacy-visual-task-blocked")
+        self.assertEqual(before_task, path.read_bytes())
+        self.assertEqual(before_events, event_path.read_bytes())
+
+    def test_malformed_visual_scope_has_stable_context_issue(self):
+        """Catches recovery collapsing a malformed scope into a generic envelope error."""
+        self.write_artifact("scene-contract-S01-v1", "scene-contract")
+        task = self.current_visual_task()
+        task["constraints"]["visual_media_context"]["scope_identity"] = {
+            "kind": "whole-project",
+            "id": "project-v1",
+        }
+        path = self.write_task(task)
+
+        result = self.assert_validation_preserves(path)
+
+        self.assert_only_issue_for(result, path, "visual-media-context-invalid")
+
+    def test_visual_task_requires_isolated_child_during_recovery(self):
+        """Catches recovery accepting coordinator execution for persisted visual work."""
+        self.write_artifact("scene-contract-S01-v1", "scene-contract")
+        task = self.current_visual_task(execution_context="primary-coordinator")
+        path = self.write_task(task)
+
+        result = self.assert_validation_preserves(path)
+
+        self.assert_only_issue_for(result, path, "visual-media-isolation-required")
+
+    def test_historical_scene_video_input_is_forbidden(self):
+        """Catches historical scene footage being treated as character continuity."""
+        self.write_artifact("scene-contract-S01-v1", "scene-contract")
+        self.write_artifact(
+            "scene-history-v1",
+            "scene-video",
+            path="media/scene-history-v1.mp4",
+            media_kind="video",
+            mime_type="video/mp4",
+            historical=True,
+        )
+        context = self.scene_context(allowed=["scene-history-v1"])
+        task = self.current_visual_task(
+            inputs=["scene-contract-S01-v1", "scene-history-v1"],
+            visual_media_context=context,
+        )
+        path = self.write_task(task)
+
+        result = self.assert_validation_preserves(path)
+
+        self.assert_only_issue_for(result, path, "visual-media-input-forbidden")
+
+    def test_neighboring_scene_scope_is_forbidden(self):
+        """Catches one child receiving authority over an adjacent scene contract."""
+        self.write_artifact("scene-contract-S01-v1", "scene-contract")
+        self.write_artifact("scene-contract-S02-v1", "scene-contract")
+        task = self.current_visual_task(
+            inputs=["scene-contract-S01-v1", "scene-contract-S02-v1"]
+        )
+        path = self.write_task(task)
+
+        result = self.assert_validation_preserves(path)
+
+        self.assert_only_issue_for(result, path, "visual-media-input-forbidden")
+
+    def test_none_cannot_launder_a_visual_input(self):
+        """Catches a persisted none discriminator hiding declared video authority."""
+        self.write_artifact(
+            "scene-input-v1",
+            "scene-video",
+            path="media/scene-input-v1.mp4",
+            media_kind="video",
+            mime_type="video/mp4",
+            historical=False,
+        )
+        task = {
+            "task_id": "none-with-video",
+            "capability": "project.manage",
+            "inputs": ["scene-input-v1"],
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "task-result-v1",
+            "constraints": {"visual_media_operation": "none"},
+        }
+        path = self.write_task(task)
+
+        result = self.assert_validation_preserves(path)
+
+        self.assert_only_issue_for(result, path, "visual-media-context-invalid")
+
+    def test_undeclared_returned_media_has_stable_result_issue(self):
+        """Catches recovery trusting visual output from a persisted non-visual task."""
+        self.write_artifact(
+            "scene-output-v1",
+            "scene-video",
+            path="media/scene-output-v1.mp4",
+            media_kind="video",
+            mime_type="video/mp4",
+            historical=False,
+            output_contract="task-result-v1",
+        )
+        task = {
+            "task_id": "nonvisual-returned-video",
+            "capability": "project.manage",
+            "inputs": [],
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "task-result-v1",
+            "constraints": {"visual_media_operation": "none"},
+        }
+        task_path = self.write_task(task)
+        result_path = self.write_result(
+            task["task_id"],
+            {
+                "task_id": task["task_id"],
+                "status": "succeeded",
+                "inputs": [],
+                "artifacts": ["scene-output-v1"],
+                "checks": [],
+                "warnings": [],
+                "worker_id": "worker",
+                "claim_token": "claim-token",
+            },
+        )
+
+        result = self.assert_validation_preserves(task_path, result_path)
+
+        self.assert_only_issue_for(
+            result, result_path, "visual-media-result-invalid"
+        )
+
+    def test_leaked_result_payload_has_stable_result_issue(self):
+        """Catches recovery accepting embedded media payload fields from disk."""
+        self.write_artifact("scene-contract-S01-v1", "scene-contract")
+        self.write_artifact(
+            "scene-output-v1",
+            "scene-video",
+            path="media/scene-output-v1.mp4",
+            media_kind="video",
+            mime_type="video/mp4",
+            historical=False,
+            output_contract="scene-video-v1",
+        )
+        task = self.current_visual_task(task_id="visual-result-payload")
+        task_path = self.write_task(task)
+        persisted_result = self.result_for(
+            task["task_id"],
+            ["scene-output-v1"],
+            handoff=self.video_handoff(),
+            video_payload="not-even-media-bytes",
+        )
+        result_path = self.write_result(task["task_id"], persisted_result)
+
+        result = self.assert_validation_preserves(task_path, result_path)
+
+        self.assert_only_issue_for(
+            result, result_path, "visual-media-result-invalid"
+        )
+
+    def test_valid_nonvisual_task_and_result_remain_recoverable(self):
+        """Catches the visual recovery boundary rejecting ordinary compact results."""
+        self.write_artifact(
+            "report-v1", "report", output_contract="task-result-v1"
+        )
+        task = {
+            "task_id": "manage-project",
+            "capability": "project.manage",
+            "inputs": [],
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "task-result-v1",
+            "constraints": {"visual_media_operation": "none"},
+        }
+        task_path = self.write_task(task)
+        result_path = self.write_result(
+            task["task_id"],
+            {
+                "task_id": task["task_id"],
+                "status": "succeeded",
+                "inputs": [],
+                "artifacts": ["report-v1"],
+                "checks": ["metadata-valid"],
+                "warnings": [],
+                "worker_id": "worker",
+                "claim_token": "claim-token",
+            },
+        )
+
+        result = self.assert_validation_preserves(task_path, result_path)
+
+        self.assertNotIn(
+            "visual-media-result-invalid",
+            {issue["code"] for issue in result["errors"]},
+        )
+
+    def test_valid_isolated_visual_task_and_compact_result_remain_recoverable(self):
+        """Catches persisted validation rejecting a lifecycle-valid visual handoff."""
+        self.write_artifact("scene-contract-S01-v1", "scene-contract")
+        self.write_artifact(
+            "scene-output-v1",
+            "scene-video",
+            path="media/scene-output-v1.mp4",
+            media_kind="video",
+            mime_type="video/mp4",
+            historical=False,
+            output_contract="scene-video-v1",
+        )
+        task = self.current_visual_task(task_id="valid-visual-result")
+        task_path = self.write_task(task)
+        result_path = self.write_result(
+            task["task_id"],
+            self.result_for(
+                task["task_id"],
+                ["scene-output-v1"],
+                handoff=self.video_handoff(),
+            ),
+        )
+
+        result = self.assert_validation_preserves(task_path, result_path)
+
+        self.assertNotIn(
+            "visual-media-result-invalid",
+            {issue["code"] for issue in result["errors"]},
+        )
+
+
 class ValidationTests(unittest.TestCase):
     def setUp(self):
         self.folder = TemporaryDirectory()
@@ -915,7 +1295,7 @@ class ValidationTests(unittest.TestCase):
             {
                 item["path"]
                 for item in result["errors"]
-                if item["code"] == "invalid-task-envelope"
+                if item["code"] == "visual-media-input-forbidden"
             },
         )
 

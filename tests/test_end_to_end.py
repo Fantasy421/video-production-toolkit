@@ -30,7 +30,12 @@ from scripts.toolkit.project_state import (
     initialize_project,
 )
 from scripts.toolkit.tasks import claim_task, complete_task, create_task
-from scripts.verify_installation import _run_resume_scenario, run_smoke, verify_installation
+from scripts.verify_installation import (
+    _candidate as smoke_candidate,
+    _run_resume_scenario,
+    run_smoke,
+    verify_installation,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -243,6 +248,8 @@ def artifact(
     if artifact_type == "media":
         metadata.setdefault("media_kind", "video")
         metadata.setdefault("mime_type", "video/mp4")
+    if artifact_type in {"media", "storyboard"}:
+        metadata.setdefault("historical", False)
     return {
         "artifact_id": artifact_id,
         "type": artifact_type,
@@ -256,8 +263,19 @@ def artifact(
 
 def candidate(task_id, capability, inputs, gate, target_id, **constraints):
     inputs = list(inputs)
-    if capability == "scene.produce":
-        constraints.setdefault("visual_operation", "non-image")
+    visual_operation = {
+        "visual.preview": "image-generate",
+        "scene.produce": "video-generate",
+        "motion.preview": "video-generate",
+        "motion.produce": "video-render",
+        "timeline.assemble": "video-edit",
+        "review.package": "video-inspect",
+    }.get(capability)
+    if visual_operation is None:
+        constraints.setdefault("visual_media_operation", "none")
+    else:
+        constraints.setdefault("visual_media_operation", visual_operation)
+        constraints.setdefault("execution_context", "isolated-child-agent")
     if capability in {
         "storyboard.plan",
         "scene.produce",
@@ -361,6 +379,71 @@ def synthetic_wav(duration_ms, sample_rate=8_000):
         + struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, sample_rate * 2, 2, 16)
         + b"data" + struct.pack("<I", len(audio)) + audio
     )
+
+
+class SmokeFixtureMetadataTests(unittest.TestCase):
+    def test_candidate_declares_current_visual_authority_by_capability(self):
+        """Catches smoke records retaining ambiguous pre-isolation authority."""
+        visual = smoke_candidate(
+            "produce-S01",
+            "scene.produce",
+            ["contract-S01-v1"],
+            "storyboard-and-cost",
+            "storyboard-v1",
+        )
+        nonvisual = smoke_candidate(
+            "manage-project",
+            "project.manage",
+            [],
+            None,
+            "project-v1",
+        )
+
+        expected_visual = {
+            "visual_media_operation": "video-generate",
+            "execution_context": "isolated-child-agent",
+        }
+        self.assertEqual(
+            expected_visual,
+            {
+                key: visual["constraints"][key]
+                for key in expected_visual
+                if key in visual["constraints"]
+            },
+        )
+        self.assertNotIn("visual_operation", visual["constraints"])
+        self.assertEqual(
+            {"visual_media_operation": "none"},
+            {
+                key: nonvisual["constraints"][key]
+                for key in ("visual_media_operation",)
+                if key in nonvisual["constraints"]
+            },
+        )
+
+    def test_orchestrator_validates_current_candidates_without_legacy_fallback(self):
+        """Catches candidate routing reopening read-only legacy task authority."""
+        current = smoke_candidate(
+            "manage-project",
+            "project.manage",
+            [],
+            None,
+            "project-v1",
+        )
+        legacy = json.loads(json.dumps(current))
+        legacy["constraints"].pop("visual_media_operation")
+        legacy["constraints"]["image_operation"] = "structure-only"
+
+        self.assertEqual(
+            ["project.manage"],
+            calculate_ready_tasks(
+                {"phase": "initialized", "candidate_tasks": [current]}, [], []
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "legacy image authority is read-only"):
+            calculate_ready_tasks(
+                {"phase": "initialized", "candidate_tasks": [legacy]}, [], []
+            )
 
 
 class CoordinatorTests(unittest.TestCase):
@@ -1135,6 +1218,17 @@ class CoordinatorTests(unittest.TestCase):
                     "storyboard-v1",
                     production_scope="representative-slice",
                     scene_id="S02",
+                    visual_media_context={
+                        "scope_identity": {
+                            "kind": "scene-contract",
+                            "id": "contract-S02-v2",
+                        },
+                        "allowed_artifact_ids": ["storyboard-v1"],
+                        "historical_access": "character-only",
+                        "continuity_exception": None,
+                        "max_review_previews": 0,
+                        "context_budget_bytes": 32_768,
+                    },
                 ),
             )
             advance_project(project, "storyboard_ready")
@@ -1196,6 +1290,17 @@ class CoordinatorTests(unittest.TestCase):
                 "scene-S02-v1",
                 production_scope="representative-slice",
                 scene_id="S02",
+                visual_media_context={
+                    "scope_identity": {
+                        "kind": "review-batch",
+                        "id": ["scene-S02-v1"],
+                    },
+                    "allowed_artifact_ids": [],
+                    "historical_access": "character-only",
+                    "continuity_exception": None,
+                    "max_review_previews": 1,
+                    "context_budget_bytes": 32_768,
+                },
             )
             create_task(project, envelope)
             create_artifact(
@@ -1204,6 +1309,7 @@ class CoordinatorTests(unittest.TestCase):
                     "review-S02-v1",
                     "review-pack",
                     parents=["scene-S02-v1"],
+                    path="artifacts/review-pack/review-S02-v1.json",
                     output_contract="task-result-v1",
                 ),
             )
@@ -1223,6 +1329,15 @@ class CoordinatorTests(unittest.TestCase):
                     "artifacts": ["review-S02-v1"],
                     "checks": ["review-ready"],
                     "warnings": [],
+                    "visual_media_handoff": {
+                        "artifact_ids": ["review-S02-v1"],
+                        "paths": ["artifacts/review-pack/review-S02-v1.json"],
+                        "media": {},
+                        "checks": ["review-ready"],
+                        "issues": [],
+                        "summary": "review ready",
+                        "review_preview_path": None,
+                    },
                     **claim,
                 },
             )
@@ -1242,6 +1357,15 @@ class CoordinatorTests(unittest.TestCase):
             initialize_project(project, "kv-dead-lock", "knowledge-video")
             create_voice_bundle(project)
             create_artifact(project, artifact("storyboard-v1", "storyboard"))
+            create_artifact(
+                project,
+                artifact(
+                    "contract-S02-v1",
+                    "scene-contract",
+                    parents=["storyboard-v1"],
+                    scene_id="S02",
+                ),
+            )
             approve_artifact(
                 project,
                 "storyboard-v1",
@@ -1253,11 +1377,22 @@ class CoordinatorTests(unittest.TestCase):
                 candidate(
                     "produce-S02",
                     "scene.produce",
-                    ["storyboard-v1"],
+                    ["contract-S02-v1", "storyboard-v1"],
                     "storyboard-and-cost",
                     "storyboard-v1",
                     production_scope="representative-slice",
                     scene_id="S02",
+                    visual_media_context={
+                        "scope_identity": {
+                            "kind": "scene-contract",
+                            "id": "contract-S02-v1",
+                        },
+                        "allowed_artifact_ids": ["storyboard-v1"],
+                        "historical_access": "character-only",
+                        "continuity_exception": None,
+                        "max_review_previews": 0,
+                        "context_budget_bytes": 32_768,
+                    },
                 ),
             )
             advance_project(project, "storyboard_ready")

@@ -17,24 +17,27 @@ from .project_state import (
     replay_events,
 )
 from .invalidation import invalidated_artifact_ids
-from .image_context import validate_declared_image_inputs, validate_image_task_constraints
 from .packs import validate_layout_pack, validate_style_pack
 from .runtime_paths import project_path, project_root
-from .tasks import TASK_CAPABILITIES
+from .tasks import (
+    _validate_conditional_visual_media_result,
+    _validate_persisted_envelope,
+    _validate_result,
+    _validate_result_artifacts,
+)
+from .visual_media_context import (
+    classify_visual_media_task,
+    project_legacy_image_context,
+    validate_declared_visual_media_inputs,
+    validate_result_envelope,
+    validate_visual_media_context,
+)
 from .voice import validate_project_authoritative_voice_bundle
 
 
 ARTIFACT_REQUIRED_KEYS = ("artifact_id", "type", "version", "status", "parents", "path")
 ARTIFACT_STATUSES = {"draft", "approved", "stale", "superseded", "invalid"}
 APPROVAL_DECISIONS = {"approved", "delegated", "skipped"}
-TASK_REQUIRED_KEYS = {
-    "task_id",
-    "capability",
-    "inputs",
-    "adapter_preferences",
-    "output_contract",
-    "constraints",
-}
 NON_SEMANTIC_TRACK_KINDS = {
     "voice",
     "voiceover",
@@ -93,7 +96,8 @@ def validate_project(root: Path) -> dict[str, list[dict[str, Any]]]:
     _check_voice_lineage(root, project, schema_origin, artifacts, errors)
     _check_packs(root, artifacts, errors)
     _check_promoted_assets(root, artifacts, errors)
-    _check_tasks(root, artifacts, errors)
+    tasks = _check_tasks(root, artifacts, errors)
+    _check_task_results(root, tasks, artifacts, errors)
     active_timeline = _resolve_active_timeline(root, project, artifacts, errors)
     if active_timeline is not None:
         timeline_id, timeline = active_timeline
@@ -660,13 +664,18 @@ def _png_predictor(
     return None
 
 
-def _check_tasks(root: Path, artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]]) -> None:
+def _check_tasks(
+    root: Path,
+    artifacts: dict[str, dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> dict[str, tuple[dict[str, Any], str]]:
+    validated: dict[str, tuple[dict[str, Any], str]] = {}
     task_root = root / "tasks"
     if task_root.is_symlink():
         errors.append(_issue("unsafe-runtime-storage", storage="tasks"))
-        return
+        return validated
     if not task_root.is_dir():
-        return
+        return validated
     for path in sorted(task_root.glob("*.json")):
         if path.is_symlink():
             errors.append(
@@ -680,35 +689,131 @@ def _check_tasks(root: Path, artifacts: dict[str, dict[str, Any]], errors: list[
         for artifact_id in envelope["inputs"]:
             if artifact_id not in artifacts:
                 errors.append(_issue("missing-task-input", artifact_id=artifact_id, task_id=envelope["task_id"]))
-        if all(artifact_id in artifacts for artifact_id in envelope["inputs"]):
+        if not all(artifact_id in artifacts for artifact_id in envelope["inputs"]):
+            continue
+        classification = _check_persisted_visual_media_authority(
+            envelope, artifacts, path=_relative(root, path), errors=errors
+        )
+        if classification is not None:
+            validated[envelope["task_id"]] = (envelope, classification)
+    return validated
+
+
+def _check_persisted_visual_media_authority(
+    envelope: dict[str, Any],
+    artifacts: dict[str, dict[str, Any]],
+    *,
+    path: str,
+    errors: list[dict[str, Any]],
+) -> Optional[str]:
+    """Revalidate immutable task authority without migrating or broadening it."""
+    constraints = envelope["constraints"]
+    has_current = bool(
+        {"visual_media_operation", "visual_media_context"} & constraints.keys()
+    )
+    has_legacy = bool({"image_operation", "image_context"} & constraints.keys())
+    try:
+        classification = classify_visual_media_task(envelope, artifacts)
+    except ValueError:
+        errors.append(_issue("visual-media-context-invalid", path=path))
+        return None
+
+    if not has_current and not has_legacy:
+        code = (
+            "legacy-visual-task-blocked"
+            if classification == "visual"
+            else "visual-media-context-invalid"
+        )
+        errors.append(_issue(code, path=path))
+        return None
+
+    if has_legacy:
+        try:
+            legacy_context = project_legacy_image_context(envelope)
+        except ValueError:
+            errors.append(_issue("visual-media-context-invalid", path=path))
+            return None
+        if classification == "visual" and legacy_context is None:
+            errors.append(_issue("legacy-visual-task-blocked", path=path))
+            return None
+    else:
+        operation = constraints.get("visual_media_operation")
+        if operation != "none":
             try:
-                validate_declared_image_inputs(envelope, artifacts)
-            except (PermissionError, ValueError):
-                errors.append(_issue("invalid-task-envelope", path=_relative(root, path)))
+                validate_visual_media_context(
+                    constraints.get("visual_media_context")
+                )
+            except ValueError:
+                errors.append(_issue("visual-media-context-invalid", path=path))
+                return None
+
+    try:
+        validate_declared_visual_media_inputs(envelope, artifacts)
+    except PermissionError:
+        errors.append(_issue("visual-media-input-forbidden", path=path))
+        return None
+    except ValueError:
+        errors.append(_issue("visual-media-context-invalid", path=path))
+        return None
+
+    if (
+        not has_legacy
+        and classification == "visual"
+        and constraints.get("execution_context") != "isolated-child-agent"
+    ):
+        errors.append(_issue("visual-media-isolation-required", path=path))
+        return None
+    return classification
+
+
+def _check_task_results(
+    root: Path,
+    tasks: dict[str, tuple[dict[str, Any], str]],
+    artifacts: dict[str, dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> None:
+    for directory in ("results", "status", "stale-results"):
+        result_root = root / "tasks" / directory
+        if result_root.is_symlink():
+            errors.append(
+                _issue(
+                    "unsafe-runtime-storage",
+                    storage=_relative(root, result_root),
+                )
+            )
+            continue
+        if not result_root.is_dir():
+            continue
+        for path in sorted(result_root.glob("*.json")):
+            relative = _relative(root, path)
+            if path.is_symlink():
+                errors.append(_issue("unsafe-runtime-storage", storage=relative))
+                continue
+            result = _read_json_object(path)
+            try:
+                validate_result_envelope(result)
+                _validate_result(result)
+                task_id = result["task_id"]
+                if path.name != f"{task_id}.json" or task_id not in tasks:
+                    raise ValueError("task result does not match one valid task")
+                envelope, declared_classification = tasks[task_id]
+                if result["inputs"] != envelope["inputs"]:
+                    raise ValueError("task result inputs do not match its task")
+                produced = _validate_result_artifacts(envelope, result, artifacts)
+                _validate_conditional_visual_media_result(
+                    envelope,
+                    result,
+                    produced,
+                    artifacts,
+                    declared_classification,
+                )
+            except (KeyError, PermissionError, TypeError, ValueError):
+                errors.append(_issue("visual-media-result-invalid", path=relative))
 
 
 def _valid_task_envelope(envelope: dict[str, Any]) -> bool:
-    if set(envelope) != TASK_REQUIRED_KEYS:
-        return False
-    if not _safe_component(envelope.get("task_id")):
-        return False
-    if not all(isinstance(envelope.get(key), str) and envelope[key] for key in ("capability", "output_contract")):
-        return False
-    if envelope["capability"] not in TASK_CAPABILITIES:
-        return False
-    for field, nonempty in (("inputs", False), ("adapter_preferences", True)):
-        value = envelope.get(field)
-        if not isinstance(value, list) or (nonempty and not value) or len(value) != len(set(value)):
-            return False
-        if not all(_safe_component(item) for item in value):
-            return False
-    constraints = envelope.get("constraints")
-    if not isinstance(constraints, dict):
-        return False
     try:
-        validate_image_task_constraints(
-            constraints, capability=envelope.get("capability")
-        )
+        _validate_persisted_envelope(envelope)
     except ValueError:
         return False
     return True

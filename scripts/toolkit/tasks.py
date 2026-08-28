@@ -749,6 +749,11 @@ def _validate_current_envelope(envelope: dict[str, Any]) -> None:
     _validate_current_visual_operation_subset(envelope)
 
 
+def validate_current_task_envelope(envelope: dict[str, Any]) -> None:
+    """Validate one current in-memory candidate without legacy compatibility."""
+    _validate_current_envelope(envelope)
+
+
 def _validate_persisted_envelope(envelope: dict[str, Any]) -> None:
     """Validate current records or project already-persisted legacy image records."""
     _validate_envelope_shape(envelope)

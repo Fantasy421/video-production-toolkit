@@ -636,6 +636,17 @@ def _run_resume_scenario(
                     "storyboard-v1",
                     production_scope="representative-slice",
                     scene_id="S02",
+                    visual_media_context={
+                        "scope_identity": {
+                            "kind": "scene-contract",
+                            "id": "contract-S02-v2",
+                        },
+                        "allowed_artifact_ids": ["storyboard-v1"],
+                        "historical_access": "character-only",
+                        "continuity_exception": None,
+                        "max_review_previews": 0,
+                        "context_budget_bytes": 32_768,
+                    },
                 ),
             )
         append_event(project, {"event": "project.phase_changed", "phase": "storyboard_ready"})
@@ -991,6 +1002,8 @@ def _artifact(
     if artifact_type == "media":
         metadata.setdefault("media_kind", "video")
         metadata.setdefault("mime_type", "video/mp4")
+    if artifact_type in {"media", "storyboard"}:
+        metadata.setdefault("historical", False)
     return {
         "artifact_id": artifact_id,
         "type": artifact_type,
@@ -1011,8 +1024,19 @@ def _candidate(
     **constraints: Any,
 ) -> dict[str, Any]:
     inputs = list(inputs)
-    if capability == "scene.produce":
-        constraints.setdefault("visual_operation", "non-image")
+    visual_operation = {
+        "visual.preview": "image-generate",
+        "scene.produce": "video-generate",
+        "motion.preview": "video-generate",
+        "motion.produce": "video-render",
+        "timeline.assemble": "video-edit",
+        "review.package": "video-inspect",
+    }.get(capability)
+    if visual_operation is None:
+        constraints.setdefault("visual_media_operation", "none")
+    else:
+        constraints.setdefault("visual_media_operation", visual_operation)
+        constraints.setdefault("execution_context", "isolated-child-agent")
     if capability in {
         "storyboard.plan",
         "scene.produce",
