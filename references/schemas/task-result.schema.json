@@ -43,10 +43,17 @@
           "maxItems": 8
         },
         "media": {
-          "type": "array",
-          "items": {"type": "string", "minLength": 1, "maxLength": 64},
-          "uniqueItems": true,
-          "maxItems": 8
+          "type": "object",
+          "properties": {
+            "kind": {"type": "string", "minLength": 1, "maxLength": 64},
+            "format": {"type": "string", "minLength": 1, "maxLength": 64},
+            "width": {"type": "integer", "minimum": 1, "maximum": 16384},
+            "height": {"type": "integer", "minimum": 1, "maximum": 16384},
+            "duration_ms": {"type": "integer", "minimum": 0, "maximum": 36000000},
+            "fps": {"type": "number", "exclusiveMinimum": 0, "maximum": 240},
+            "readiness": {"type": "string", "minLength": 1, "maxLength": 64}
+          },
+          "additionalProperties": false
         },
         "checks": {
           "type": "array",

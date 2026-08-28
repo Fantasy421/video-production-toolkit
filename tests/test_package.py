@@ -128,7 +128,7 @@ class PackageTests(unittest.TestCase):
         )
         handoff = schema["properties"]["visual_media_handoff"]["properties"]
 
-        for name in ("artifact_ids", "paths", "media", "checks", "issues"):
+        for name in ("artifact_ids", "paths", "checks", "issues"):
             with self.subTest(name=name):
                 self.assertEqual(8, handoff[name]["maxItems"])
         self.assertEqual(128, handoff["artifact_ids"]["items"]["maxLength"])
@@ -136,7 +136,33 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(
             "^[A-Za-z0-9][A-Za-z0-9._/-]*$", handoff["paths"]["items"]["pattern"]
         )
-        self.assertEqual(64, handoff["media"]["items"]["maxLength"])
+        media = handoff["media"]
+        self.assertEqual("object", media["type"])
+        self.assertEqual(
+            ["kind", "format", "width", "height", "duration_ms", "fps", "readiness"],
+            list(media["properties"]),
+        )
+        self.assertFalse(media["additionalProperties"])
+        for name in ("kind", "format", "readiness"):
+            with self.subTest(name=name):
+                self.assertEqual("string", media["properties"][name]["type"])
+                self.assertEqual(64, media["properties"][name]["maxLength"])
+        self.assertEqual(
+            {"type": "integer", "minimum": 1, "maximum": 16384},
+            media["properties"]["width"],
+        )
+        self.assertEqual(
+            {"type": "integer", "minimum": 1, "maximum": 16384},
+            media["properties"]["height"],
+        )
+        self.assertEqual(
+            {"type": "integer", "minimum": 0, "maximum": 36000000},
+            media["properties"]["duration_ms"],
+        )
+        self.assertEqual(
+            {"type": "number", "exclusiveMinimum": 0, "maximum": 240},
+            media["properties"]["fps"],
+        )
         self.assertEqual(64, handoff["checks"]["items"]["maxLength"])
         issue = handoff["issues"]["items"]["properties"]
         self.assertEqual(128, issue["code"]["maxLength"])
@@ -154,7 +180,15 @@ class PackageTests(unittest.TestCase):
         payload = {
             "artifact_ids": [f"a{'a' * 126}{index}" for index in range(8)],
             "paths": [f"artifacts/{'a' * 245}{index}" for index in range(8)],
-            "media": [f"{high_codepoint}{index}" for index in range(8)],
+            "media": {
+                "kind": f"{high_codepoint}k",
+                "format": f"{high_codepoint}f",
+                "width": 16384,
+                "height": 16384,
+                "duration_ms": 36000000,
+                "fps": 240,
+                "readiness": f"{high_codepoint}r",
+            },
             "checks": [f"{high_codepoint}{index}" for index in range(8)],
             "issues": [
                 {
