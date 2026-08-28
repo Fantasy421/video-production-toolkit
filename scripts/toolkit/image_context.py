@@ -474,6 +474,18 @@ def validate_declared_image_inputs(
         or scope_artifact.get("type") not in expected_scope_types[scope["kind"]]
     ):
         raise PermissionError("image scope identity does not match its artifact")
+    matching_scope_ids = {
+        artifact_id
+        for artifact_id in declared_inputs
+        if (
+            (artifact := artifacts.get(artifact_id)) is not None
+            and artifact.get("type") in expected_scope_types[scope["kind"]]
+        )
+    }
+    if matching_scope_ids != {scope_id}:
+        raise PermissionError(
+            f"image task requires exactly one {scope['kind']} scope input"
+        )
 
     pack_ids = context["allowed_character_pack_ids"]
     for pack_id in pack_ids:

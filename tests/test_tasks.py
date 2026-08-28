@@ -542,6 +542,66 @@ class TaskTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "explicit historical origin"):
             claim_task(self.root, envelope["task_id"], "worker-a")
 
+    def test_image_task_rejects_an_additional_scene_contract_scope_input(self):
+        """Catches one scene scope silently authorizing a second scene contract."""
+        self.create_artifact("scene-contract-S04-v1", "scene-contract", 1)
+        self.create_image_context_artifacts()
+        envelope = {
+            **self.envelope,
+            "task_id": "two-scene-contract-image-scope-inputs",
+            "inputs": [
+                *self.envelope["inputs"],
+                "scene-contract-S04-v1",
+                "scene-S03-v1",
+                "host-pack-v1",
+            ],
+            "constraints": {
+                **self.envelope["constraints"],
+                "image_operation": "image-inspect",
+                "image_context": self.image_context(),
+            },
+        }
+
+        with self.assertRaisesRegex(PermissionError, "exactly one scene-contract"):
+            create_task(self.root, envelope)
+
+    def test_character_batch_image_scope_rejects_other_batch_or_pack_inputs(self):
+        """Catches one character scope silently authorizing another batch or pack."""
+        self.create_artifact("character-batch-a", "character-asset-batch", 1)
+        for extra_scope_id, extra_scope_type in (
+            ("character-batch-b", "character-asset-batch"),
+            ("character-pack-b", "character-pack"),
+        ):
+            with self.subTest(extra_scope_type=extra_scope_type):
+                self.create_artifact(extra_scope_id, extra_scope_type, 1)
+                envelope = {
+                    **self.envelope,
+                    "task_id": f"character-scope-with-{extra_scope_type}",
+                    "inputs": [
+                        *self.envelope["inputs"],
+                        "character-batch-a",
+                        extra_scope_id,
+                    ],
+                    "constraints": {
+                        **self.envelope["constraints"],
+                        "image_operation": "image-inspect",
+                        "image_context": {
+                            **self.image_context(),
+                            "scope_identity": {
+                                "kind": "character-asset-batch",
+                                "id": "character-batch-a",
+                            },
+                            "allowed_character_pack_ids": [],
+                            "continuity_exception": None,
+                        },
+                    },
+                }
+
+                with self.assertRaisesRegex(
+                    PermissionError, "exactly one character-asset-batch"
+                ):
+                    create_task(self.root, envelope)
+
     def test_image_bearing_inputs_cannot_make_the_context_opt_in(self):
         """Catches ordinary task inputs exposing undeclared neighboring images."""
         self.create_image_context_artifacts()
