@@ -243,6 +243,13 @@ class TaskTests(unittest.TestCase):
         constraints.update(updates)
         return constraints
 
+    def persist_legacy_envelope(self, envelope):
+        tasks_root = self.root / "tasks"
+        tasks_root.mkdir(exist_ok=True)
+        path = tasks_root / f"{envelope['task_id']}.json"
+        path.write_text(json.dumps(envelope), encoding="utf-8")
+        return path
+
     def non_visual_envelope(self, *, task_id="non-visual-task"):
         return {
             "task_id": task_id,
@@ -417,6 +424,249 @@ class TaskTests(unittest.TestCase):
         )
         self.assertIn("visual_media_handoff", persisted)
         self.assertNotIn("image_handoff", persisted)
+
+    def test_create_rejects_legacy_authority_but_claim_projects_persisted_legacy(self):
+        """Catches deprecated image authority being minted as a new task."""
+        self.create_image_context_artifacts()
+        envelope = {
+            **self.envelope,
+            "task_id": "persisted-legacy-image-task",
+            "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
+            "constraints": self.legacy_constraints(
+                image_operation="image-inspect",
+                image_context=self.image_context(),
+            ),
+        }
+
+        with self.assertRaisesRegex(ValueError, "legacy image.*read-only"):
+            create_task(self.root, envelope)
+
+        self.persist_legacy_envelope(envelope)
+        claim = claim_task(self.root, envelope["task_id"], "worker-a")
+        self.assertEqual("worker-a", claim["worker_id"])
+
+    def test_claim_rejects_persisted_task_id_mismatch_and_cleans_lock(self):
+        """Catches claim authority being issued for a differently identified record."""
+        envelope = self.non_visual_envelope(task_id="claim-file-identity")
+        task_path = create_task(self.root, envelope)
+        stored = json.loads(task_path.read_text(encoding="utf-8"))
+        stored["task_id"] = "different-task-identity"
+        task_path.write_text(json.dumps(stored), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "task_id.*does not match"):
+            claim_task(self.root, envelope["task_id"], "worker-a")
+        self.assertFalse(
+            (self.root / "tasks" / "locks" / f"{envelope['task_id']}.lock").exists()
+        )
+
+    def test_completion_rejects_persisted_task_id_mismatch_without_publication(self):
+        """Catches completion publishing under a filename whose record names another task."""
+        envelope = self.visual_envelope(
+            task_id="completion-file-identity", operation="video-render"
+        )
+        task_path = create_task(self.root, envelope)
+        claim = claim_task(self.root, envelope["task_id"], "worker-a")
+        result = self.result_for(claim, task_id=envelope["task_id"])
+        stored = json.loads(task_path.read_text(encoding="utf-8"))
+        stored["task_id"] = "different-completion-identity"
+        task_path.write_text(json.dumps(stored), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "task_id.*does not match"):
+            complete_task(self.root, result)
+        for directory in ("results", "stale-results", "status"):
+            self.assertFalse(
+                (self.root / "tasks" / directory / f"{envelope['task_id']}.json").exists()
+            )
+
+    def test_new_visual_result_rejects_null_legacy_handoff_key(self):
+        """Catches a null deprecated key bypassing new/legacy handoff exclusivity."""
+        envelope = self.visual_envelope(
+            task_id="new-result-null-legacy-handoff", operation="video-render"
+        )
+        create_task(self.root, envelope)
+        claim = claim_task(self.root, envelope["task_id"], "worker-a")
+        result = self.result_for(claim, task_id=envelope["task_id"])
+        result["image_handoff"] = None
+
+        with self.assertRaisesRegex(ValueError, "must not mix"):
+            complete_task(self.root, result)
+
+    def test_legacy_result_rejects_null_visual_handoff_key(self):
+        """Catches a null new key bypassing legacy-result exclusivity."""
+        self.create_image_context_artifacts()
+        envelope = {
+            **self.envelope,
+            "task_id": "legacy-result-null-visual-handoff",
+            "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
+            "constraints": self.legacy_constraints(
+                image_operation="image-inspect",
+                image_context=self.image_context(),
+            ),
+        }
+        self.persist_legacy_envelope(envelope)
+        claim = claim_task(self.root, envelope["task_id"], "worker-a")
+        result = self.result_for(
+            claim,
+            task_id=envelope["task_id"],
+            inputs=envelope["inputs"],
+            artifacts=["image-preview-S03-v2"],
+        )
+        result["image_handoff"] = {
+            "artifact_ids": ["image-preview-S03-v2"],
+            "paths": ["media/image-preview-S03-v2.png"],
+            "summary": "Legacy image inspection complete.",
+            "status": "succeeded",
+        }
+        result["visual_media_handoff"] = None
+
+        with self.assertRaisesRegex(ValueError, "must not mix"):
+            complete_task(self.root, result)
+
+    def test_succeeded_result_rejects_noncurrent_output_artifacts(self):
+        """Catches terminal success publishing non-current Artifact metadata."""
+        cases = ("draft", "stale", "superseded", "invalid")
+        for status in cases:
+            artifact_id = f"result-{status}-v1"
+            self.create_artifact(
+                artifact_id,
+                f"result-{status}",
+                1,
+                status=status,
+                output_contract="project-plan-v1",
+            )
+            envelope = self.non_visual_envelope(task_id=f"reject-result-{status}")
+            create_task(self.root, envelope)
+            claim = claim_task(self.root, envelope["task_id"], "worker-a")
+            result = {
+                "task_id": envelope["task_id"],
+                "status": "succeeded",
+                "inputs": envelope["inputs"],
+                "artifacts": [artifact_id],
+                "checks": [],
+                "warnings": [],
+                **claim,
+            }
+            with self.subTest(status=status), self.assertRaisesRegex(
+                ValueError, "current approved"
+            ):
+                complete_task(self.root, result)
+
+    def test_succeeded_result_rejects_event_invalidated_or_superseded_lineage(self):
+        """Catches effective state and newer lineage being ignored at publication."""
+        cases = ("invalidated", "newer-lineage")
+        for case in cases:
+            with self.subTest(case=case), TemporaryDirectory() as folder:
+                root = Path(folder)
+                shutil.copytree(self.root / "artifacts", root / "artifacts")
+                shutil.copytree(self.root / "media", root / "media")
+                artifact_id = f"{case}-output-v1"
+                create_artifact(
+                    root,
+                    {
+                        "artifact_id": artifact_id,
+                        "type": f"{case}-output",
+                        "version": 1,
+                        "status": "approved",
+                        "parents": [],
+                        "path": f"media/{artifact_id}.json",
+                        "output_contract": "project-plan-v1",
+                    },
+                )
+                envelope = self.non_visual_envelope(task_id=f"reject-{case}-output")
+                create_task(root, envelope)
+                claim = claim_task(root, envelope["task_id"], "worker-a")
+                if case == "invalidated":
+                    events = root / "events"
+                    events.mkdir(exist_ok=True)
+                    with (events / "events.jsonl").open("a", encoding="utf-8") as stream:
+                        stream.write(
+                            json.dumps(
+                                {
+                                    "event": "artifacts.invalidated",
+                                    "changed_id": artifact_id,
+                                    "artifact_ids": [artifact_id],
+                                }
+                            )
+                            + "\n"
+                        )
+                else:
+                    create_artifact(
+                        root,
+                        {
+                            "artifact_id": f"{case}-output-v2",
+                            "type": f"{case}-output",
+                            "version": 2,
+                            "status": "approved",
+                            "parents": [artifact_id],
+                            "path": f"media/{case}-output-v2.json",
+                            "output_contract": "project-plan-v1",
+                        },
+                    )
+                result = {
+                    "task_id": envelope["task_id"],
+                    "status": "succeeded",
+                    "inputs": envelope["inputs"],
+                    "artifacts": [artifact_id],
+                    "checks": [],
+                    "warnings": [],
+                    **claim,
+                }
+                with self.assertRaisesRegex(ValueError, "current approved"):
+                    complete_task(root, result)
+
+    def test_resumable_result_allows_a_draft_partial_artifact(self):
+        """Catches output hardening breaking resumable draft checkpoints."""
+        artifact_id = "draft-partial-v1"
+        self.create_artifact(
+            artifact_id,
+            "partial-output",
+            1,
+            status="draft",
+            output_contract="project-plan-v1",
+        )
+        envelope = self.non_visual_envelope(task_id="draft-partial-checkpoint")
+        create_task(self.root, envelope)
+        claim = claim_task(self.root, envelope["task_id"], "worker-a")
+        result = {
+            "task_id": envelope["task_id"],
+            "status": "waiting_external",
+            "inputs": envelope["inputs"],
+            "artifacts": [artifact_id],
+            "checks": [],
+            "warnings": [],
+            **claim,
+        }
+
+        self.assertEqual("resumable", complete_task(self.root, result))
+
+    def test_resumable_result_rejects_unusable_partial_artifacts(self):
+        """Catches resumable checkpoints retaining invalid output authority."""
+        for status in ("stale", "superseded", "invalid"):
+            artifact_id = f"partial-{status}-v1"
+            self.create_artifact(
+                artifact_id,
+                f"partial-{status}",
+                1,
+                status=status,
+                output_contract="project-plan-v1",
+            )
+            envelope = self.non_visual_envelope(task_id=f"partial-{status}-checkpoint")
+            create_task(self.root, envelope)
+            claim = claim_task(self.root, envelope["task_id"], "worker-a")
+            result = {
+                "task_id": envelope["task_id"],
+                "status": "waiting_external",
+                "inputs": envelope["inputs"],
+                "artifacts": [artifact_id],
+                "checks": [],
+                "warnings": [],
+                **claim,
+            }
+
+            with self.subTest(status=status), self.assertRaisesRegex(
+                ValueError, "draft or approved"
+            ):
+                complete_task(self.root, result)
 
     def test_every_result_rejects_payloads_histories_and_oversized_envelopes(self):
         """Catches non-image task results bypassing the shared result scrub."""
@@ -770,8 +1020,9 @@ class TaskTests(unittest.TestCase):
         }
         self.assertEqual(
             self.root / "tasks" / "structure-only-valid.json",
-            create_task(self.root, structure_only),
+            self.persist_legacy_envelope(structure_only),
         )
+        claim_task(self.root, structure_only["task_id"], "worker-a")
 
         self.create_image_context_artifacts()
         image_inspect = {
@@ -786,8 +1037,9 @@ class TaskTests(unittest.TestCase):
         }
         self.assertEqual(
             self.root / "tasks" / "structure-image-valid.json",
-            create_task(self.root, image_inspect),
+            self.persist_legacy_envelope(image_inspect),
         )
+        claim_task(self.root, image_inspect["task_id"], "worker-a")
 
     def test_create_and_claim_enforce_every_declared_image_access(self):
         """Catches metadata authorization existing only as an unused helper."""
@@ -802,24 +1054,20 @@ class TaskTests(unittest.TestCase):
                 "image_context": self.image_context(),
             },
         }
-        with self.assertRaisesRegex(PermissionError, "historical scene image"):
-            create_task(self.root, envelope)
-
-        image_path = self.root / "artifacts" / "scene-image" / "scene-S03-v1.json"
-        artifact = json.loads(image_path.read_text(encoding="utf-8"))
-        artifact["historical"] = False
-        image_path.write_text(json.dumps(artifact), encoding="utf-8")
-        create_task(self.root, envelope)
-
-        artifact["historical"] = True
-        image_path.write_text(json.dumps(artifact), encoding="utf-8")
+        self.persist_legacy_envelope(envelope)
         with self.assertRaisesRegex(PermissionError, "historical scene image"):
             claim_task(self.root, envelope["task_id"], "worker-a")
 
+        image_path = self.root / "artifacts" / "scene-image" / "scene-S03-v1.json"
+        artifact = json.loads(image_path.read_text(encoding="utf-8"))
         artifact.pop("historical")
         image_path.write_text(json.dumps(artifact), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "explicit historical origin"):
             claim_task(self.root, envelope["task_id"], "worker-a")
+
+        artifact["historical"] = False
+        image_path.write_text(json.dumps(artifact), encoding="utf-8")
+        claim_task(self.root, envelope["task_id"], "worker-a")
 
     def test_image_task_rejects_an_additional_scene_contract_scope_input(self):
         """Catches one scene scope silently authorizing a second scene contract."""
@@ -841,8 +1089,9 @@ class TaskTests(unittest.TestCase):
             },
         }
 
+        self.persist_legacy_envelope(envelope)
         with self.assertRaisesRegex(PermissionError, "exactly one scene-contract"):
-            create_task(self.root, envelope)
+            claim_task(self.root, envelope["task_id"], "worker-a")
 
     def test_character_batch_scope_allows_explicit_member_packs(self):
         """Catches an allowlisted member pack being mistaken for a second scope."""
@@ -878,8 +1127,9 @@ class TaskTests(unittest.TestCase):
 
         self.assertEqual(
             self.root / "tasks" / "character-scope-with-member-pack.json",
-            create_task(self.root, envelope),
+            self.persist_legacy_envelope(envelope),
         )
+        claim_task(self.root, envelope["task_id"], "worker-a")
 
     def test_character_batch_image_scope_rejects_other_batch_or_pack_inputs(self):
         """Catches one character scope silently authorizing another batch or pack."""
@@ -916,7 +1166,8 @@ class TaskTests(unittest.TestCase):
                 with self.assertRaisesRegex(
                     PermissionError, "exactly one character-asset-batch"
                 ):
-                    create_task(self.root, envelope)
+                    self.persist_legacy_envelope(envelope)
+                    claim_task(self.root, envelope["task_id"], "worker-a")
 
     def test_scene_contract_scope_rejects_a_character_batch_input(self):
         """Catches a scene scope gaining an independent character batch."""
@@ -938,8 +1189,9 @@ class TaskTests(unittest.TestCase):
             },
         }
 
+        self.persist_legacy_envelope(envelope)
         with self.assertRaisesRegex(PermissionError, "exactly one scene-contract"):
-            create_task(self.root, envelope)
+            claim_task(self.root, envelope["task_id"], "worker-a")
 
     def test_scene_contract_scope_allows_an_explicit_member_pack(self):
         """Catches a listed character pack being treated as a scene conflict."""
@@ -957,8 +1209,9 @@ class TaskTests(unittest.TestCase):
 
         self.assertEqual(
             self.root / "tasks" / "scene-scope-with-member-pack.json",
-            create_task(self.root, envelope),
+            self.persist_legacy_envelope(envelope),
         )
+        claim_task(self.root, envelope["task_id"], "worker-a")
 
     def test_scene_contract_scope_rejects_an_unlisted_character_pack_input(self):
         """Catches a scene scope gaining an unlisted independent character pack."""
@@ -985,8 +1238,9 @@ class TaskTests(unittest.TestCase):
             },
         }
 
+        self.persist_legacy_envelope(envelope)
         with self.assertRaisesRegex(PermissionError, "exactly one scene-contract"):
-            create_task(self.root, envelope)
+            claim_task(self.root, envelope["task_id"], "worker-a")
 
     def test_character_batch_scope_rejects_a_scene_contract_input(self):
         """Catches a character scope gaining an independent Scene Contract."""
@@ -1018,7 +1272,8 @@ class TaskTests(unittest.TestCase):
         with self.assertRaisesRegex(
             PermissionError, "exactly one character-asset-batch"
         ):
-            create_task(self.root, envelope)
+            self.persist_legacy_envelope(envelope)
+            claim_task(self.root, envelope["task_id"], "worker-a")
 
     def test_claim_revalidates_exact_image_scope_inputs(self):
         """Catches a persisted image task gaining another scope before claim."""
@@ -1033,7 +1288,7 @@ class TaskTests(unittest.TestCase):
                 "image_context": self.image_context(),
             },
         }
-        task_path = create_task(self.root, envelope)
+        task_path = self.persist_legacy_envelope(envelope)
         self.create_artifact("scene-contract-S04-v1", "scene-contract", 1)
         persisted = json.loads(task_path.read_text(encoding="utf-8"))
         persisted["inputs"].append("scene-contract-S04-v1")
@@ -1055,7 +1310,7 @@ class TaskTests(unittest.TestCase):
                 "image_context": self.image_context(),
             },
         }
-        task_path = create_task(self.root, envelope)
+        task_path = self.persist_legacy_envelope(envelope)
         self.create_artifact(
             "unlisted-pack-a",
             "character-pack",
@@ -1099,8 +1354,9 @@ class TaskTests(unittest.TestCase):
                 },
             },
         }
+        self.persist_legacy_envelope(empty_allowlist)
         with self.assertRaisesRegex(PermissionError, "undeclared image|continuity exception"):
-            create_task(self.root, empty_allowlist)
+            claim_task(self.root, empty_allowlist["task_id"], "worker-a")
 
     def test_scene_production_requires_an_explicit_visual_operation(self):
         """Catches text-to-image work hiding behind the generic scene route."""
@@ -1318,7 +1574,7 @@ class TaskTests(unittest.TestCase):
                 "image_context": self.image_context(),
             },
         }
-        create_task(self.root, envelope)
+        self.persist_legacy_envelope(envelope)
         claim = claim_task(self.root, envelope["task_id"], "worker-a")
         result = self.result_for(
             claim,
@@ -1378,7 +1634,7 @@ class TaskTests(unittest.TestCase):
                     "image_context": self.image_context(),
                 },
             }
-            create_task(self.root, envelope)
+            self.persist_legacy_envelope(envelope)
             claim = claim_task(self.root, task_id, "worker-a")
             result = {
                 **self.result_for(
@@ -1415,7 +1671,7 @@ class TaskTests(unittest.TestCase):
                 "image_context": {**self.image_context(), "context_budget": 512},
             },
         }
-        create_task(self.root, envelope)
+        self.persist_legacy_envelope(envelope)
         claim = claim_task(self.root, task_id, "worker-a")
         result = {
             **self.result_for(
@@ -1509,7 +1765,7 @@ class TaskTests(unittest.TestCase):
                 "image_context": generation_context,
             },
         }
-        create_task(self.root, generation_task)
+        self.persist_legacy_envelope(generation_task)
         generation_claim = claim_task(self.root, generation_task["task_id"], "worker-a")
         with self.assertRaisesRegex(ValueError, "generate.*image|image.*generate"):
             complete_task(

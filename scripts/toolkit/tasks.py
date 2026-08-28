@@ -99,6 +99,8 @@ VOICE_TIMING_CAPABILITIES = frozenset(
 def create_task(root: Path, envelope: dict[str, Any]) -> Path:
     """Persist one immutable, schema-shaped task envelope."""
     _validate_envelope(envelope)
+    if {"image_operation", "image_context"} & envelope["constraints"].keys():
+        raise ValueError("legacy image authority is read-only")
     root = project_root(root)
     storage_directory(root, "events", create=True)
     with _state_lock(root, exclusive=False):
@@ -221,7 +223,7 @@ def complete_task(root: Path, result: dict[str, Any]) -> str:
         declared_classification = _authorize_declared_visual_media_inputs(
             envelope, artifacts
         )
-        produced_artifacts = _validate_result_artifacts(root, envelope, result)
+        produced_artifacts = _validate_result_artifacts(envelope, result, artifacts)
         _validate_conditional_visual_media_result(
             envelope,
             result,
@@ -394,12 +396,13 @@ def _effective_artifacts_by_id(root: Path) -> dict[str, dict[str, Any]]:
 
 
 def _validate_result_artifacts(
-    root: Path, envelope: dict[str, Any], result: dict[str, Any]
+    envelope: dict[str, Any],
+    result: dict[str, Any],
+    artifacts: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Require every claimed output to be a persisted artifact of the declared contract."""
     if result["status"] == "succeeded" and not result["artifacts"]:
         raise ValueError("a succeeded task must return at least one artifact")
-    artifacts = _artifacts_by_id(root / "artifacts")
     returned: list[dict[str, Any]] = []
     for artifact_id in result["artifacts"]:
         artifact = artifacts.get(artifact_id)
@@ -409,6 +412,17 @@ def _validate_result_artifacts(
             raise ValueError(
                 f"task result artifact {artifact_id} does not satisfy "
                 f"{envelope['output_contract']}"
+            )
+        if result["status"] == "succeeded":
+            if artifact["status"] != "approved" or _has_newer_approved_lineage(
+                artifact, artifacts
+            ):
+                raise ValueError(
+                    f"task result artifact {artifact_id} must be current approved output"
+                )
+        elif artifact["status"] not in {"draft", "approved"}:
+            raise ValueError(
+                f"resumable task result artifact {artifact_id} must be draft or approved"
             )
         classify_visual_media_artifact(artifact)
         returned.append(artifact)
@@ -514,6 +528,8 @@ def _read_envelope(root: Path, task_id: str) -> dict[str, Any]:
         raise ValueError(f"task does not exist: {task_id}")
     envelope = _read_json_object(path, "task envelope")
     _validate_envelope(envelope)
+    if envelope["task_id"] != task_id:
+        raise ValueError("persisted task_id does not match its requested task path")
     return envelope
 
 
@@ -758,9 +774,11 @@ def _validate_conditional_visual_media_result(
 ) -> None:
     constraints = envelope["constraints"]
     has_legacy = "image_operation" in constraints or "image_context" in constraints
+    has_image_handoff = "image_handoff" in result
+    has_visual_handoff = "visual_media_handoff" in result
     image_handoff = result.get("image_handoff")
     visual_handoff = result.get("visual_media_handoff")
-    if image_handoff is not None and visual_handoff is not None:
+    if has_image_handoff and has_visual_handoff:
         raise ValueError("task result must not mix image_handoff and visual_media_handoff")
 
     completed_classification = classify_visual_media_task(
@@ -780,7 +798,7 @@ def _validate_conditional_visual_media_result(
                 raise ValueError(
                     "legacy non-image task cannot return visual media artifacts"
                 )
-            if image_handoff is not None or visual_handoff is not None:
+            if has_image_handoff or has_visual_handoff:
                 raise ValueError("non-image legacy task result cannot contain a handoff")
             return
         if (
@@ -791,9 +809,9 @@ def _validate_conditional_visual_media_result(
             raise ValueError("generate must return at least one image artifact")
         if any(kind not in {"image", "non-visual"} for kind in produced_kinds):
             raise ValueError("legacy image task cannot return non-image visual media")
-        if visual_handoff is not None:
+        if has_visual_handoff:
             raise ValueError("legacy image task result must use image_handoff")
-        if image_handoff is None:
+        if not has_image_handoff:
             raise ValueError("legacy image task result requires image_handoff")
         legacy_context = validate_image_task_constraints(
             constraints, capability=envelope["capability"]
@@ -811,10 +829,10 @@ def _validate_conditional_visual_media_result(
         return
 
     if declared_classification == "non-visual":
-        if image_handoff is not None or visual_handoff is not None:
+        if has_image_handoff or has_visual_handoff:
             raise ValueError("non-visual task result cannot contain a visual media handoff")
         return
-    if image_handoff is not None:
+    if has_image_handoff:
         raise ValueError("new visual media task result must use visual_media_handoff")
     context = validate_visual_media_context(constraints.get("visual_media_context"))
     validate_visual_media_result_envelope(context, result)
