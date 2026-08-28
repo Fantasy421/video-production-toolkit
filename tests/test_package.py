@@ -4,6 +4,9 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from jsonschema import Draft202012Validator
+from referencing import Registry, Resource
+
 from scripts.validate_package import validate_package
 
 
@@ -11,6 +14,23 @@ ROOT = Path(__file__).parents[1]
 
 
 class PackageTests(unittest.TestCase):
+    def task_envelope_validator(self):
+        schema_root = ROOT / "references" / "schemas"
+        envelope_path = schema_root / "task-envelope.schema.json"
+        envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+        envelope["$id"] = envelope_path.as_uri()
+        registry = Registry()
+        for name in (
+            "image-task-context.schema.json",
+            "visual-media-task-context.schema.json",
+        ):
+            path = schema_root / name
+            resource = Resource.from_contents(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
+            registry = registry.with_resource(path.as_uri(), resource)
+        return Draft202012Validator(envelope, registry=registry)
+
     def test_visual_media_schema_is_closed_and_bounded(self):
         """Catches a visual-media task context that expands beyond its isolated scope."""
         schema = json.loads(
@@ -87,10 +107,36 @@ class PackageTests(unittest.TestCase):
         )
         self.assertEqual(
             {
-                "required": ["visual_media_operation"],
-                "properties": {
-                    "visual_media_operation": {"enum": ["none", "image-inspect"]}
-                },
+                "oneOf": [
+                    {
+                        "required": ["visual_media_operation"],
+                        "properties": {
+                            "visual_media_operation": {
+                                "enum": ["none", "image-inspect"]
+                            }
+                        },
+                        "not": {
+                            "anyOf": [
+                                {"required": ["image_operation"]},
+                                {"required": ["image_context"]},
+                            ]
+                        },
+                    },
+                    {
+                        "required": ["image_operation"],
+                        "properties": {
+                            "image_operation": {
+                                "enum": ["structure-only", "image-inspect"]
+                            }
+                        },
+                        "not": {
+                            "anyOf": [
+                                {"required": ["visual_media_operation"]},
+                                {"required": ["visual_media_context"]},
+                            ]
+                        },
+                    },
+                ]
             },
             structure_rule["then"]["properties"]["constraints"],
         )
@@ -108,6 +154,63 @@ class PackageTests(unittest.TestCase):
             },
             conditionals,
         )
+
+    def test_structure_validation_schema_accepts_current_and_persisted_legacy_only(self):
+        """Catches the structure conditional dropping legacy reads or broadening authority."""
+        validator = self.task_envelope_validator()
+        base = {
+            "task_id": "structure-schema-case",
+            "capability": "structure.validate",
+            "inputs": [],
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "validation-report-v1",
+        }
+        visual_context = {
+            "scope_identity": {"kind": "scene-contract", "id": "scene-S01"},
+            "allowed_artifact_ids": [],
+            "historical_access": "character-only",
+            "continuity_exception": None,
+            "max_review_previews": 0,
+            "context_budget_bytes": 1024,
+        }
+        image_context = {
+            "scope_identity": {"kind": "scene-contract", "id": "scene-S01"},
+            "allowed_image_artifact_ids": [],
+            "allowed_character_pack_ids": [],
+            "forbidden_scene_image_access": True,
+            "max_review_previews": 0,
+            "context_budget": 1024,
+        }
+        valid_constraints = (
+            {"visual_media_operation": "none"},
+            {
+                "visual_media_operation": "image-inspect",
+                "visual_media_context": visual_context,
+            },
+            {"image_operation": "structure-only"},
+            {"image_operation": "image-inspect", "image_context": image_context},
+        )
+        for index, constraints in enumerate(valid_constraints, 1):
+            with self.subTest(valid=index):
+                validator.validate({**base, "constraints": constraints})
+
+        invalid_constraints = (
+            {},
+            {
+                "visual_media_operation": "video-inspect",
+                "visual_media_context": visual_context,
+            },
+            {"image_operation": "generate", "image_context": image_context},
+            {
+                "visual_media_operation": "none",
+                "image_operation": "structure-only",
+            },
+        )
+        for index, constraints in enumerate(invalid_constraints, 1):
+            with self.subTest(invalid=index):
+                self.assertFalse(
+                    validator.is_valid({**base, "constraints": constraints})
+                )
 
     def test_task_result_visual_media_handoff_uses_one_review_preview_path(self):
         """Catches result handoffs reopening visual-media fields or preview fan-out."""

@@ -1015,6 +1015,21 @@ class TaskTests(unittest.TestCase):
             claim_task(self.root, envelope["task_id"], "worker-a")["worker_id"],
         )
 
+    def test_current_structure_validation_rejects_operations_outside_its_subset(self):
+        """Catches structure validation acquiring generation, editing, or video authority."""
+        disallowed = ACTIVE_VISUAL_MEDIA_OPERATIONS - {"image-inspect"}
+        for index, operation in enumerate(sorted(disallowed), 1):
+            envelope = self.visual_envelope(
+                task_id=f"structure-operation-{index}", operation=operation
+            )
+            envelope["capability"] = "structure.validate"
+            envelope["output_contract"] = "validation-report-v1"
+
+            with self.subTest(operation=operation), self.assertRaisesRegex(
+                ValueError, "structure.validate.*visual_media_operation"
+            ):
+                create_task(self.root, envelope)
+
     def test_persisted_legacy_structure_validation_requires_exact_image_operation(self):
         """Catches legacy structural validation silently changing image authority."""
         base = {

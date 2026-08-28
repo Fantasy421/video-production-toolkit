@@ -746,6 +746,7 @@ def _validate_current_envelope(envelope: dict[str, Any]) -> None:
     if {"image_operation", "image_context"} & constraints.keys():
         raise ValueError("legacy image authority is read-only")
     validate_image_task_constraints(constraints)
+    _validate_current_visual_operation_subset(envelope)
 
 
 def _validate_persisted_envelope(envelope: dict[str, Any]) -> None:
@@ -758,6 +759,8 @@ def _validate_persisted_envelope(envelope: dict[str, Any]) -> None:
     has_legacy = bool({"image_operation", "image_context"} & constraints.keys())
     if has_current and has_legacy:
         raise ValueError("task must not mix visual media and legacy image authority")
+    if has_current:
+        _validate_current_visual_operation_subset(envelope)
     validate_image_task_constraints(
         constraints,
         capability=(
@@ -767,6 +770,17 @@ def _validate_persisted_envelope(envelope: dict[str, Any]) -> None:
             else None
         ),
     )
+
+
+def _validate_current_visual_operation_subset(envelope: dict[str, Any]) -> None:
+    if (
+        envelope["capability"] == "structure.validate"
+        and envelope["constraints"].get("visual_media_operation")
+        not in {"none", "image-inspect"}
+    ):
+        raise ValueError(
+            "structure.validate visual_media_operation must be none or image-inspect"
+        )
 
 
 def _validate_result(result: dict[str, Any]) -> None:

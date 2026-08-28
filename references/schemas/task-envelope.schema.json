@@ -138,10 +138,32 @@
       "then": {
         "properties": {
           "constraints": {
-            "required": ["visual_media_operation"],
-            "properties": {
-              "visual_media_operation": {"enum": ["none", "image-inspect"]}
-            }
+            "oneOf": [
+              {
+                "required": ["visual_media_operation"],
+                "properties": {
+                  "visual_media_operation": {"enum": ["none", "image-inspect"]}
+                },
+                "not": {
+                  "anyOf": [
+                    {"required": ["image_operation"]},
+                    {"required": ["image_context"]}
+                  ]
+                }
+              },
+              {
+                "required": ["image_operation"],
+                "properties": {
+                  "image_operation": {"enum": ["structure-only", "image-inspect"]}
+                },
+                "not": {
+                  "anyOf": [
+                    {"required": ["visual_media_operation"]},
+                    {"required": ["visual_media_context"]}
+                  ]
+                }
+              }
+            ]
           }
         }
       }

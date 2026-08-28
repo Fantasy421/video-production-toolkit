@@ -456,16 +456,16 @@ class ImageSchemaTests(unittest.TestCase):
             if rule["if"]["properties"]["capability"].get("const")
             == "structure.validate"
         )
-        self.assertEqual(
-            ["visual_media_operation"],
-            structure_rule["then"]["properties"]["constraints"]["required"],
-        )
+        structure_branches = structure_rule["then"]["properties"]["constraints"][
+            "oneOf"
+        ]
         self.assertEqual(
             {"none", "image-inspect"},
-            set(
-                structure_rule["then"]["properties"]["constraints"]["properties"]
-                ["visual_media_operation"]["enum"]
-            ),
+            set(structure_branches[0]["properties"]["visual_media_operation"]["enum"]),
+        )
+        self.assertEqual(
+            {"structure-only", "image-inspect"},
+            set(structure_branches[1]["properties"]["image_operation"]["enum"]),
         )
         structure_only_rule = next(
             rule
