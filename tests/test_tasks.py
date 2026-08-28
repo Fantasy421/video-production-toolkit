@@ -52,6 +52,71 @@ class CurrentTaskEnvelopeMetadataTests(unittest.TestCase):
                 )
             )
 
+    def test_scene_schema_separates_current_and_persisted_legacy_authority(self):
+        """Catches the scene schema requiring authority rejected by current runtime."""
+        schema = json.loads(
+            (
+                Path(__file__).parents[1]
+                / "references"
+                / "schemas"
+                / "task-envelope.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        scene_rule = next(
+            rule
+            for rule in schema["allOf"]
+            if rule["if"].get("properties", {}).get("capability")
+            == {"const": "scene.produce"}
+        )
+
+        self.assertEqual(
+            {
+                "oneOf": [
+                    {
+                        "required": ["visual_media_operation"],
+                        "properties": {
+                            "visual_media_operation": {
+                                "enum": [
+                                    "none",
+                                    "image-generate",
+                                    "image-edit",
+                                    "image-inspect",
+                                    "video-generate",
+                                    "video-edit",
+                                    "video-render",
+                                    "video-inspect",
+                                    "frame-extract",
+                                    "contact-sheet",
+                                ]
+                            }
+                        },
+                        "not": {
+                            "anyOf": [
+                                {"required": ["visual_operation"]},
+                                {"required": ["image_operation"]},
+                                {"required": ["image_context"]},
+                            ]
+                        },
+                    },
+                    {
+                        "required": ["visual_operation"],
+                        "properties": {
+                            "visual_operation": {
+                                "enum": ["image-generation", "non-image"]
+                            }
+                        },
+                        "not": {
+                            "anyOf": [
+                                {"required": ["visual_media_operation"]},
+                                {"required": ["visual_media_context"]},
+                            ]
+                        },
+                    },
+                ]
+            },
+            scene_rule["then"]["properties"]["constraints"],
+        )
+
 
 class TaskTests(unittest.TestCase):
     def setUp(self):

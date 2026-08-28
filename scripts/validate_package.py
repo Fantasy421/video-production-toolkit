@@ -51,6 +51,42 @@ VISUAL_MEDIA_CONDITIONALS = [
         "then": {"required": ["visual_media_operation"]},
     },
 ]
+LEGACY_VISUAL_OPERATION = {
+    "enum": ["image-generation", "non-image"],
+    "deprecated": True,
+    "readOnly": True,
+}
+SCENE_VISUAL_AUTHORITY = {
+    "oneOf": [
+        {
+            "required": ["visual_media_operation"],
+            "properties": {
+                "visual_media_operation": {"enum": VISUAL_MEDIA_OPERATIONS}
+            },
+            "not": {
+                "anyOf": [
+                    {"required": ["visual_operation"]},
+                    {"required": ["image_operation"]},
+                    {"required": ["image_context"]},
+                ]
+            },
+        },
+        {
+            "required": ["visual_operation"],
+            "properties": {
+                "visual_operation": {
+                    "enum": ["image-generation", "non-image"]
+                }
+            },
+            "not": {
+                "anyOf": [
+                    {"required": ["visual_media_operation"]},
+                    {"required": ["visual_media_context"]},
+                ]
+            },
+        },
+    ]
+}
 STRUCTURE_VISUAL_AUTHORITY = {
     "oneOf": [
         {
@@ -394,6 +430,8 @@ def _validate_task_envelope_schema(
     )
     if operations != VISUAL_MEDIA_OPERATIONS:
         errors.append("invalid:visual-media-operations")
+    if constraint_properties.get("visual_operation") != LEGACY_VISUAL_OPERATION:
+        errors.append("invalid:legacy-visual-operation")
     conditions = constraints.get("allOf")
     visual_conditions = (
         [
@@ -411,6 +449,30 @@ def _validate_task_envelope_schema(
         errors.append("invalid:visual-media-conditionals")
 
     top_level_conditions = schema.get("allOf")
+    scene_rules = (
+        [
+            condition
+            for condition in top_level_conditions
+            if _mapping(
+                _mapping(_mapping(condition).get("if")).get("properties")
+            ).get("capability")
+            == {"const": "scene.produce"}
+        ]
+        if isinstance(top_level_conditions, list)
+        else []
+    )
+    scene_authority = (
+        _mapping(
+            _mapping(
+                _mapping(_mapping(scene_rules[0]).get("then")).get("properties")
+            ).get("constraints")
+        )
+        if len(scene_rules) == 1
+        else {}
+    )
+    if scene_authority != SCENE_VISUAL_AUTHORITY:
+        errors.append("invalid:scene-visual-authority")
+
     structure_rules = (
         [
             condition

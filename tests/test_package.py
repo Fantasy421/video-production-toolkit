@@ -9,6 +9,10 @@ from referencing import Registry, Resource
 
 import scripts.validate_package as package_validation
 from scripts.validate_package import validate_package
+from scripts.toolkit.tasks import (
+    _validate_persisted_envelope,
+    validate_current_task_envelope,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -232,6 +236,76 @@ class PackageTests(unittest.TestCase):
                     validator.is_valid({**base, "constraints": constraints})
                 )
 
+    def test_scene_schema_accepts_current_and_persisted_legacy_only(self):
+        """Catches schema/runtime drift or mixed scene authority becoming valid."""
+        validator = self.task_envelope_validator()
+        base = {
+            "task_id": "scene-schema-case",
+            "capability": "scene.produce",
+            "inputs": [],
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "scene-image-v1",
+        }
+        visual_context = {
+            "scope_identity": {"kind": "scene-contract", "id": "scene-S01"},
+            "allowed_artifact_ids": [],
+            "historical_access": "character-only",
+            "continuity_exception": None,
+            "max_review_previews": 0,
+            "context_budget_bytes": 1024,
+        }
+        image_context = {
+            "scope_identity": {"kind": "scene-contract", "id": "scene-S01"},
+            "allowed_image_artifact_ids": [],
+            "allowed_character_pack_ids": [],
+            "forbidden_scene_image_access": True,
+            "max_review_previews": 0,
+            "context_budget": 1024,
+        }
+        current = {
+            **base,
+            "constraints": {
+                "visual_media_operation": "image-generate",
+                "visual_media_context": visual_context,
+            },
+        }
+        persisted_legacy = {
+            **base,
+            "constraints": {
+                "visual_operation": "image-generation",
+                "image_operation": "generate",
+                "image_context": image_context,
+            },
+        }
+        validate_current_task_envelope(current)
+        _validate_persisted_envelope(persisted_legacy)
+        validator.validate(current)
+        validator.validate(persisted_legacy)
+
+        invalid_constraints = (
+            {},
+            {
+                "visual_media_operation": "image-generate",
+                "visual_media_context": visual_context,
+                "visual_operation": "non-image",
+            },
+            {
+                "visual_media_operation": "image-generate",
+                "visual_media_context": visual_context,
+                "image_operation": "generate",
+                "image_context": image_context,
+            },
+            {
+                "visual_operation": "non-image",
+                "visual_media_operation": "none",
+            },
+        )
+        for index, constraints in enumerate(invalid_constraints, 1):
+            with self.subTest(invalid=index):
+                self.assertFalse(
+                    validator.is_valid({**base, "constraints": constraints})
+                )
+
     def test_task_result_visual_media_handoff_uses_one_review_preview_path(self):
         """Catches result handoffs reopening visual-media fields or preview fan-out."""
         schema = json.loads(
@@ -430,7 +504,7 @@ class PackageTests(unittest.TestCase):
             self.assertIn("invalid:release-fingerprint", validate_package(package))
 
     def test_weakened_visual_envelope_conditionals_fail_after_fingerprint_refresh(self):
-        """Catches none, active-operation, or structure authority becoming optional."""
+        """Catches visual context or capability authority becoming optional."""
         cases = (
             (
                 "none-context-ban",
@@ -443,6 +517,20 @@ class PackageTests(unittest.TestCase):
                     "if"
                 ]["properties"]["visual_media_operation"]["enum"].pop(),
                 "invalid:visual-media-conditionals",
+            ),
+            (
+                "legacy-scene-read-only-marker",
+                lambda envelope: envelope["properties"]["constraints"][
+                    "properties"
+                ]["visual_operation"].pop("readOnly"),
+                "invalid:legacy-visual-operation",
+            ),
+            (
+                "scene-exclusive-branches",
+                lambda envelope: envelope["allOf"][0]["then"]["properties"][
+                    "constraints"
+                ]["oneOf"][0].pop("not"),
+                "invalid:scene-visual-authority",
             ),
             (
                 "structure-exclusive-branches",

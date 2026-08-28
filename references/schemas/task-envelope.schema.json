@@ -53,7 +53,11 @@
           ]
         },
         "visual_media_context": {"$ref": "visual-media-task-context.schema.json"},
-        "visual_operation": {"enum": ["image-generation", "non-image"]}
+        "visual_operation": {
+          "enum": ["image-generation", "non-image"],
+          "deprecated": true,
+          "readOnly": true
+        }
       },
       "allOf": [
         {
@@ -127,7 +131,52 @@
         "required": ["capability"]
       },
       "then": {
-        "properties": {"constraints": {"required": ["visual_operation"]}}
+        "properties": {
+          "constraints": {
+            "oneOf": [
+              {
+                "required": ["visual_media_operation"],
+                "properties": {
+                  "visual_media_operation": {
+                    "enum": [
+                      "none",
+                      "image-generate",
+                      "image-edit",
+                      "image-inspect",
+                      "video-generate",
+                      "video-edit",
+                      "video-render",
+                      "video-inspect",
+                      "frame-extract",
+                      "contact-sheet"
+                    ]
+                  }
+                },
+                "not": {
+                  "anyOf": [
+                    {"required": ["visual_operation"]},
+                    {"required": ["image_operation"]},
+                    {"required": ["image_context"]}
+                  ]
+                }
+              },
+              {
+                "required": ["visual_operation"],
+                "properties": {
+                  "visual_operation": {
+                    "enum": ["image-generation", "non-image"]
+                  }
+                },
+                "not": {
+                  "anyOf": [
+                    {"required": ["visual_media_operation"]},
+                    {"required": ["visual_media_context"]}
+                  ]
+                }
+              }
+            ]
+          }
+        }
       }
     },
     {
