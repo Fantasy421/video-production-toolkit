@@ -78,3 +78,7 @@ representative-slice timing-provenance smoke tests before the user gives
 execution-time approval for the exact legacy directory. Retirement additionally requires
 the ChatCut base Skill plus available `voice.synthesize` and `voice.time` capabilities
 owned by ChatCut Voice. Availability alone does not authorize an undeclared provider fallback.
+
+## Retirement events
+
+- 2026-08-28T05:23:34.958074+00:00 — retired exact audited directory `/Users/fantasy/.codex/skills/knowledge-video-visual-director`.
