@@ -1,416 +1,134 @@
-import json
-from pathlib import Path
-import struct
-from tempfile import TemporaryDirectory
+"""Review relay tests: compact metadata in, compact user decision out."""
+
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from scripts.build_review_pack import build_review_pack
-from scripts.toolkit.project_state import append_event, initialize_project, set_active_timeline
 
 
 class ReviewPackTests(unittest.TestCase):
+    """The review boundary must not inspect or expand visual-media handoffs."""
+
     def setUp(self):
-        self.folder = TemporaryDirectory()
-        self.root = Path(self.folder.name)
-        (self.root / "previews").mkdir()
-        (self.root / "timeline").mkdir()
-        (self.root / "approvals").mkdir()
-        (self.root / "artifacts" / "timeline").mkdir(parents=True)
-        (self.root / "artifacts" / "visual-preview").mkdir()
-        (self.root / "previews" / "S01-preview.jpg").write_bytes(b"jpg")
-        (self.root / "timeline" / "editable.project").write_text("saved", encoding="utf-8")
-        (self.root / "timeline" / "timeline.json").write_text(
-            json.dumps(
-                {
-                    "duration_ms": 5_000,
-                    "saved_project": "timeline/editable.project",
-                    "tracks": [
-                        {
-                            "id": "primary",
-                            "primary": True,
-                            "clips": [{"scene_id": "S01", "start_ms": 0, "end_ms": 5_000}],
-                        }
-                    ],
-                }
-            ),
-            encoding="utf-8",
-        )
-        (self.root / "artifacts" / "timeline" / "timeline-v1.json").write_text(
-            json.dumps({"artifact_id": "timeline-v1", "type": "timeline", "version": 1, "status": "approved", "parents": [], "path": "timeline/timeline.json"}),
-            encoding="utf-8",
-        )
-        (self.root / "artifacts" / "visual-preview" / "preview-S01-v1.json").write_text(
-            json.dumps(
-                {
-                    "artifact_id": "preview-S01-v1",
-                    "type": "visual-preview",
-                    "version": 1,
-                    "status": "approved",
-                    "parents": [],
-                    "path": "previews/S01-preview.jpg",
-                }
-            ),
-            encoding="utf-8",
-        )
+        self.root = Path("unused-project-root")
 
-    def tearDown(self):
-        self.folder.cleanup()
-
-    def write_artifact(self, artifact_id, artifact_type, version, path, *, parents=None, **metadata):
-        destination = self.root / "artifacts" / artifact_type / f"{artifact_id}.json"
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(
-            json.dumps(
-                {
-                    "artifact_id": artifact_id,
-                    "type": artifact_type,
-                    "version": version,
-                    "status": "approved",
-                    "parents": parents or [],
-                    "path": path,
-                    **metadata,
-                }
-            ),
-            encoding="utf-8",
-        )
-
-    def write_wav_header(self, relative, duration_ms):
-        data_size = duration_ms * 2
-        (self.root / relative).write_bytes(
-            b"RIFF"
-            + struct.pack("<I", 36 + data_size)
-            + b"WAVEfmt "
-            + struct.pack("<IHHIIHH", 16, 1, 1, 1_000, 2_000, 2, 16)
-            + b"data"
-            + struct.pack("<I", data_size)
-            + (b"\x00" * data_size)
-        )
-
-    def write_voice_bundle(self, version):
-        narration_id = f"narration-v{version}"
-        source_id = f"voice-source-v{version}"
-        profile_id = f"voice-profile-v{version}"
-        voiceover_id = f"voiceover-v{version}"
-        timing_id = f"voice-timing-v{version}"
-        self.write_artifact(
-            narration_id, "narration", version, f"metadata/{narration_id}.json",
-            parents=[] if version == 1 else ["narration-v1"],
-        )
-        self.write_artifact(
-            source_id, "voice-source-decision", version,
-            f"metadata/{source_id}.json", parents=[narration_id],
-            narration_id=narration_id, mode="tts", decision="approved",
-            decision_provenance=f"user:{source_id}",
-        )
-        self.write_artifact(
-            profile_id, "voice-profile", version, f"metadata/{profile_id}.json",
-            parents=[narration_id, source_id], narration_id=narration_id,
-            source_decision_id=source_id, mode="tts", language="zh-CN",
-            provider="chatcut", voice_id="narrator-1",
-            speaking_rate=1.0, emotion="calm", pronunciations=[], approved=True,
-            consent_provenance=f"user:consent-v{version}",
-            profile_provenance=f"user:profile-v{version}",
-        )
-        self.write_artifact(
-            voiceover_id, "voiceover", version, f"media/{voiceover_id}.wav",
-            parents=[narration_id, source_id, profile_id], narration_id=narration_id,
-            source_decision_id=source_id, mode="tts", profile_id=profile_id,
-            media_path=f"media/{voiceover_id}.wav", media_format="wav",
-            duration_ms=5_000, provenance="test-fixture",
-        )
-        self.write_wav_header(f"media/{voiceover_id}.wav", 5_000)
-        self.write_artifact(
-            timing_id, "voice-timing", version, f"metadata/{timing_id}.json",
-            parents=[voiceover_id], voiceover_id=voiceover_id, timing_kind="real",
-            duration_ms=5_000,
-            segments=[{"start_ms": 0, "end_ms": 5_000, "text": "voice timing"}],
-        )
-
-    def write_uploaded_voice_bundle(self):
-        narration_id = "narration-upload-v1"
-        source_id = "voice-source-upload-v1"
-        upload_id = "uploaded-audio-v1"
-        voiceover_id = "voiceover-upload-v1"
-        self.write_artifact(
-            narration_id,
-            "narration",
-            1,
-            f"metadata/{narration_id}.json",
-        )
-        self.write_artifact(
-            source_id,
-            "voice-source-decision",
-            1,
-            f"metadata/{source_id}.json",
-            parents=[narration_id],
-            narration_id=narration_id,
-            mode="uploaded-voice",
-            decision="approved",
-            decision_provenance="user:uploaded-source-v1",
-        )
-        self.write_artifact(
-            upload_id,
-            "uploaded-audio",
-            1,
-            f"media/{upload_id}.wav",
-            parents=[narration_id, source_id],
-            media_path=f"media/{upload_id}.wav",
-        )
-        self.write_artifact(
-            voiceover_id,
-            "voiceover",
-            1,
-            f"media/{voiceover_id}.wav",
-            parents=[narration_id, source_id, upload_id],
-            narration_id=narration_id,
-            source_decision_id=source_id,
-            mode="uploaded-voice",
-            uploaded_audio_id=upload_id,
-            media_path=f"media/{voiceover_id}.wav",
-            media_format="wav",
-            duration_ms=5_000,
-            provenance="user-upload",
-        )
-        self.write_wav_header(f"media/{voiceover_id}.wav", 5_000)
-        self.write_artifact(
-            "voice-timing-upload-v1",
-            "voice-timing",
-            1,
-            "metadata/voice-timing-upload-v1.json",
-            parents=[voiceover_id],
-            voiceover_id=voiceover_id,
-            timing_kind="real",
-            duration_ms=5_000,
-            segments=[{"start_ms": 0, "end_ms": 5_000, "text": "uploaded voice"}],
-        )
-
-    def test_review_pack_links_previews_and_decisions_without_embedding_media(self):
-        path = build_review_pack(self.root, self.root / "review")
-
-        html = path.read_text(encoding="utf-8")
-        review = json.loads((path.parent / "review.json").read_text(encoding="utf-8"))
-        self.assertIn('data-scene-id="S01"', html)
-        self.assertNotIn("data:image/", html)
-        self.assertIn("../previews/S01-preview.jpg", html)
-        self.assertEqual("Representative slice and final draft", review["decision_requests"][0]["gate"])
-
-    def test_review_pack_links_only_current_voiceover(self):
-        """Catches a review pack exposing a superseded or payload-embedded voice recording."""
-        initialize_project(self.root, "review-voice", "knowledge-video")
-        self.write_voice_bundle(1)
-        self.write_voice_bundle(2)
-
-        path = build_review_pack(self.root, self.root / "review")
-        review = json.loads((path.parent / "review.json").read_text(encoding="utf-8"))
-        rendered = json.dumps(review)
-
-        self.assertEqual("voiceover-v2", review["voice"]["voiceover_id"])
-        self.assertEqual("tts", review["voice"]["source"]["mode"])
-        self.assertEqual(5_000, review["voice"]["duration_ms"])
-        self.assertEqual("voice-timing-v2", review["voice"]["timing"]["artifact_id"])
-        self.assertNotIn("voiceover-v1", rendered)
-        self.assertNotIn("data:audio", rendered)
-
-    def test_review_pack_resolves_uploaded_voice_without_a_tts_profile(self):
-        """Catches uploaded narration disappearing because no profile exists."""
-        initialize_project(self.root, "review-uploaded-voice", "knowledge-video")
-        self.write_uploaded_voice_bundle()
-
-        path = build_review_pack(self.root, self.root / "review")
-        review = json.loads((path.parent / "review.json").read_text(encoding="utf-8"))
-
-        self.assertEqual("voiceover-upload-v1", review["voice"]["voiceover_id"])
-        self.assertEqual("uploaded-voice", review["voice"]["source"]["mode"])
-        self.assertIsNone(review["voice"]["profile"])
-
-    def test_review_pack_labels_only_effectively_approved_preview_artifacts(self):
-        """Catches event-invalidated preview metadata still being presented as current."""
-        initialize_project(self.root, "review-preview-status", "knowledge-video")
-        (self.root / "previews" / "S02-preview.jpg").write_bytes(b"stale jpg")
-        (self.root / "artifacts" / "visual-preview" / "preview-S02-v1.json").write_text(
-            json.dumps(
-                {
-                    "artifact_id": "preview-S02-v1",
-                    "type": "visual-preview",
-                    "version": 1,
-                    "status": "approved",
-                    "parents": [],
-                    "path": "previews/S02-preview.jpg",
-                }
-            ),
-            encoding="utf-8",
-        )
-        append_event(
-            self.root,
-            {
-                "event": "artifacts.invalidated",
-                "changed_id": "preview-S02-v1",
-                "artifact_ids": ["preview-S02-v1"],
+    def visual_handoff(self, **overrides):
+        handoff = {
+            "artifact_ids": ["media-S03-v4"],
+            "paths": ["media/media-S03-v4.mp4"],
+            "media": {
+                "kind": "video",
+                "format": "mp4",
+                "width": 1280,
+                "height": 720,
+                "duration_ms": 12_000,
+                "fps": 24,
+                "readiness": "ready",
             },
+            "checks": ["timeline-aligned", "preview-created"],
+            "issues": [{"code": "caption-overlap", "severity": "warning"}],
+            "summary": "Scene S03 preview is ready",
+            "review_preview_path": None,
+        }
+        handoff.update(overrides)
+        return handoff
+
+    def test_review_pack_relays_preview_path_without_dereferencing_it(self):
+        """Catches a relay reopening the user-only preview path."""
+        handoff = self.visual_handoff(review_preview_path="previews/S03-v4-low.mp4")
+
+        with (
+            patch("pathlib.Path.open", side_effect=AssertionError("media dereferenced")),
+            patch("pathlib.Path.read_bytes", side_effect=AssertionError("media dereferenced")),
+            patch("pathlib.Path.read_text", side_effect=AssertionError("media dereferenced")),
+        ):
+            pack = build_review_pack(self.root, handoff)
+
+        self.assertEqual("previews/S03-v4-low.mp4", pack["review_preview_path"])
+
+    def test_review_pack_rejects_two_preview_candidates(self):
+        """Catches a handoff that would make the user compare multiple previews."""
+        handoff = self.visual_handoff(
+            review_preview_path=["previews/S03-a.mp4", "previews/S03-b.mp4"]
         )
 
-        path = build_review_pack(self.root, self.root / "review")
-        review = json.loads((path.parent / "review.json").read_text(encoding="utf-8"))
+        with self.assertRaisesRegex(ValueError, "zero or one review preview path"):
+            build_review_pack(self.root, handoff)
+
+    def test_review_pack_omits_prompt_and_payload_fields(self):
+        """Catches media payload or prompt history leaking through a trusted relay."""
+        handoff = self.visual_handoff(
+            prompt_history=["make it brighter"],
+            video_bytes=b"not allowed",
+        )
+
+        pack = build_review_pack(self.root, handoff)
+
+        self.assertNotIn("prompt_history", pack)
+        self.assertNotIn("video_bytes", pack)
+        self.assertEqual(["timeline-aligned", "preview-created"], pack["checks"])
+
+    def test_review_pack_preserves_all_validated_structural_media_scalars(self):
+        """Catches the relay dropping validated media identity metadata."""
+        pack = build_review_pack(
+            self.root,
+            self.visual_handoff(
+                media={
+                    "kind": "video",
+                    "format": "mp4",
+                    "mime_type": "video/mp4",
+                    "width": 1280,
+                    "height": 720,
+                    "duration_ms": 12_000,
+                    "fps": 24,
+                    "readiness": "ready",
+                    "checksum": "abc123",
+                    "sha256": "def456",
+                }
+            ),
+        )
 
         self.assertEqual(
-            [{"artifact_id": "preview-S01-v1", "label": "S01-preview.jpg", "href": "../../previews/S01-preview.jpg", "status": "approved"}],
-            review["previews"],
-        )
-        html = path.read_text(encoding="utf-8")
-        self.assertIn("S01-preview.jpg [approved]", html)
-        self.assertNotIn("S02-preview.jpg", html)
-
-    def test_review_pack_excludes_a_timeline_staled_by_an_event_overlay(self):
-        """Catches review packaging presenting a timeline invalidated only in the event log."""
-        initialize_project(self.root, "review-invalidated", "knowledge-video")
-        append_event(
-            self.root,
             {
-                "event": "artifacts.invalidated",
-                "changed_id": "timeline-v1",
-                "artifact_ids": ["timeline-v1"],
+                "kind": "video",
+                "format": "mp4",
+                "mime_type": "video/mp4",
+                "width": 1280,
+                "height": 720,
+                "duration_ms": 12_000,
+                "fps": 24,
+                "readiness": "ready",
+                "checksum": "abc123",
+                "sha256": "def456",
             },
+            pack["media"],
         )
 
-        path = build_review_pack(self.root, self.root / "review")
-        review = json.loads((path.parent / "review.json").read_text(encoding="utf-8"))
+    def test_review_pack_keeps_subjective_acceptance_with_the_user(self):
+        """Catches an automated review relay declaring a visual decision final."""
+        pack = build_review_pack(self.root, self.visual_handoff())
 
-        self.assertNotIn('data-scene-id="S01"', path.read_text(encoding="utf-8"))
-        self.assertIn(
-            "missing-active-timeline",
-            {item["code"] for item in review["structural_errors"]},
+        self.assertEqual("waiting_user", pack["decision_status"])
+        self.assertEqual("user", pack["subjective_acceptance_authority"])
+        self.assertEqual(
+            ["approve", "reject", "request_revision"], pack["allowed_user_decisions"]
         )
 
-    def test_review_pack_excludes_timeline_scenes_when_referenced_media_is_stale(self):
-        """Catches an approved timeline presenting scene media invalidated by an event."""
-        initialize_project(self.root, "review-stale-media", "knowledge-video")
-        (self.root / "artifacts" / "media").mkdir()
-        (self.root / "artifacts" / "media" / "scene-S01-v1.json").write_text(
-            json.dumps(
-                {
-                    "artifact_id": "scene-S01-v1",
-                    "type": "media",
-                    "version": 1,
-                    "status": "approved",
-                    "parents": [],
-                    "path": "media/scene-S01.png",
-                }
-            ),
-            encoding="utf-8",
-        )
-        timeline_path = self.root / "timeline" / "timeline.json"
-        timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
-        timeline["tracks"][0]["clips"][0]["artifact_id"] = "scene-S01-v1"
-        timeline_path.write_text(json.dumps(timeline), encoding="utf-8")
-        append_event(
+    def test_review_pack_caps_check_and_issue_codes(self):
+        """Catches a malformed handoff expanding the review relay without bound."""
+        pack = build_review_pack(
             self.root,
-            {
-                "event": "artifacts.invalidated",
-                "changed_id": "scene-S01-v1",
-                "artifact_ids": ["scene-S01-v1"],
-            },
-        )
-
-        path = build_review_pack(self.root, self.root / "review")
-        review = json.loads((path.parent / "review.json").read_text(encoding="utf-8"))
-
-        self.assertEqual([], review["scenes"])
-        self.assertNotIn('data-scene-id="S01"', path.read_text(encoding="utf-8"))
-        self.assertIn(
-            "stale-active-artifact",
-            {item["code"] for item in review["structural_errors"]},
-        )
-
-    def test_review_pack_rejects_output_outside_project(self):
-        with self.assertRaises(ValueError):
-            build_review_pack(self.root, self.root.parent / "outside-review")
-
-    def test_review_pack_rejects_a_symlinked_project_root(self):
-        """Catches root resolution hiding a caller-controlled project symlink."""
-        with TemporaryDirectory() as folder:
-            linked_root = Path(folder) / "project-link"
-            linked_root.symlink_to(self.root, target_is_directory=True)
-
-            with self.assertRaises(ValueError):
-                build_review_pack(linked_root, linked_root / "review")
-
-    def test_review_pack_does_not_link_preview_symlinks_outside_project(self):
-        external = self.root.parent / "outside-preview.jpg"
-        external.write_bytes(b"outside")
-        (self.root / "previews" / "outside.jpg").symlink_to(external)
-        (self.root / "artifacts" / "visual-preview" / "preview-outside-v1.json").write_text(
-            json.dumps(
-                {
-                    "artifact_id": "preview-outside-v1",
-                    "type": "visual-preview",
-                    "version": 1,
-                    "status": "approved",
-                    "parents": [],
-                    "path": "previews/outside.jpg",
-                }
+            self.visual_handoff(
+                checks=[f"check-{index}" for index in range(10)],
+                issues=[{"code": f"issue-{index}"} for index in range(10)],
             ),
-            encoding="utf-8",
         )
 
-        path = build_review_pack(self.root, self.root / "review")
-
-        self.assertNotIn("outside.jpg", path.read_text(encoding="utf-8"))
-
-    def test_failed_regeneration_keeps_the_published_bundle_consistent(self):
-        published = build_review_pack(self.root, self.root / "review")
-        previous_html = published.read_text(encoding="utf-8")
-        previous_review = (published.parent / "review.json").read_text(encoding="utf-8")
-        (self.root / "previews" / "S02-preview.jpg").write_bytes(b"new jpg")
-
-        with patch("scripts.build_review_pack._render_html", side_effect=RuntimeError("render failed")):
-            with self.assertRaises(RuntimeError):
-                build_review_pack(self.root, self.root / "review")
-
-        self.assertEqual(previous_html, published.read_text(encoding="utf-8"))
-        self.assertEqual(previous_review, (published.parent / "review.json").read_text(encoding="utf-8"))
-
-    def test_review_timecodes_only_use_approved_timeline_artifact(self):
-        initialize_project(self.root, "review-test", "knowledge-video")
-        (self.root / "timeline" / "active.json").write_text(
-            json.dumps(
-                {
-                    "duration_ms": 5_000,
-                    "saved_project": "timeline/editable.project",
-                    "tracks": [{"id": "primary", "primary": True, "clips": [{"scene_id": "S01", "start_ms": 0, "end_ms": 5_000}]}],
-                }
-            ),
-            encoding="utf-8",
+        self.assertEqual([f"check-{index}" for index in range(8)], pack["checks"])
+        self.assertEqual(
+            [{"code": f"issue-{index}"} for index in range(8)], pack["issues"]
         )
-        (self.root / "timeline" / "timeline.json").write_text(
-            json.dumps(
-                {
-                    "duration_ms": 5_000,
-                    "tracks": [{"id": "primary", "primary": True, "clips": [{"scene_id": "S99", "start_ms": 0, "end_ms": 5_000}]}],
-                }
-            ),
-            encoding="utf-8",
-        )
-        (self.root / "artifacts" / "timeline" / "timeline-v1.json").write_text(
-            json.dumps({"artifact_id": "timeline-v1", "type": "timeline", "version": 1, "status": "approved", "parents": [], "path": "timeline/active.json"}),
-            encoding="utf-8",
-        )
-        (self.root / "timeline" / "other.json").write_text(
-            json.dumps({"duration_ms": 5_000, "tracks": [{"id": "primary", "primary": True, "clips": [{"scene_id": "S02", "start_ms": 0, "end_ms": 5_000}]}]}),
-            encoding="utf-8",
-        )
-        (self.root / "artifacts" / "timeline" / "timeline-v2.json").write_text(
-            json.dumps({"artifact_id": "timeline-v2", "type": "timeline", "version": 2, "status": "approved", "parents": [], "path": "timeline/other.json"}),
-            encoding="utf-8",
-        )
-        set_active_timeline(self.root, "timeline-v1")
-
-        path = build_review_pack(self.root, self.root / "review")
-
-        html = path.read_text(encoding="utf-8")
-        self.assertIn('data-scene-id="S01"', html)
-        self.assertNotIn('data-scene-id="S99"', html)
-        self.assertNotIn('data-scene-id="S02"', html)
 
 
 if __name__ == "__main__":
