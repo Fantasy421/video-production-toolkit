@@ -1555,6 +1555,18 @@ class ValidationTests(unittest.TestCase):
 
     def test_validator_rejects_scene_scope_with_an_unlisted_character_pack(self):
         """Catches persisted scene tasks acquiring an independent pack scope."""
+        contract_path = self.root / "contracts" / "S01.json"
+        bound_contract_path = self.root / "contracts" / "scene-contract-S01-v1.json"
+        contract_path.rename(bound_contract_path)
+        artifact_path = (
+            self.root
+            / "artifacts"
+            / "scene-contract"
+            / "scene-contract-S01-v1.json"
+        )
+        scene_contract = json.loads(artifact_path.read_text(encoding="utf-8"))
+        scene_contract["path"] = "contracts/scene-contract-S01-v1.json"
+        artifact_path.write_text(json.dumps(scene_contract), encoding="utf-8")
         self.write_artifact(
             "unlisted-pack-a",
             "character-pack",

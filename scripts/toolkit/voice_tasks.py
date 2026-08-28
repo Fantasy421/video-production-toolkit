@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 from .adapters import select_adapter
 from .runtime_paths import project_path, project_root
-from .tasks import _validate_envelope, _validate_result
+from .tasks import _validate_result, validate_current_task_envelope
 from .voice import probe_audio_duration_ms, validate_project_voice_bundle
 
 
@@ -166,7 +166,7 @@ def _task_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
     }
     if set(task) != required:
         raise ValueError("task envelope must match the declared task schema")
-    _validate_envelope(task)
+    validate_current_task_envelope(task)
     if task["capability"] != "voice.prepare":
         raise ValueError("prepare_voice_task requires voice.prepare")
     for field in ("task_id", "output_contract"):

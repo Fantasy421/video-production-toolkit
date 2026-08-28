@@ -961,8 +961,8 @@ class TaskTests(unittest.TestCase):
                 )
 
     def test_reserved_visual_operation_is_validated_for_every_capability(self):
-        """Catches non-scene tasks persisting an unknown reserved visual mode."""
-        with self.assertRaisesRegex(ValueError, "visual_operation"):
+        """Catches non-scene tasks persisting an unknown current visual mode."""
+        with self.assertRaisesRegex(ValueError, "visual_media_operation"):
             create_task(
                 self.root,
                 {
@@ -971,7 +971,7 @@ class TaskTests(unittest.TestCase):
                     "capability": "project.manage",
                     "constraints": {
                         **self.envelope["constraints"],
-                        "visual_operation": "bogus",
+                        "visual_media_operation": "bogus",
                     },
                 },
             )
@@ -1471,7 +1471,6 @@ class TaskTests(unittest.TestCase):
             "task_id": "scene-image-without-context",
             "constraints": {
                 **scene_envelope["constraints"],
-                "visual_operation": "image-generation",
                 "visual_media_operation": "image-generate",
                 "execution_context": "isolated-child-agent",
             },

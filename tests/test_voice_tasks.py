@@ -28,6 +28,7 @@ class PrepareVoiceTaskTests(unittest.TestCase):
             "adapter_preferences": adapter_preferences or ["chatcut"],
             "output_contract": "voiceover-v1",
             "constraints": {
+                "visual_media_operation": "none",
                 "worker_id": "voiceover-producer",
                 "claim_token": "claim-v2",
                 "voice_source_id": "source-v2",

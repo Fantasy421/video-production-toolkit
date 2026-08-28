@@ -725,10 +725,12 @@ def _is_unprovable_legacy_visual_task(
         {"image_operation", "image_context"} & constraints.keys()
     ):
         return False
+    if "image_context" not in constraints:
+        return constraints.get("image_operation") in {"generate", "image-inspect"}
     try:
         return project_legacy_image_context(envelope) is None
     except ValueError:
-        return True
+        return False
 
 
 def _check_persisted_visual_media_authority(
