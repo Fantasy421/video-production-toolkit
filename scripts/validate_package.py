@@ -1,17 +1,35 @@
+import hashlib
 import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Optional
 
 
-PLUGIN_VERSION = "0.1.3"
+PLUGIN_VERSION = "0.1.4"
 VOICE_MEDIA_FORMATS = ["wav", "mp3", "m4a", "aac", "flac"]
 VOICE_DURATION_PROBE = {
     "wav": "stdlib-wave-header",
     "compressed": "ffprobe-required",
     "failure_mode": "fail-closed",
 }
-REQUIRED = (
+VISUAL_MEDIA_OPERATIONS = [
+    "none",
+    "image-generate",
+    "image-edit",
+    "image-inspect",
+    "video-generate",
+    "video-edit",
+    "video-render",
+    "video-inspect",
+    "frame-extract",
+    "contact-sheet",
+]
+VISUAL_MEDIA_SCOPE_KINDS = [
+    "scene-contract",
+    "character-asset-batch",
+    "review-batch",
+]
+REQUIRED_FILES = (
     ".codex-plugin/plugin.json",
     "agents/openai.yaml",
     "assets/project-template/project.json",
@@ -21,6 +39,7 @@ REQUIRED = (
     "references/policies/decision-gates.md",
     "references/policies/invalidation.json",
     "references/policies/project-assets.md",
+    "references/policies/visual-media-isolation.md",
     "references/schemas/event.schema.json",
     "references/schemas/image-task-context.schema.json",
     "references/schemas/layout-pack.schema.json",
@@ -33,10 +52,12 @@ REQUIRED = (
     "references/schemas/voice-profile.schema.json",
     "references/schemas/voiceover.schema.json",
     "references/schemas/voice-timing.schema.json",
+    "references/schemas/visual-media-task-context.schema.json",
     "registries/adapters/chatcut.json",
     "registries/styles/editorial-clean/v1/manifest.json",
     "registries/layouts/talking-head-left-explainer-right/v1/manifest.json",
     "scripts/build_review_pack.py",
+    "scripts/install_personal_plugin.py",
     "scripts/retire_legacy_skill.py",
     "scripts/validate_package.py",
     "scripts/verify_installation.py",
@@ -48,18 +69,33 @@ REQUIRED = (
     "scripts/toolkit/project_state.py",
     "scripts/toolkit/tasks.py",
     "scripts/toolkit/validation.py",
+    "scripts/toolkit/visual_media_context.py",
     "scripts/toolkit/voice.py",
     "scripts/toolkit/voice_tasks.py",
     "skills/scene-producer/SKILL.md",
+    "skills/motion-director/SKILL.md",
+    "skills/storyboard-director/SKILL.md",
     "skills/structural-validator/SKILL.md",
     "skills/timeline-assembler/SKILL.md",
     "skills/video-director/SKILL.md",
+    "skills/video-review-packager/SKILL.md",
+    "skills/visual-system-designer/SKILL.md",
     "skills/voiceover-producer/SKILL.md",
+    "tests/test_end_to_end.py",
+    "tests/test_image_context.py",
+    "tests/test_package.py",
+    "tests/test_review_pack.py",
+    "tests/test_skill_contracts.py",
+    "tests/test_tasks.py",
+    "tests/test_validation.py",
+    "tests/test_visual_media_context.py",
 )
 
 
 def validate_package(root: Path) -> list[str]:
-    errors = [f"missing:{path}" for path in REQUIRED if not (root / path).is_file()]
+    errors = [
+        f"missing:{path}" for path in REQUIRED_FILES if not (root / path).is_file()
+    ]
     manifest = _read_json_object(root, ".codex-plugin/plugin.json", errors)
     if manifest is not None:
         if manifest.get("id") != "video-production-toolkit":
@@ -70,6 +106,8 @@ def validate_package(root: Path) -> list[str]:
             errors.append("invalid:plugin-version")
         if manifest.get("skills") != "./skills/":
             errors.append("invalid:skills-path")
+        if manifest.get("release_fingerprint") != _release_fingerprint(root):
+            errors.append("invalid:release-fingerprint")
 
     chatcut = _read_json_object(root, "registries/adapters/chatcut.json", errors)
     if chatcut is not None:
@@ -90,6 +128,17 @@ def validate_package(root: Path) -> list[str]:
     )
     if image is not None:
         _validate_image_schema(image, errors)
+
+    visual = _read_json_object(
+        root, "references/schemas/visual-media-task-context.schema.json", errors
+    )
+    envelope = _read_json_object(
+        root, "references/schemas/task-envelope.schema.json", errors
+    )
+    if visual is not None:
+        _validate_visual_media_schema(visual, errors)
+    if envelope is not None:
+        _validate_task_envelope_schema(envelope, errors)
 
     source = _read_json_object(
         root, "references/schemas/voice-source-decision.schema.json", errors
@@ -112,6 +161,25 @@ def validate_package(root: Path) -> list[str]:
     if timing is not None:
         _validate_voice_timing_schema(timing, errors)
     return errors
+
+
+def _release_fingerprint(root: Path) -> str:
+    """Return the deterministic content identity declared by the release manifest."""
+    digest = hashlib.sha256()
+    for relative in REQUIRED_FILES:
+        if relative == ".codex-plugin/plugin.json":
+            continue
+        path = root / relative
+        if not path.is_file():
+            continue
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        try:
+            digest.update(path.read_bytes())
+        except OSError:
+            digest.update(b"<unreadable>")
+        digest.update(b"\0")
+    return f"sha256:{digest.hexdigest()}"
 
 
 def _read_json_object(
@@ -166,6 +234,64 @@ def _validate_image_schema(schema: Mapping[str, Any], errors: list[str]) -> None
         errors.append("invalid:image-context-budget")
     if _mapping(properties.get("max_review_previews")).get("maximum") != 1:
         errors.append("invalid:image-preview-limit")
+
+
+def _validate_visual_media_schema(
+    schema: Mapping[str, Any], errors: list[str]
+) -> None:
+    properties = _mapping(schema.get("properties"))
+    scope = _mapping(properties.get("scope_identity"))
+    scope_properties = _mapping(scope.get("properties"))
+    kinds = _mapping(scope_properties.get("kind")).get("enum")
+    if (
+        kinds != VISUAL_MEDIA_SCOPE_KINDS
+        or _required_fields(scope) != {"kind", "id"}
+        or scope.get("additionalProperties") is not False
+    ):
+        errors.append("invalid:visual-media-scope-kinds")
+    definitions = _mapping(schema.get("$defs"))
+    if _mapping(definitions.get("uniqueSafeArtifactIds")).get("maxItems") != 16:
+        errors.append("invalid:visual-media-artifact-limit")
+    review_scope = _mapping(definitions.get("reviewScopeIds"))
+    if review_scope.get("minItems") != 1 or review_scope.get("maxItems") != 8:
+        errors.append("invalid:visual-media-review-scope-limit")
+    if (
+        _mapping(properties.get("historical_access")).get("const")
+        != "character-only"
+    ):
+        errors.append("invalid:visual-media-historical-access")
+    preview = _mapping(properties.get("max_review_previews"))
+    if preview.get("minimum") != 0 or preview.get("maximum") != 1:
+        errors.append("invalid:visual-media-preview-limit")
+    budget = _mapping(properties.get("context_budget_bytes"))
+    if budget.get("minimum") != 1 or budget.get("maximum") != 32768:
+        errors.append("invalid:visual-media-context-budget")
+    if (
+        _required_fields(schema)
+        != {
+            "scope_identity",
+            "allowed_artifact_ids",
+            "historical_access",
+            "continuity_exception",
+            "max_review_previews",
+            "context_budget_bytes",
+        }
+        or schema.get("additionalProperties") is not False
+    ):
+        errors.append("invalid:visual-media-context-shape")
+
+
+def _validate_task_envelope_schema(
+    schema: Mapping[str, Any], errors: list[str]
+) -> None:
+    properties = _mapping(schema.get("properties"))
+    constraints = _mapping(properties.get("constraints"))
+    constraint_properties = _mapping(constraints.get("properties"))
+    operations = _mapping(constraint_properties.get("visual_media_operation")).get(
+        "enum"
+    )
+    if operations != VISUAL_MEDIA_OPERATIONS:
+        errors.append("invalid:visual-media-operations")
 
 
 def _validate_voice_source_schema(

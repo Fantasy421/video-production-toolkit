@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 
+import scripts.validate_package as package_validation
 from scripts.validate_package import validate_package
 
 
@@ -14,6 +15,36 @@ ROOT = Path(__file__).parents[1]
 
 
 class PackageTests(unittest.TestCase):
+    ISOLATION_RELEASE_FILES = (
+        "references/policies/visual-media-isolation.md",
+        "references/schemas/task-envelope.schema.json",
+        "references/schemas/task-result.schema.json",
+        "references/schemas/visual-media-task-context.schema.json",
+        "scripts/build_review_pack.py",
+        "scripts/toolkit/image_context.py",
+        "scripts/toolkit/orchestrator.py",
+        "scripts/toolkit/tasks.py",
+        "scripts/toolkit/validation.py",
+        "scripts/toolkit/visual_media_context.py",
+        "scripts/verify_installation.py",
+        "skills/motion-director/SKILL.md",
+        "skills/scene-producer/SKILL.md",
+        "skills/storyboard-director/SKILL.md",
+        "skills/structural-validator/SKILL.md",
+        "skills/timeline-assembler/SKILL.md",
+        "skills/video-director/SKILL.md",
+        "skills/video-review-packager/SKILL.md",
+        "skills/visual-system-designer/SKILL.md",
+        "tests/test_end_to_end.py",
+        "tests/test_image_context.py",
+        "tests/test_package.py",
+        "tests/test_review_pack.py",
+        "tests/test_skill_contracts.py",
+        "tests/test_tasks.py",
+        "tests/test_validation.py",
+        "tests/test_visual_media_context.py",
+    )
+
     def task_envelope_validator(self):
         schema_root = ROOT / "references" / "schemas"
         envelope_path = schema_root / "task-envelope.schema.json"
@@ -361,6 +392,86 @@ class PackageTests(unittest.TestCase):
 
     def test_required_plugin_entrypoints_exist(self):
         self.assertEqual([], validate_package(ROOT))
+
+    def test_visual_isolation_release_is_versioned_and_fingerprinted(self):
+        """Catches a cache-reusing version or a release surface omitted from identity."""
+        manifest = json.loads(
+            (ROOT / ".codex-plugin/plugin.json").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual("0.1.4", manifest["version"])
+        self.assertEqual("0.1.4", package_validation.PLUGIN_VERSION)
+        self.assertRegex(
+            manifest.get("release_fingerprint", ""), r"^sha256:[0-9a-f]{64}$"
+        )
+        self.assertTrue(
+            set(self.ISOLATION_RELEASE_FILES).issubset(
+                set(getattr(package_validation, "REQUIRED_FILES", ()))
+            )
+        )
+
+    def test_each_visual_isolation_release_file_is_content_fingerprinted(self):
+        """Catches a present but changed schema, policy, runtime, Skill, or test."""
+        with TemporaryDirectory() as folder:
+            package = Path(folder) / "package"
+            shutil.copytree(
+                ROOT,
+                package,
+                ignore=shutil.ignore_patterns(
+                    ".git", ".worktrees", ".superpowers", "__pycache__", "*.pyc"
+                ),
+            )
+            for relative in self.ISOLATION_RELEASE_FILES:
+                path = package / relative
+                original = path.read_bytes()
+                with self.subTest(relative=relative, mutation="modified"):
+                    path.write_bytes(original + b"\nrelease-fingerprint-tamper\n")
+                    self.assertIn("invalid:release-fingerprint", validate_package(package))
+                path.write_bytes(original)
+                with self.subTest(relative=relative, mutation="deleted"):
+                    path.unlink()
+                    self.assertIn(f"missing:{relative}", validate_package(package))
+                path.write_bytes(original)
+
+    def test_visual_release_schema_enums_scope_and_budgets_are_exact(self):
+        """Catches a fingerprint refresh that broadens visual authority or budgets."""
+        with TemporaryDirectory() as folder:
+            package = Path(folder) / "package"
+            shutil.copytree(
+                ROOT,
+                package,
+                ignore=shutil.ignore_patterns(
+                    ".git", ".worktrees", ".superpowers", "__pycache__", "*.pyc"
+                ),
+            )
+            envelope_path = package / "references/schemas/task-envelope.schema.json"
+            envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+            envelope["properties"]["constraints"]["properties"][
+                "visual_media_operation"
+            ]["enum"].append("video-probe")
+            envelope_path.write_text(json.dumps(envelope), encoding="utf-8")
+
+            context_path = (
+                package / "references/schemas/visual-media-task-context.schema.json"
+            )
+            context = json.loads(context_path.read_text(encoding="utf-8"))
+            context["properties"]["scope_identity"]["properties"]["kind"][
+                "enum"
+            ].append("project")
+            context["properties"]["max_review_previews"]["maximum"] = 2
+            context["properties"]["context_budget_bytes"]["maximum"] = 65536
+            context["$defs"]["uniqueSafeArtifactIds"]["maxItems"] = 17
+            context["$defs"]["reviewScopeIds"]["maxItems"] = 9
+            context_path.write_text(json.dumps(context), encoding="utf-8")
+
+            errors = validate_package(package)
+
+            self.assertIn("invalid:visual-media-operations", errors)
+            self.assertIn("invalid:visual-media-scope-kinds", errors)
+            self.assertIn("invalid:visual-media-preview-limit", errors)
+            self.assertIn("invalid:visual-media-context-budget", errors)
+            self.assertIn("invalid:visual-media-artifact-limit", errors)
+            self.assertIn("invalid:visual-media-review-scope-limit", errors)
 
     def test_video_director_declares_required_routing_constraints(self):
         skill = (ROOT / "skills/video-director/SKILL.md").read_text(encoding="utf-8")

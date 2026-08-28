@@ -2,9 +2,12 @@
 """Verify plugin packaging, personal discovery, adapters, and recovery smoke."""
 
 import argparse
+import inspect
 import json
+import os
 import re
 import struct
+import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -24,6 +27,11 @@ from scripts.toolkit.orchestrator import (
 from scripts.toolkit.project_state import append_event, initialize_project
 from scripts.toolkit.tasks import create_task
 from scripts.toolkit.validation import validate_project
+from scripts.toolkit.visual_media_context import (
+    compact_visual_media_result,
+    project_legacy_image_context,
+    validate_result_envelope,
+)
 from scripts.toolkit.voice import (
     validate_authoritative_voice_bundle,
     validate_project_authoritative_voice_bundle,
@@ -252,6 +260,337 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
     }
 
 
+def run_installed_visual_media_smoke(root: Path) -> dict[str, Any]:
+    """Run the installed copy's public metadata runtime in an isolated process."""
+    root = Path(root).resolve()
+    verifier = root / "scripts" / "verify_installation.py"
+    if not verifier.is_file():
+        return {
+            "ok": False,
+            "blocker": {
+                "code": "installed-visual-smoke-missing",
+                "detail": str(verifier),
+            },
+        }
+    environment = dict(os.environ)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            str(verifier),
+            "--visual-media-smoke-root",
+            str(root),
+        ],
+        cwd=root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    try:
+        result = json.loads(completed.stdout)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {
+            "ok": False,
+            "blocker": {
+                "code": "installed-visual-smoke-invalid-output",
+                "detail": completed.stderr.strip() or completed.stdout.strip(),
+            },
+        }
+    if not isinstance(result, dict):
+        return {
+            "ok": False,
+            "blocker": {
+                "code": "installed-visual-smoke-invalid-output",
+                "detail": "smoke result must be an object",
+            },
+        }
+    if completed.returncode and result.get("ok"):
+        result = {
+            "ok": False,
+            "blocker": {
+                "code": "installed-visual-smoke-process-failed",
+                "detail": completed.stderr.strip(),
+            },
+        }
+    return result
+
+
+def _run_visual_media_smoke_in_process(root: Path) -> dict[str, Any]:
+    """Exercise only JSON-shaped public runtime boundaries from this package copy."""
+    root = Path(root).resolve()
+    checks = {
+        "child_only_routing": "not-run",
+        "none_laundering": "not-run",
+        "universal_scrub": "not-run",
+        "exact_scope": "not-run",
+        "legacy_projection": "not-run",
+        "one_preview_relay": "not-run",
+        "json_metadata_only": "not-run",
+    }
+    stable_errors: dict[str, str] = {}
+    try:
+        manifest = json.loads(
+            (root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+        plugin_version = manifest.get("version") if isinstance(manifest, dict) else None
+        if plugin_version != "0.1.4":
+            raise ValueError("installed visual smoke requires plugin version 0.1.4")
+        module_path = Path(inspect.getfile(validate_result_envelope)).resolve()
+        expected_module = (
+            root / "scripts" / "toolkit" / "visual_media_context.py"
+        ).resolve()
+        if module_path != expected_module:
+            raise ValueError("visual media runtime was not loaded from the installed cache")
+
+        def capture_error(name: str, action: Any, expected: str) -> None:
+            try:
+                action()
+            except (PermissionError, ValueError) as error:
+                stable_errors[name] = str(error)
+            else:
+                raise RuntimeError(f"{name} malformed record was accepted")
+            if stable_errors[name] != expected:
+                raise RuntimeError(
+                    f"{name} returned unstable error: {stable_errors[name]}"
+                )
+            checks[name] = "passed"
+
+        with TemporaryDirectory() as folder:
+            project = Path(folder) / "metadata-smoke"
+            initialize_project(project, "visual-isolation-smoke", "knowledge-video")
+
+            def artifact_record(
+                artifact_id: str, artifact_type: str, **metadata: Any
+            ) -> dict[str, Any]:
+                return json.loads(
+                    json.dumps(
+                        {
+                            "artifact_id": artifact_id,
+                            "type": artifact_type,
+                            "version": 1,
+                            "status": "approved",
+                            "parents": [],
+                            "path": f"metadata/{artifact_id}.json",
+                            **metadata,
+                        }
+                    )
+                )
+
+            for record in (
+                artifact_record("scene-one", "scene-contract"),
+                artifact_record("scene-two", "scene-contract"),
+                artifact_record(
+                    "current-frame",
+                    "scene-image",
+                    historical=False,
+                    path="metadata/current-frame",
+                ),
+            ):
+                create_artifact(project, record)
+
+            context = {
+                "scope_identity": {"kind": "scene-contract", "id": "scene-one"},
+                "allowed_artifact_ids": [],
+                "historical_access": "character-only",
+                "continuity_exception": None,
+                "max_review_previews": 1,
+                "context_budget_bytes": 32768,
+            }
+
+            def envelope(
+                task_id: str,
+                capability: str,
+                inputs: list[str],
+                operation: str,
+                *,
+                child: bool = False,
+                visual_context: Optional[dict[str, Any]] = None,
+            ) -> dict[str, Any]:
+                constraints: dict[str, Any] = {
+                    "visual_media_operation": operation
+                }
+                if child:
+                    constraints["execution_context"] = "isolated-child-agent"
+                if visual_context is not None:
+                    constraints["visual_media_context"] = visual_context
+                return json.loads(
+                    json.dumps(
+                        {
+                            "task_id": task_id,
+                            "capability": capability,
+                            "inputs": inputs,
+                            "adapter_preferences": ["chatcut"],
+                            "output_contract": "task-result-v1",
+                            "constraints": constraints,
+                        }
+                    )
+                )
+
+            valid = envelope(
+                "visual-child",
+                "visual.preview",
+                ["scene-one"],
+                "image-generate",
+                child=True,
+                visual_context=context,
+            )
+            create_task(project, valid)
+
+            capture_error(
+                "child_only_routing",
+                lambda: create_task(
+                    project,
+                    envelope(
+                        "visual-primary",
+                        "visual.preview",
+                        ["scene-one"],
+                        "image-generate",
+                        visual_context=context,
+                    ),
+                ),
+                "visual media task requires an isolated child agent",
+            )
+            capture_error(
+                "none_laundering",
+                lambda: create_task(
+                    project,
+                    envelope(
+                        "laundered-none",
+                        "project.manage",
+                        ["current-frame"],
+                        "none",
+                    ),
+                ),
+                "visual media task cannot declare operation none",
+            )
+            capture_error(
+                "exact_scope",
+                lambda: create_task(
+                    project,
+                    envelope(
+                        "neighboring-scene",
+                        "visual.preview",
+                        ["scene-one", "scene-two"],
+                        "image-generate",
+                        child=True,
+                        visual_context=context,
+                    ),
+                ),
+                "visual media task requires exactly one scene-contract scope and no neighbor",
+            )
+            capture_error(
+                "universal_scrub",
+                lambda: validate_result_envelope(
+                    {"task_id": "scrubbed", "checks": {"nested": {"payload": "x"}}}
+                ),
+                "visual media result must not contain an image payload or other media payload",
+            )
+
+            legacy = project_legacy_image_context(
+                {
+                    "constraints": {
+                        "image_operation": "image-inspect",
+                        "image_context": {
+                            "scope_identity": {
+                                "kind": "scene-contract",
+                                "id": "scene-one",
+                            },
+                            "allowed_image_artifact_ids": [],
+                            "allowed_character_pack_ids": [],
+                            "forbidden_scene_image_access": True,
+                            "max_review_previews": 1,
+                            "context_budget": 32768,
+                        },
+                    }
+                }
+            )
+            if legacy != context:
+                raise RuntimeError("legacy image authority projection changed")
+            checks["legacy_projection"] = "passed"
+
+            compact = compact_visual_media_result(
+                context,
+                {
+                    "artifact_ids": ["scene-output"],
+                    "paths": ["media/scene-output.json"],
+                    "media": {
+                        "kind": "video",
+                        "format": "metadata-only",
+                        "mime_type": "video/mp4",
+                        "width": 1920,
+                        "height": 1080,
+                        "duration_ms": 1000,
+                        "fps": 24,
+                        "readiness": "user-review",
+                        "checksum": "0123456789abcdef",
+                    },
+                    "checks": ["structure-only"],
+                    "issues": [],
+                    "summary": "metadata relay",
+                    "review_preview_path": "previews/scene-output.html",
+                },
+            )
+            if compact["review_preview_path"] != "previews/scene-output.html":
+                raise RuntimeError("one review preview was not relayed exactly")
+            checks["one_preview_relay"] = "passed"
+
+            visual_suffixes = {
+                ".apng",
+                ".avif",
+                ".avi",
+                ".bmp",
+                ".gif",
+                ".heic",
+                ".heif",
+                ".jpeg",
+                ".jpg",
+                ".m4v",
+                ".mkv",
+                ".mov",
+                ".mp4",
+                ".mpeg",
+                ".mpg",
+                ".png",
+                ".svg",
+                ".tif",
+                ".tiff",
+                ".webm",
+                ".webp",
+            }
+            created_visual_files = sorted(
+                path.relative_to(project).as_posix()
+                for path in project.rglob("*")
+                if path.is_file() and path.suffix.lower() in visual_suffixes
+            )
+            if created_visual_files:
+                raise RuntimeError(
+                    f"visual smoke created visual files: {created_visual_files}"
+                )
+            checks["json_metadata_only"] = "passed"
+    except (OSError, TypeError, ValueError, RuntimeError) as error:
+        return {
+            "ok": False,
+            "plugin_version": locals().get("plugin_version"),
+            "runtime_module_path": str(locals().get("module_path", "")),
+            "checks": checks,
+            "stable_errors": stable_errors,
+            "blocker": {
+                "code": "visual-media-isolation-smoke-failed",
+                "detail": str(error),
+            },
+        }
+    return {
+        "ok": True,
+        "plugin_version": plugin_version,
+        "runtime_module_path": str(module_path),
+        "checks": checks,
+        "stable_errors": stable_errors,
+    }
+
+
 def verify_installation(
     *,
     repo: Optional[Path] = None,
@@ -260,6 +599,7 @@ def verify_installation(
     forbid_skill: Optional[str] = None,
     check_external_skills: bool = False,
     require_resume_smoke: bool = False,
+    require_visual_media_smoke: bool = False,
     legacy_root: Optional[Path] = None,
 ) -> dict[str, Any]:
     """Return structured package, discovery, external, and smoke status."""
@@ -346,6 +686,15 @@ def verify_installation(
         if not smoke["ok"]:
             errors.append(f"resume smoke failed: {smoke.get('blocker')}")
 
+    visual_media_smoke: Optional[dict[str, Any]] = None
+    if require_visual_media_smoke:
+        visual_media_smoke = run_installed_visual_media_smoke(plugin_root)
+        if not visual_media_smoke["ok"]:
+            errors.append(
+                "visual media isolation smoke failed: "
+                f"{visual_media_smoke.get('blocker')}"
+            )
+
     return {
         "ok": not errors,
         "plugin": {
@@ -357,6 +706,7 @@ def verify_installation(
         },
         "external_adapters": external,
         "resume_smoke": smoke,
+        "visual_media_smoke": visual_media_smoke,
         "warnings": warnings,
         "errors": errors,
     }
@@ -1004,13 +1354,18 @@ def _artifact(
         metadata.setdefault("mime_type", "video/mp4")
     if artifact_type in {"media", "storyboard"}:
         metadata.setdefault("historical", False)
+    default_path = (
+        f"metadata/{artifact_id}"
+        if artifact_type in {"media", "storyboard"}
+        else f"metadata/{artifact_id}.json"
+    )
     return {
         "artifact_id": artifact_id,
         "type": artifact_type,
         "version": version,
         "status": "approved",
         "parents": list(parents or []),
-        "path": f"metadata/{artifact_id}.json",
+        "path": default_path,
         **metadata,
     }
 
@@ -1139,7 +1494,15 @@ def main() -> int:
     parser.add_argument("--forbid-skill")
     parser.add_argument("--check-external-skills", action="store_true")
     parser.add_argument("--require-resume-smoke", action="store_true")
+    parser.add_argument("--require-visual-media-smoke", action="store_true")
+    parser.add_argument(
+        "--visual-media-smoke-root", type=Path, help=argparse.SUPPRESS
+    )
     args = parser.parse_args()
+    if args.visual_media_smoke_root is not None:
+        result = _run_visual_media_smoke_in_process(args.visual_media_smoke_root)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ok"] else 1
     result = verify_installation(
         repo=args.repo,
         home=args.home,
@@ -1147,6 +1510,7 @@ def main() -> int:
         forbid_skill=args.forbid_skill,
         check_external_skills=args.check_external_skills,
         require_resume_smoke=args.require_resume_smoke,
+        require_visual_media_smoke=args.require_visual_media_smoke,
         legacy_root=args.legacy_root,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))

@@ -9,6 +9,7 @@ from unittest.mock import patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import scripts.verify_installation as installation_verifier
 from scripts.install_personal_plugin import install_personal_plugin
 from scripts.migration_audit import DISPOSITIONS
 from scripts.retire_legacy_skill import (
@@ -30,6 +31,7 @@ from scripts.toolkit.project_state import (
     initialize_project,
 )
 from scripts.toolkit.tasks import claim_task, complete_task, create_task
+from scripts.validate_package import _release_fingerprint
 from scripts.verify_installation import (
     _candidate as smoke_candidate,
     _run_resume_scenario,
@@ -250,13 +252,18 @@ def artifact(
         metadata.setdefault("mime_type", "video/mp4")
     if artifact_type in {"media", "storyboard"}:
         metadata.setdefault("historical", False)
+    default_path = (
+        f"metadata/{artifact_id}"
+        if artifact_type in {"media", "storyboard"}
+        else f"metadata/{artifact_id}.json"
+    )
     return {
         "artifact_id": artifact_id,
         "type": artifact_type,
         "version": version,
         "status": status,
         "parents": list(parents or []),
-        "path": path or f"metadata/{artifact_id}.json",
+        "path": path or default_path,
         **metadata,
     }
 
@@ -1350,31 +1357,31 @@ class CoordinatorTests(unittest.TestCase):
                 "contract-S02-v1",
                 SHIPPED_INVALIDATION,
             )
-            status = complete_task(
-                project,
-                {
-                    "task_id": "review-S02",
-                    "status": "succeeded",
-                    "inputs": ["scene-S02-v1"],
-                    "artifacts": ["review-S02-v1"],
-                    "checks": ["review-ready"],
-                    "warnings": [],
-                    "visual_media_handoff": {
-                        "artifact_ids": ["review-S02-v1"],
-                        "paths": ["artifacts/review-pack/review-S02-v1.json"],
-                        "media": {},
+            with self.assertRaisesRegex(ValueError, "current approved output"):
+                complete_task(
+                    project,
+                    {
+                        "task_id": "review-S02",
+                        "status": "succeeded",
+                        "inputs": ["scene-S02-v1"],
+                        "artifacts": ["review-S02-v1"],
                         "checks": ["review-ready"],
-                        "issues": [],
-                        "summary": "review ready",
-                        "review_preview_path": None,
+                        "warnings": [],
+                        "visual_media_handoff": {
+                            "artifact_ids": ["review-S02-v1"],
+                            "paths": ["artifacts/review-pack/review-S02-v1.json"],
+                            "media": {},
+                            "checks": ["review-ready"],
+                            "issues": [],
+                            "summary": "review ready",
+                            "review_preview_path": None,
+                        },
+                        **claim,
                     },
-                    **claim,
-                },
-            )
+                )
 
-            self.assertEqual("stale-result", status)
-            self.assertTrue(
-                (project / "tasks" / "stale-results" / "review-S02.json").is_file()
+            self.assertFalse(
+                (project / "tasks" / "stale-results" / "review-S02.json").exists()
             )
             self.assertFalse(
                 (project / "tasks" / "results" / "review-S02.json").exists()
@@ -1655,9 +1662,16 @@ class SmokeAndInstallationTests(unittest.TestCase):
             installed = install_personal_plugin(ROOT, home=home, mode="link")
             target = Path(installed["plugin_path"])
             catalog = json.loads(marketplace.read_text(encoding="utf-8"))
+            manifest = json.loads(
+                (ROOT / ".codex-plugin/plugin.json").read_text(encoding="utf-8")
+            )
 
             self.assertTrue(target.is_symlink())
             self.assertEqual(ROOT.resolve(), target.resolve())
+            self.assertEqual("0.1.4", installed.get("plugin_version"))
+            self.assertEqual(
+                manifest["release_fingerprint"], installed.get("release_fingerprint")
+            )
             self.assertEqual(
                 {"unrelated", "video-production-toolkit"},
                 {entry["name"] for entry in catalog["plugins"]},
@@ -1731,6 +1745,55 @@ class SmokeAndInstallationTests(unittest.TestCase):
 
             self.assertTrue(result["ok"], result)
             self.assertEqual(cache.resolve(), Path(result["plugin"]["root"]).resolve())
+
+    def test_host_cache_visual_isolation_smoke_uses_only_public_metadata_runtime(self):
+        """Catches repo imports or visual operations masking a broken installed boundary."""
+        runner = getattr(
+            installation_verifier, "run_installed_visual_media_smoke", None
+        )
+        self.assertIsNotNone(runner)
+        if runner is None:
+            return
+
+        with TemporaryDirectory() as folder:
+            home = Path(folder) / "home"
+            cache = activate_versioned_personal_plugin(home, ROOT)
+
+            smoke = runner(cache)
+            verified = verify_installation(
+                repo=None,
+                home=home,
+                require_visual_media_smoke=True,
+            )
+
+            self.assertTrue(smoke["ok"], smoke)
+            self.assertEqual("0.1.4", smoke["plugin_version"])
+            self.assertEqual(
+                cache.resolve(), Path(smoke["runtime_module_path"]).parents[2]
+            )
+            self.assertEqual(
+                {
+                    "child_only_routing": "passed",
+                    "none_laundering": "passed",
+                    "universal_scrub": "passed",
+                    "exact_scope": "passed",
+                    "legacy_projection": "passed",
+                    "one_preview_relay": "passed",
+                    "json_metadata_only": "passed",
+                },
+                smoke["checks"],
+            )
+            self.assertEqual(
+                {
+                    "child_only_routing": "visual media task requires an isolated child agent",
+                    "none_laundering": "visual media task cannot declare operation none",
+                    "universal_scrub": "visual media result must not contain an image payload or other media payload",
+                    "exact_scope": "visual media task requires exactly one scene-contract scope and no neighbor",
+                },
+                smoke["stable_errors"],
+            )
+            self.assertTrue(verified["ok"], verified)
+            self.assertEqual(smoke["checks"], verified["visual_media_smoke"]["checks"])
 
     def test_verifier_does_not_treat_marketplace_registration_as_host_installation(self):
         """Catches an available catalog source being reported as installed and active."""
@@ -1951,6 +2014,10 @@ class RetirementSafetyTests(unittest.TestCase):
                     "raise RuntimeError('broken installed orchestrator')\n",
                     encoding="utf-8",
                 )
+                manifest_path = root / ".codex-plugin" / "plugin.json"
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                manifest["release_fingerprint"] = _release_fingerprint(root)
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
             with self.assertRaisesRegex(RuntimeError, "installed"):
                 retire_legacy_skill(
