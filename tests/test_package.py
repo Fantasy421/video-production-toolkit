@@ -15,36 +15,6 @@ ROOT = Path(__file__).parents[1]
 
 
 class PackageTests(unittest.TestCase):
-    ISOLATION_RELEASE_FILES = (
-        "references/policies/visual-media-isolation.md",
-        "references/schemas/task-envelope.schema.json",
-        "references/schemas/task-result.schema.json",
-        "references/schemas/visual-media-task-context.schema.json",
-        "scripts/build_review_pack.py",
-        "scripts/toolkit/image_context.py",
-        "scripts/toolkit/orchestrator.py",
-        "scripts/toolkit/tasks.py",
-        "scripts/toolkit/validation.py",
-        "scripts/toolkit/visual_media_context.py",
-        "scripts/verify_installation.py",
-        "skills/motion-director/SKILL.md",
-        "skills/scene-producer/SKILL.md",
-        "skills/storyboard-director/SKILL.md",
-        "skills/structural-validator/SKILL.md",
-        "skills/timeline-assembler/SKILL.md",
-        "skills/video-director/SKILL.md",
-        "skills/video-review-packager/SKILL.md",
-        "skills/visual-system-designer/SKILL.md",
-        "tests/test_end_to_end.py",
-        "tests/test_image_context.py",
-        "tests/test_package.py",
-        "tests/test_review_pack.py",
-        "tests/test_skill_contracts.py",
-        "tests/test_tasks.py",
-        "tests/test_validation.py",
-        "tests/test_visual_media_context.py",
-    )
-
     def task_envelope_validator(self):
         schema_root = ROOT / "references" / "schemas"
         envelope_path = schema_root / "task-envelope.schema.json"
@@ -61,6 +31,25 @@ class PackageTests(unittest.TestCase):
             )
             registry = registry.with_resource(path.as_uri(), resource)
         return Draft202012Validator(envelope, registry=registry)
+
+    def copy_package(self, folder):
+        package = Path(folder) / "package"
+        shutil.copytree(
+            ROOT,
+            package,
+            ignore=shutil.ignore_patterns(
+                ".git", ".worktrees", ".superpowers", "__pycache__", "*.pyc"
+            ),
+        )
+        return package
+
+    def refresh_release_fingerprint(self, package):
+        manifest_path = package / ".codex-plugin/plugin.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["release_fingerprint"] = package_validation._release_fingerprint(
+            package
+        )
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     def test_visual_media_schema_is_closed_and_bounded(self):
         """Catches a visual-media task context that expands beyond its isolated scope."""
@@ -404,34 +393,118 @@ class PackageTests(unittest.TestCase):
         self.assertRegex(
             manifest.get("release_fingerprint", ""), r"^sha256:[0-9a-f]{64}$"
         )
-        self.assertTrue(
-            set(self.ISOLATION_RELEASE_FILES).issubset(
-                set(getattr(package_validation, "REQUIRED_FILES", ()))
-            )
+        self.assertIn(
+            ".codex-plugin/plugin.json", package_validation.REQUIRED_FILES
         )
 
-    def test_each_visual_isolation_release_file_is_content_fingerprinted(self):
-        """Catches a present but changed schema, policy, runtime, Skill, or test."""
+    def test_each_required_file_is_content_fingerprinted(self):
+        """Catches any required release file being present but changed or deleted."""
         with TemporaryDirectory() as folder:
-            package = Path(folder) / "package"
-            shutil.copytree(
-                ROOT,
-                package,
-                ignore=shutil.ignore_patterns(
-                    ".git", ".worktrees", ".superpowers", "__pycache__", "*.pyc"
-                ),
-            )
-            for relative in self.ISOLATION_RELEASE_FILES:
+            package = self.copy_package(folder)
+            for relative in package_validation.REQUIRED_FILES:
                 path = package / relative
                 original = path.read_bytes()
                 with self.subTest(relative=relative, mutation="modified"):
-                    path.write_bytes(original + b"\nrelease-fingerprint-tamper\n")
+                    if relative == ".codex-plugin/plugin.json":
+                        manifest = json.loads(original)
+                        manifest["description"] = "tampered release description"
+                        path.write_text(json.dumps(manifest), encoding="utf-8")
+                    else:
+                        path.write_bytes(original + b"\nrelease-fingerprint-tamper\n")
                     self.assertIn("invalid:release-fingerprint", validate_package(package))
                 path.write_bytes(original)
                 with self.subTest(relative=relative, mutation="deleted"):
                     path.unlink()
                     self.assertIn(f"missing:{relative}", validate_package(package))
                 path.write_bytes(original)
+
+    def test_manifest_non_fingerprint_fields_participate_in_release_identity(self):
+        """Catches manifest description drift hidden behind valid id/version fields."""
+        with TemporaryDirectory() as folder:
+            package = self.copy_package(folder)
+            manifest_path = package / ".codex-plugin/plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["description"] = "changed without refreshing release identity"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            self.assertIn("invalid:release-fingerprint", validate_package(package))
+
+    def test_weakened_visual_envelope_conditionals_fail_after_fingerprint_refresh(self):
+        """Catches none, active-operation, or structure authority becoming optional."""
+        cases = (
+            (
+                "none-context-ban",
+                lambda envelope: envelope["properties"]["constraints"]["allOf"].pop(3),
+                "invalid:visual-media-conditionals",
+            ),
+            (
+                "active-context-requirement",
+                lambda envelope: envelope["properties"]["constraints"]["allOf"][4][
+                    "if"
+                ]["properties"]["visual_media_operation"]["enum"].pop(),
+                "invalid:visual-media-conditionals",
+            ),
+            (
+                "structure-exclusive-branches",
+                lambda envelope: envelope["allOf"][1]["then"]["properties"][
+                    "constraints"
+                ]["oneOf"][0].pop("not"),
+                "invalid:structure-visual-authority",
+            ),
+        )
+        for name, mutate, expected in cases:
+            with self.subTest(name=name), TemporaryDirectory() as folder:
+                package = self.copy_package(folder)
+                path = package / "references/schemas/task-envelope.schema.json"
+                schema = json.loads(path.read_text(encoding="utf-8"))
+                mutate(schema)
+                path.write_text(json.dumps(schema), encoding="utf-8")
+                self.refresh_release_fingerprint(package)
+
+                errors = validate_package(package)
+
+                self.assertNotIn("invalid:release-fingerprint", errors)
+                self.assertIn(expected, errors)
+
+    def test_weakened_visual_scope_mapping_fails_after_fingerprint_refresh(self):
+        """Catches single-scope or review-batch IDs no longer using their exact defs."""
+        cases = (
+            (
+                "single-id",
+                lambda schema: schema["properties"]["scope_identity"]["allOf"][0][
+                    "then"
+                ]["properties"].update({"id": {}}),
+                "invalid:visual-media-scope-mapping",
+            ),
+            (
+                "review-id-list",
+                lambda schema: schema["properties"]["scope_identity"]["allOf"][1][
+                    "then"
+                ]["properties"].update({"id": {"$ref": "#/$defs/safeId"}}),
+                "invalid:visual-media-scope-mapping",
+            ),
+            (
+                "safe-id-definition",
+                lambda schema: schema["$defs"]["safeId"].update({"pattern": ".*"}),
+                "invalid:visual-media-safe-id",
+            ),
+        )
+        for name, mutate, expected in cases:
+            with self.subTest(name=name), TemporaryDirectory() as folder:
+                package = self.copy_package(folder)
+                path = (
+                    package
+                    / "references/schemas/visual-media-task-context.schema.json"
+                )
+                schema = json.loads(path.read_text(encoding="utf-8"))
+                mutate(schema)
+                path.write_text(json.dumps(schema), encoding="utf-8")
+                self.refresh_release_fingerprint(package)
+
+                errors = validate_package(package)
+
+                self.assertNotIn("invalid:release-fingerprint", errors)
+                self.assertIn(expected, errors)
 
     def test_visual_release_schema_enums_scope_and_budgets_are_exact(self):
         """Catches a fingerprint refresh that broadens visual authority or budgets."""
@@ -458,6 +531,7 @@ class PackageTests(unittest.TestCase):
             context["properties"]["scope_identity"]["properties"]["kind"][
                 "enum"
             ].append("project")
+            context["properties"]["historical_access"]["const"] = "all"
             context["properties"]["max_review_previews"]["maximum"] = 2
             context["properties"]["context_budget_bytes"]["maximum"] = 65536
             context["$defs"]["uniqueSafeArtifactIds"]["maxItems"] = 17
@@ -468,6 +542,7 @@ class PackageTests(unittest.TestCase):
 
             self.assertIn("invalid:visual-media-operations", errors)
             self.assertIn("invalid:visual-media-scope-kinds", errors)
+            self.assertIn("invalid:visual-media-historical-access", errors)
             self.assertIn("invalid:visual-media-preview-limit", errors)
             self.assertIn("invalid:visual-media-context-budget", errors)
             self.assertIn("invalid:visual-media-artifact-limit", errors)
@@ -520,10 +595,10 @@ class PackageTests(unittest.TestCase):
             manifest.pop("skills", None)
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
-            self.assertEqual(
-                ["invalid:plugin-name", "invalid:skills-path"],
-                validate_package(package),
-            )
+            errors = validate_package(package)
+            self.assertIn("invalid:plugin-name", errors)
+            self.assertIn("invalid:skills-path", errors)
+            self.assertIn("invalid:release-fingerprint", errors)
 
     def test_manifest_requires_the_voice_ready_patch_release(self):
         """Catches host cache reuse under the pre-fix package version."""

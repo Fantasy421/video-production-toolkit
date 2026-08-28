@@ -29,6 +29,74 @@ VISUAL_MEDIA_SCOPE_KINDS = [
     "character-asset-batch",
     "review-batch",
 ]
+VISUAL_MEDIA_CONDITIONALS = [
+    {
+        "if": {
+            "properties": {"visual_media_operation": {"const": "none"}},
+            "required": ["visual_media_operation"],
+        },
+        "then": {"not": {"required": ["visual_media_context"]}},
+    },
+    {
+        "if": {
+            "properties": {
+                "visual_media_operation": {"enum": VISUAL_MEDIA_OPERATIONS[1:]}
+            },
+            "required": ["visual_media_operation"],
+        },
+        "then": {"required": ["visual_media_context"]},
+    },
+    {
+        "if": {"required": ["visual_media_context"]},
+        "then": {"required": ["visual_media_operation"]},
+    },
+]
+STRUCTURE_VISUAL_AUTHORITY = {
+    "oneOf": [
+        {
+            "required": ["visual_media_operation"],
+            "properties": {
+                "visual_media_operation": {"enum": ["none", "image-inspect"]}
+            },
+            "not": {
+                "anyOf": [
+                    {"required": ["image_operation"]},
+                    {"required": ["image_context"]},
+                ]
+            },
+        },
+        {
+            "required": ["image_operation"],
+            "properties": {
+                "image_operation": {"enum": ["structure-only", "image-inspect"]}
+            },
+            "not": {
+                "anyOf": [
+                    {"required": ["visual_media_operation"]},
+                    {"required": ["visual_media_context"]},
+                ]
+            },
+        },
+    ]
+}
+VISUAL_MEDIA_SCOPE_MAPPING = [
+    {
+        "if": {
+            "properties": {
+                "kind": {"enum": ["scene-contract", "character-asset-batch"]}
+            },
+            "required": ["kind"],
+        },
+        "then": {"properties": {"id": {"$ref": "#/$defs/safeId"}}},
+    },
+    {
+        "if": {
+            "properties": {"kind": {"const": "review-batch"}},
+            "required": ["kind"],
+        },
+        "then": {"properties": {"id": {"$ref": "#/$defs/reviewScopeIds"}}},
+    },
+]
 REQUIRED_FILES = (
     ".codex-plugin/plugin.json",
     "agents/openai.yaml",
@@ -167,17 +235,26 @@ def _release_fingerprint(root: Path) -> str:
     """Return the deterministic content identity declared by the release manifest."""
     digest = hashlib.sha256()
     for relative in REQUIRED_FILES:
-        if relative == ".codex-plugin/plugin.json":
-            continue
         path = root / relative
         if not path.is_file():
             continue
         digest.update(relative.encode("utf-8"))
         digest.update(b"\0")
         try:
-            digest.update(path.read_bytes())
+            content = path.read_bytes()
+            if relative == ".codex-plugin/plugin.json":
+                manifest = json.loads(content)
+                if isinstance(manifest, dict):
+                    manifest = dict(manifest)
+                    manifest.pop("release_fingerprint", None)
+                    content = json.dumps(
+                        manifest, sort_keys=True, separators=(",", ":")
+                    ).encode("utf-8")
+            digest.update(content)
         except OSError:
             digest.update(b"<unreadable>")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            digest.update(b"<invalid-json>")
         digest.update(b"\0")
     return f"sha256:{digest.hexdigest()}"
 
@@ -249,22 +326,43 @@ def _validate_visual_media_schema(
         or scope.get("additionalProperties") is not False
     ):
         errors.append("invalid:visual-media-scope-kinds")
+    if scope.get("allOf") != VISUAL_MEDIA_SCOPE_MAPPING:
+        errors.append("invalid:visual-media-scope-mapping")
     definitions = _mapping(schema.get("$defs"))
-    if _mapping(definitions.get("uniqueSafeArtifactIds")).get("maxItems") != 16:
+    if definitions.get("safeId") != {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$",
+    }:
+        errors.append("invalid:visual-media-safe-id")
+    if definitions.get("uniqueSafeArtifactIds") != {
+        "type": "array",
+        "items": {"$ref": "#/$defs/safeId"},
+        "uniqueItems": True,
+        "maxItems": 16,
+    }:
         errors.append("invalid:visual-media-artifact-limit")
-    review_scope = _mapping(definitions.get("reviewScopeIds"))
-    if review_scope.get("minItems") != 1 or review_scope.get("maxItems") != 8:
+    if definitions.get("reviewScopeIds") != {
+        "type": "array",
+        "items": {"$ref": "#/$defs/safeId"},
+        "uniqueItems": True,
+        "minItems": 1,
+        "maxItems": 8,
+    }:
         errors.append("invalid:visual-media-review-scope-limit")
-    if (
-        _mapping(properties.get("historical_access")).get("const")
-        != "character-only"
-    ):
+    if properties.get("historical_access") != {"const": "character-only"}:
         errors.append("invalid:visual-media-historical-access")
-    preview = _mapping(properties.get("max_review_previews"))
-    if preview.get("minimum") != 0 or preview.get("maximum") != 1:
+    if properties.get("max_review_previews") != {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 1,
+    }:
         errors.append("invalid:visual-media-preview-limit")
-    budget = _mapping(properties.get("context_budget_bytes"))
-    if budget.get("minimum") != 1 or budget.get("maximum") != 32768:
+    if properties.get("context_budget_bytes") != {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 32768,
+    }:
         errors.append("invalid:visual-media-context-budget")
     if (
         _required_fields(schema)
@@ -292,6 +390,54 @@ def _validate_task_envelope_schema(
     )
     if operations != VISUAL_MEDIA_OPERATIONS:
         errors.append("invalid:visual-media-operations")
+    conditions = constraints.get("allOf")
+    visual_conditions = (
+        [
+            condition
+            for condition in conditions
+            if isinstance(condition, Mapping)
+            and _contains_key(condition, "visual_media_operation")
+            or isinstance(condition, Mapping)
+            and _contains_key(condition, "visual_media_context")
+        ]
+        if isinstance(conditions, list)
+        else []
+    )
+    if visual_conditions != VISUAL_MEDIA_CONDITIONALS:
+        errors.append("invalid:visual-media-conditionals")
+
+    top_level_conditions = schema.get("allOf")
+    structure_rules = (
+        [
+            condition
+            for condition in top_level_conditions
+            if _mapping(
+                _mapping(_mapping(condition).get("if")).get("properties")
+            ).get("capability")
+            == {"const": "structure.validate"}
+        ]
+        if isinstance(top_level_conditions, list)
+        else []
+    )
+    structure_authority = (
+        _mapping(
+            _mapping(
+                _mapping(_mapping(structure_rules[0]).get("then")).get("properties")
+            ).get("constraints")
+        )
+        if len(structure_rules) == 1
+        else {}
+    )
+    if structure_authority != STRUCTURE_VISUAL_AUTHORITY:
+        errors.append("invalid:structure-visual-authority")
+
+
+def _contains_key(value: Any, key: str) -> bool:
+    if isinstance(value, Mapping):
+        return key in value or any(_contains_key(item, key) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_key(item, key) for item in value)
+    return value == key
 
 
 def _validate_voice_source_schema(
