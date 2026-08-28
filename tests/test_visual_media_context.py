@@ -714,6 +714,36 @@ class VisualMediaContextTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 validate_compact_visual_media_handoff(result)
 
+    def test_intrinsic_handoff_matches_schema_path_and_issue_id_bounds(self):
+        """Catches runtime strings accepted outside the handoff schema's ASCII bounds."""
+        exact_id = "a" * 128
+        exact_path = "media/" + "a" * 250
+        exact_preview = "previews/" + "a" * 247
+        accepted = self.handoff(
+            artifact_ids=[exact_id],
+            paths=[exact_path],
+            issues=[{"code": exact_id, "artifact_id": exact_id}],
+            review_preview_path=exact_preview,
+        )
+        self.assertEqual(accepted, validate_compact_visual_media_handoff(accepted))
+
+        string_cases = (
+            ({"paths": ["media/scene one.mp4"]}, "space artifact path"),
+            ({"paths": ["media/场景.mp4"]}, "unicode artifact path"),
+            ({"review_preview_path": "previews/scene one.mp4"}, "space preview path"),
+            ({"review_preview_path": "previews/场景.mp4"}, "unicode preview path"),
+        )
+        dict_cases = (
+            ({"issues": [{"code": "a" * 129}]}, "oversized issue code"),
+            (
+                {"issues": [{"code": "issue-1", "artifact_id": "a" * 129}]},
+                "oversized issue artifact ID",
+            ),
+        )
+        for overrides, name in string_cases + dict_cases:
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                validate_compact_visual_media_handoff({**self.handoff(), **overrides})
+
     def test_universal_scrub_rejects_recursive_visual_payload_forms(self):
         """Catches non-visual task results relaying visual payloads or inspection history."""
         png_header = b"\x89PNG\r\n\x1a\n" + b"0" * 88

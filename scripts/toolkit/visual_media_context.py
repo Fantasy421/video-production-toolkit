@@ -17,6 +17,7 @@ from typing import Any, Optional
 SAFE_ID_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"
 )
+HANDOFF_PATH_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
 MIME_TYPE_RE = re.compile(
     r"[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*"
 )
@@ -759,8 +760,7 @@ def validate_compact_visual_media_handoff(result: Mapping[str, Any]) -> dict[str
 
     preview = result["review_preview_path"]
     if preview is not None and (
-        not _project_path(preview)
-        or len(preview) > 256
+        not _valid_handoff_path(preview)
         or not preview.startswith("previews/")
     ):
         raise ValueError("review_preview_path must be one project-contained preview path")
@@ -1018,9 +1018,9 @@ def _validate_compact_issues(value: Any) -> list[dict[str, Any]]:
     for issue in value:
         if not isinstance(issue, Mapping) or not set(issue) <= ISSUE_FIELDS:
             raise ValueError("issues must contain closed compact issue objects")
-        if not _safe_id(issue.get("code")):
+        if not _bounded_safe_id(issue.get("code")):
             raise ValueError("each visual media issue requires a stable code")
-        if "artifact_id" in issue and not _safe_id(issue["artifact_id"]):
+        if "artifact_id" in issue and not _bounded_safe_id(issue["artifact_id"]):
             raise ValueError("visual media issue Artifact ID must be safe")
         for field in ("message", "severity"):
             if field in issue:
@@ -1097,7 +1097,7 @@ def _id_list(
         raise ValueError(f"{label} requires at least {min_items} item")
     if max_items is not None and len(value) > max_items:
         raise ValueError(f"{label} exceeds its {max_items}-item limit")
-    if not all(_safe_id(item) and len(item) <= 128 for item in value):
+    if not all(_bounded_safe_id(item) for item in value):
         raise ValueError(f"{label} must contain safe Artifact IDs")
     if len(set(value)) != len(value):
         raise ValueError(f"{label} must not contain duplicates")
@@ -1115,7 +1115,7 @@ def _path_list(
         not isinstance(value, list)
         or len(value) > max_items
         or not all(
-            _project_path(path) and len(path) <= 256 and path.startswith(roots)
+            _valid_handoff_path(path) and path.startswith(roots)
             for path in value
         )
     ):
@@ -1143,6 +1143,14 @@ def _project_path(value: Any) -> bool:
     return all(part not in {"", ".", ".."} for part in PurePosixPath(value).parts)
 
 
+def _valid_handoff_path(value: Any) -> bool:
+    return (
+        _project_path(value)
+        and len(value) <= 256
+        and HANDOFF_PATH_RE.fullmatch(value) is not None
+    )
+
+
 def _path_is_bound_to_artifact(path: str, artifact_id: str) -> bool:
     parsed = PurePosixPath(path)
     return artifact_id in parsed.parts or parsed.stem == artifact_id
@@ -1150,6 +1158,10 @@ def _path_is_bound_to_artifact(path: str, artifact_id: str) -> bool:
 
 def _safe_id(value: Any) -> bool:
     return isinstance(value, str) and SAFE_ID_RE.fullmatch(value) is not None
+
+
+def _bounded_safe_id(value: Any) -> bool:
+    return _safe_id(value) and len(value) <= 128
 
 
 def _require_text(value: Any, label: str, *, max_length: int) -> None:
