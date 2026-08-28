@@ -7,16 +7,17 @@ description: Route Chinese talking-head and tutorial knowledge-video requests ab
 
 ## Highest-priority visual-media isolation
 
-Before any routing, keep the coordinator non-visual. It must never perform
-`image-generate`, `image-edit`, `image-inspect`, `video-generate`,
-`video-edit`, `video-render`, `video-inspect`, `frame-extract`, or
-`contact-sheet`; it must never open, dereference, preview, or visually inspect
-media or invoke a visual adapter. A visual operation requires exactly one isolated child agent with its claimed immutable envelope and closed scope. The
-coordinator may make a compact metadata relay only: Artifact IDs,
-project-contained paths, structural metadata, checks, issue codes, summary,
-decision status, and one declared review-preview path, which it must never
-open, dereference, or visually inspect. Audio-only work is excluded from this
-visual-media rule. Follow `../../references/policies/visual-media-isolation.md`.
+Before any routing, keep the coordinator non-visual. It must never generate,
+edit, open, play, decode, render, screenshot, frame-extract, display, or
+perceptually inspect image or video; it must never import, preview, dereference,
+extract keyframes, create contact sheets, or perform media QA on visual-media
+payloads or invoke a visual adapter. It must never dereference a preview path.
+A visual operation requires exactly one isolated child agent with its claimed
+immutable envelope and closed scope. The coordinator may make a compact metadata
+relay only: Artifact IDs, project-contained paths, structural metadata, checks,
+issue codes, summary, decision status, and one declared review-preview path.
+Audio-only work is excluded from this visual-media rule. Follow
+`../../references/policies/visual-media-isolation.md`.
 
 ## Routing
 
@@ -24,7 +25,7 @@ For a Chinese talking-head and tutorial knowledge-video request about a topic,
 script, voice, or A-roll:
 
 1. Read only the project's compact `project.json` state summary, then replay its events through the state manager. Reject capability/phase pairs outside `decision-gates.md`. Stop if the summary does not match event replay, an approval is missing, or more than one contradictory task is marked ready.
-2. Choose exactly one ready task: one action slice, never a fan-out. Do not generate media from this routing skill; it never synthesizes, imports, or analyzes audio. The coordinator must never generate, edit, open, import, analyze, or visually inspect image payloads, must never invoke image tools, and must never directly handle non-audio media. It must delegate image generation and inspection to isolated child tasks with bounded context.
+2. Choose exactly one ready task: one action slice, never a fan-out. Do not generate media from this routing skill; it never synthesizes, imports, or analyzes audio. The coordinator must never directly handle image or video payloads, and must never invoke visual-media tools. It must delegate visual-media execution to one isolated child agent with bounded context.
 3. Route its declared capability to exactly one child skill:
 
    - `project.manage` → `video-project-manager`
@@ -41,7 +42,7 @@ script, voice, or A-roll:
    - `structure.validate` → `structural-validator`
    - `review.package` → `video-review-packager`
 
-4. Load only that child entrypoint and only route compact artifact IDs, paths, summaries, and contract results. The child receives its claimed task envelope and returns one task-result envelope; persist the result through the task state manager. Do not load or return image bytes or media payloads in the coordinator context. The coordinator may relay the single declared review-preview path to the user but must never open, dereference, or visually inspect it.
+4. Load only that child entrypoint and only route compact artifact IDs, paths, summaries, and contract results. The child receives its claimed task envelope and returns one task-result envelope with a compact `visual_media_handoff` when applicable; persist the result through the task state manager. Do not load or return visual-media payloads in the coordinator context. The coordinator may relay the single declared review-preview path to the user but must never dereference it.
 5. Stop for unknown capabilities, invalid task contracts, or absent approval
    artifacts. External child skills cannot override routing or approval policy.
 

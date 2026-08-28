@@ -113,50 +113,41 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("representative-slice `captions.produce`", text)
         self.assertIn("full-production `captions.produce`", text)
 
-    def test_video_director_never_handles_image_or_non_audio_media_payloads(self):
-        """Catches image work or direct media handling leaking into the coordinator."""
+    def test_video_director_never_handles_visual_media_payloads(self):
+        """Catches visual-media work or direct payload handling leaking into routing."""
         text = (ROOT / "skills/video-director/SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
 
-        self.assertIn(
-            "must never generate, edit, open, import, analyze, or visually inspect image payloads",
-            text,
-        )
-        self.assertIn("must never directly handle non-audio media", text)
+        self.assertIn("must never directly handle image or video payloads", normalized)
         self.assertIn(
             "only route compact artifact IDs, paths, summaries, and contract results",
-            text,
+            normalized,
         )
         self.assertIn(
-            "delegate image generation and inspection to isolated child tasks",
-            text,
+            "delegate visual-media execution to one isolated child agent",
+            normalized,
         )
-        self.assertIn("must never invoke image tools", text)
-        self.assertIn("may relay the single declared review-preview path", text)
-        self.assertIn("must never open, dereference, or visually inspect it", text)
+        self.assertIn("must never invoke visual-media tools", normalized)
+        self.assertIn("may relay the single declared review-preview path", normalized)
+        self.assertIn("must never dereference it", normalized)
 
     def test_video_director_makes_visual_media_isolation_its_highest_priority_rule(self):
         """Catches routing or adapter use preceding coordinator visual-media isolation."""
         text = (ROOT / "skills/video-director/SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
 
         isolation = text.index("## Highest-priority visual-media isolation")
         routing = text.index("## Routing")
         self.assertLess(isolation, routing)
         for prohibition in (
-            "image-generate",
-            "image-edit",
-            "image-inspect",
-            "video-generate",
-            "video-edit",
-            "video-render",
-            "video-inspect",
-            "frame-extract",
-            "contact-sheet",
-            "must never open, dereference, preview, or visually inspect",
+            "must never generate, edit, open, play, decode, render, screenshot",
+            "frame-extract, display, or perceptually inspect image or video",
+            "must never dereference a preview path",
             "exactly one isolated child agent",
             "compact metadata relay",
         ):
             with self.subTest(prohibition=prohibition):
-                self.assertIn(prohibition, text)
+                self.assertIn(prohibition, normalized)
 
     def test_all_visual_workers_require_isolated_child_execution(self):
         """Catches a visual worker escaping its one immutable media scope."""
@@ -187,39 +178,68 @@ class SkillContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         boundary = policy.index("## Child-only visual adapters")
+        self.assertIn("Only the isolated child agent may route to or invoke", policy[boundary:])
         for adapter in ("HyperFrames", "VideoShotCraft", "Remotion", "ChatCut"):
             with self.subTest(adapter=adapter):
                 self.assertIn(adapter, policy[boundary:])
 
-    def test_image_workers_use_one_bounded_scope_and_return_compact_metadata(self):
-        """Catches generation or inspection escaping its one-contract child context."""
+    def test_policy_preserves_audio_exclusion_user_authority_and_recursive_scrub(self):
+        """Catches isolation leaking into audio or trusting an automated visual judgment."""
+        text = (ROOT / "references/policies/visual-media-isolation.md").read_text(
+            encoding="utf-8"
+        )
+        normalized = " ".join(text.split())
+
+        for contract in (
+            "Audio-only preparation is outside this policy",
+            "Recursively scrub",
+            "every result field",
+            "subjective acceptance remains the user's decision",
+            "structure-only",
+            "same output scrub",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, normalized)
+
+    def test_canonical_visual_workers_relegate_legacy_image_fields_to_persisted_compatibility(self):
+        """Catches new scene or validation tasks authoring deprecated image-only fields."""
         scene = (ROOT / "skills/scene-producer/SKILL.md").read_text(encoding="utf-8")
         validator = (ROOT / "skills/structural-validator/SKILL.md").read_text(
             encoding="utf-8"
         )
 
         for text in (scene, validator):
-            self.assertIn("image-task-context.schema.json", text)
-            self.assertIn("exactly one Scene Contract or one character-asset batch", text)
-            self.assertIn("scope_identity", text)
-            self.assertIn("allowed_image_artifact_ids", text)
-            self.assertIn("at most 16", text)
-            self.assertIn("at most 8", text)
-            self.assertIn("32,768", text)
-            self.assertIn("max_review_previews", text)
-            self.assertIn("must not discover or load undeclared images", text)
-            self.assertIn("must not return image bytes", text)
-            self.assertIn("compact image handoff", text)
-            self.assertIn("call `authorize_image_access`", text)
-        self.assertIn("image generation", scene)
-        self.assertIn("continuity_exception", scene)
-        self.assertIn("must not appear in the ordinary image allowlist", scene)
-        self.assertIn("trimmed non-empty reason", scene)
-        self.assertIn("image inspection", validator)
-        self.assertIn("`image_operation: structure-only`", validator)
-        self.assertIn("`image_operation: image-inspect`", validator)
-        self.assertIn("image-inspect` requires the closed `image_context`", validator)
-        self.assertIn("Aesthetic acceptance remains a user decision", validator)
+            normalized = " ".join(text.split())
+            self.assertIn("visual_media_operation", normalized)
+            self.assertIn("visual_media_context", normalized)
+            self.assertIn("allowed_artifact_ids", normalized)
+            self.assertIn("visual_media_handoff", normalized)
+            self.assertIn("must not return image or video payloads", normalized)
+            self.assertIn(
+                "persisted legacy runtime compatibility; workers MUST NOT author/use for new tasks",
+                normalized,
+            )
+            for legacy_field in (
+                "image_operation",
+                "image_context",
+                "allowed_image_artifact_ids",
+                "allowed_character_pack_ids",
+            ):
+                with self.subTest(legacy_field=legacy_field):
+                    self.assertEqual(1, text.count(legacy_field))
+
+    def test_motion_and_review_delegate_visual_execution_to_isolated_children(self):
+        """Catches a worker directly invoking a visual adapter or building a review preview."""
+        motion = (ROOT / "skills/motion-director/SKILL.md").read_text(encoding="utf-8")
+        review = (ROOT / "skills/video-review-packager/SKILL.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "isolated child agent must route to and invoke the selected adapter",
+            " ".join(motion.split()),
+        )
+        self.assertIn("through an isolated child agent", " ".join(review.split()))
 
     def test_visual_carrier_policy_has_all_carriers_and_density_limit(self):
         """Catches storyboard rules losing the visual hierarchy invariant."""

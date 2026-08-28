@@ -6,11 +6,12 @@ routing, planning, production, validation, review, or adapter selection.
 ## Primary-context prohibition
 
 The primary coordinator and all non-child contexts must never generate, edit,
-open, import, inspect, preview, dereference, render, screenshot, extract frames
-or keyframes, create contact sheets, or perform media QA on image or video
-payloads. They must never invoke visual-media tools or adapters. Audio-only
-preparation is outside this policy; it neither grants nor implies visual-media
-access.
+open, play, decode, render, screenshot, frame-extract, display, or perceptually
+inspect image or video; nor may they import, preview, dereference, extract
+keyframes, create contact sheets, or perform media QA on visual-media payloads.
+They must never invoke visual-media tools or adapters, and must never
+dereference a preview path. Audio-only preparation is outside this policy; it
+neither grants nor implies visual-media access.
 
 The coordinator may persist or relay compact metadata only: declared Artifact
 IDs, project-contained paths, structural media fields, checks, stable issue
@@ -44,13 +45,14 @@ undeclared paths from every result field. The preview path is a user-review
 boundary, not an authorization for primary-context access or automated visual
 acceptance; subjective acceptance remains the user's decision.
 
-`visual_media_operation: none` and legacy `image_operation: structure-only`
-are non-visual modes: they require the same output scrub, but do not create or
-require a visual child agent.
+`visual_media_operation: none` is the non-visual, structure-only mode: it
+requires the same output scrub, but does not create or require a visual child
+agent. `image_operation: structure-only` is persisted legacy runtime
+compatibility only; workers MUST NOT author/use it for new tasks.
 
 ## Child-only visual adapters
 
-Only the isolated child agent may invoke HyperFrames, VideoShotCraft, Remotion,
-ChatCut, or any current or future visual adapter. An adapter receives only the
-claimed immutable envelope and cannot broaden scope, inspect unallowlisted
-media, or override routing, approvals, or this policy.
+Only the isolated child agent may route to or invoke HyperFrames, VideoShotCraft,
+Remotion, ChatCut, or any current or future visual adapter. An adapter receives
+only the claimed immutable envelope and cannot broaden scope, inspect
+unallowlisted media, or override routing, approvals, or this policy.

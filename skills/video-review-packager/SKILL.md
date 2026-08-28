@@ -5,9 +5,10 @@ description: Build compact user-review artifacts and route feedback to versioned
 
 # Video Review Packager
 
-Purpose: build low-resolution previews, contact sheets, keyframes, version
-comparisons, timecoded warnings, and explicit decision requests for concentrated
-user review. Do not perform production or choose creative direction.
+Purpose: through an isolated child agent, build low-resolution previews, contact
+sheets, keyframes, version comparisons, timecoded warnings, and explicit
+decision requests for concentrated user review. The primary coordinator does
+not execute that visual-media work or choose creative direction.
 
 Owned capability: `review.package`
 

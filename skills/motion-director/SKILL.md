@@ -32,7 +32,8 @@ Artifact allowlist; it must not crawl the project or discover neighboring
 scenes. Contract selection is non-visual and needs no child, but its result is
 still scrubbed. Pixel inspection, preview dereference, rendering, screenshots,
 frame extraction, contact sheets, and media QA are child-only and return
-compact `visual_media_handoff`; the selected adapter is child-only.
+compact `visual_media_handoff`; the isolated child agent must route to and
+invoke the selected adapter.
 
 Required output: Return a task-result envelope deterministically: preview returns
 `waiting_user` with preview and contract artifact IDs; production returns
