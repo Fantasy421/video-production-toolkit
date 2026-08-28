@@ -1345,8 +1345,8 @@ class SmokeAndInstallationTests(unittest.TestCase):
             self.assertEqual("migration-audit-required", blocked["blocker"]["code"])
 
     def test_resume_smoke_requires_voice_before_representative_slice(self):
-        """Catches a smoke report that omits the real voice readiness evidence."""
-        result = run_smoke(ROOT, legacy_root=LEGACY)
+        """Catches a smoke report that omits voice evidence after legacy retirement."""
+        result = run_smoke(ROOT)
 
         self.assertTrue(result["ok"], result)
         self.assertEqual("passed", result["checks"]["direction_ready_blocks_production"])
