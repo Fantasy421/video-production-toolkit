@@ -98,9 +98,7 @@ VOICE_TIMING_CAPABILITIES = frozenset(
 
 def create_task(root: Path, envelope: dict[str, Any]) -> Path:
     """Persist one immutable, schema-shaped task envelope."""
-    _validate_envelope(envelope)
-    if {"image_operation", "image_context"} & envelope["constraints"].keys():
-        raise ValueError("legacy image authority is read-only")
+    _validate_current_envelope(envelope)
     root = project_root(root)
     storage_directory(root, "events", create=True)
     with _state_lock(root, exclusive=False):
@@ -125,7 +123,7 @@ def voice_timing_input_is_current(
     defects (missing, stale, estimated, or mismatched voice lineage) make the
     task ineligible instead of weakening the immutable input contract.
     """
-    _validate_envelope(envelope)
+    _validate_envelope_shape(envelope)
     if envelope["capability"] not in VOICE_TIMING_CAPABILITIES:
         return True
     if root is None:
@@ -527,7 +525,7 @@ def _read_envelope(root: Path, task_id: str) -> dict[str, Any]:
     if not path.is_file():
         raise ValueError(f"task does not exist: {task_id}")
     envelope = _read_json_object(path, "task envelope")
-    _validate_envelope(envelope)
+    _validate_persisted_envelope(envelope)
     if envelope["task_id"] != task_id:
         raise ValueError("persisted task_id does not match its requested task path")
     return envelope
@@ -725,7 +723,7 @@ def _read_retry_ledger(path: Path, envelope: dict[str, Any]) -> dict[str, Any]:
     return ledger
 
 
-def _validate_envelope(envelope: dict[str, Any]) -> None:
+def _validate_envelope_shape(envelope: dict[str, Any]) -> None:
     if not isinstance(envelope, dict):
         raise ValueError("task envelope must be an object")
     _reject_unknown_keys(envelope, ENVELOPE_KEYS, "task envelope")
@@ -739,8 +737,35 @@ def _validate_envelope(envelope: dict[str, Any]) -> None:
     _validate_adapters(envelope["adapter_preferences"])
     if not isinstance(envelope["constraints"], dict):
         raise ValueError("constraints must be an object")
+
+
+def _validate_current_envelope(envelope: dict[str, Any]) -> None:
+    """Validate a newly minted envelope without granting deprecated authority."""
+    _validate_envelope_shape(envelope)
+    constraints = envelope["constraints"]
+    if {"image_operation", "image_context"} & constraints.keys():
+        raise ValueError("legacy image authority is read-only")
+    validate_image_task_constraints(constraints)
+
+
+def _validate_persisted_envelope(envelope: dict[str, Any]) -> None:
+    """Validate current records or project already-persisted legacy image records."""
+    _validate_envelope_shape(envelope)
+    constraints = envelope["constraints"]
+    has_current = bool(
+        {"visual_media_operation", "visual_media_context"} & constraints.keys()
+    )
+    has_legacy = bool({"image_operation", "image_context"} & constraints.keys())
+    if has_current and has_legacy:
+        raise ValueError("task must not mix visual media and legacy image authority")
     validate_image_task_constraints(
-        envelope["constraints"], capability=envelope["capability"]
+        constraints,
+        capability=(
+            envelope["capability"]
+            if has_legacy
+            or (envelope["capability"] == "structure.validate" and not has_current)
+            else None
+        ),
     )
 
 

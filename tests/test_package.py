@@ -79,6 +79,21 @@ class PackageTests(unittest.TestCase):
             },
             conditionals,
         )
+        structure_rule = next(
+            rule
+            for rule in envelope["allOf"]
+            if rule["if"].get("properties", {}).get("capability")
+            == {"const": "structure.validate"}
+        )
+        self.assertEqual(
+            {
+                "required": ["visual_media_operation"],
+                "properties": {
+                    "visual_media_operation": {"enum": ["none", "image-inspect"]}
+                },
+            },
+            structure_rule["then"]["properties"]["constraints"],
+        )
         self.assertIn(
             {
                 "if": {

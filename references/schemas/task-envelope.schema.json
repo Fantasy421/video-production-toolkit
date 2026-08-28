@@ -138,9 +138,9 @@
       "then": {
         "properties": {
           "constraints": {
-            "required": ["image_operation"],
+            "required": ["visual_media_operation"],
             "properties": {
-              "image_operation": {"enum": ["structure-only", "image-inspect"]}
+              "visual_media_operation": {"enum": ["none", "image-inspect"]}
             }
           }
         }

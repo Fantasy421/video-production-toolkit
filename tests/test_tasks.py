@@ -939,8 +939,8 @@ class TaskTests(unittest.TestCase):
                 },
             )
 
-    def test_image_operation_conditionally_requires_closed_context(self):
-        """Catches image work starting without bounded immutable authority."""
+    def test_persisted_legacy_image_operation_requires_closed_context(self):
+        """Catches persisted legacy image work losing its bounded authority checks."""
         missing_context = {
             **self.envelope,
             "task_id": "image-inspect-without-context",
@@ -949,8 +949,9 @@ class TaskTests(unittest.TestCase):
                 "image_operation": "image-inspect",
             },
         }
+        self.persist_legacy_envelope(missing_context)
         with self.assertRaisesRegex(ValueError, "image_context"):
-            create_task(self.root, missing_context)
+            claim_task(self.root, missing_context["task_id"], "worker-a")
 
         context_without_operation = {
             **self.envelope,
@@ -960,8 +961,9 @@ class TaskTests(unittest.TestCase):
                 "image_context": self.image_context(),
             },
         }
+        self.persist_legacy_envelope(context_without_operation)
         with self.assertRaisesRegex(ValueError, "image_operation"):
-            create_task(self.root, context_without_operation)
+            claim_task(self.root, context_without_operation["task_id"], "worker-a")
 
         null_context = {
             **self.envelope,
@@ -972,34 +974,76 @@ class TaskTests(unittest.TestCase):
                 "image_context": None,
             },
         }
+        self.persist_legacy_envelope(null_context)
         with self.assertRaisesRegex(ValueError, "image_context"):
-            create_task(self.root, null_context)
+            claim_task(self.root, null_context["task_id"], "worker-a")
 
-    def test_structure_validation_requires_an_exact_image_operation(self):
-        """Catches structural validation silently acquiring image-inspection authority."""
+    def test_current_structure_validation_accepts_visual_media_none(self):
+        """Catches current structure-only validation being forced onto legacy authority."""
+        envelope = {
+            **self.non_visual_envelope(task_id="current-structure-only"),
+            "capability": "structure.validate",
+            "output_contract": "validation-report-v1",
+        }
+
+        self.assertEqual(
+            self.root / "tasks" / "current-structure-only.json",
+            create_task(self.root, envelope),
+        )
+        self.assertEqual(
+            "worker-a",
+            claim_task(self.root, envelope["task_id"], "worker-a")["worker_id"],
+        )
+
+    def test_current_structure_validation_accepts_isolated_image_inspect(self):
+        """Catches current image inspection being forced onto legacy image fields."""
+        self.create_image_context_artifacts()
+        envelope = self.visual_input_envelope(
+            task_id="current-structure-image-inspect",
+            artifact_id="scene-S03-v1",
+            operation="image-inspect",
+        )
+        envelope["capability"] = "structure.validate"
+        envelope["output_contract"] = "validation-report-v1"
+
+        self.assertEqual(
+            self.root / "tasks" / "current-structure-image-inspect.json",
+            create_task(self.root, envelope),
+        )
+        self.assertEqual(
+            "worker-a",
+            claim_task(self.root, envelope["task_id"], "worker-a")["worker_id"],
+        )
+
+    def test_persisted_legacy_structure_validation_requires_exact_image_operation(self):
+        """Catches legacy structural validation silently changing image authority."""
         base = {
             **self.envelope,
             "capability": "structure.validate",
             "constraints": self.legacy_constraints(),
         }
+        missing_operation = {**base, "task_id": "structure-mode-missing"}
+        self.persist_legacy_envelope(missing_operation)
         with self.assertRaisesRegex(ValueError, "image_operation"):
-            create_task(self.root, {**base, "task_id": "structure-mode-missing"})
+            claim_task(self.root, missing_operation["task_id"], "worker-a")
 
         legacy_inspect = {
             **base,
             "task_id": "structure-mode-legacy",
             "constraints": {**base["constraints"], "image_operation": "inspect"},
         }
+        self.persist_legacy_envelope(legacy_inspect)
         with self.assertRaisesRegex(ValueError, "image_operation"):
-            create_task(self.root, legacy_inspect)
+            claim_task(self.root, legacy_inspect["task_id"], "worker-a")
 
         image_without_context = {
             **base,
             "task_id": "structure-image-without-context",
             "constraints": {**base["constraints"], "image_operation": "image-inspect"},
         }
+        self.persist_legacy_envelope(image_without_context)
         with self.assertRaisesRegex(ValueError, "image_context"):
-            create_task(self.root, image_without_context)
+            claim_task(self.root, image_without_context["task_id"], "worker-a")
 
         structure_with_context = {
             **base,
@@ -1010,8 +1054,9 @@ class TaskTests(unittest.TestCase):
                 "image_context": self.image_context(),
             },
         }
+        self.persist_legacy_envelope(structure_with_context)
         with self.assertRaisesRegex(ValueError, "structure-only"):
-            create_task(self.root, structure_with_context)
+            claim_task(self.root, structure_with_context["task_id"], "worker-a")
 
         structure_only = {
             **base,

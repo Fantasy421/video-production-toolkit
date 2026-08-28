@@ -457,8 +457,15 @@ class ImageSchemaTests(unittest.TestCase):
             == "structure.validate"
         )
         self.assertEqual(
-            ["image_operation"],
+            ["visual_media_operation"],
             structure_rule["then"]["properties"]["constraints"]["required"],
+        )
+        self.assertEqual(
+            {"none", "image-inspect"},
+            set(
+                structure_rule["then"]["properties"]["constraints"]["properties"]
+                ["visual_media_operation"]["enum"]
+            ),
         )
         structure_only_rule = next(
             rule
