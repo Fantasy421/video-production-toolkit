@@ -565,6 +565,43 @@ class TaskTests(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "exactly one scene-contract"):
             create_task(self.root, envelope)
 
+    def test_character_batch_scope_allows_explicit_member_packs(self):
+        """Catches an allowlisted member pack being mistaken for a second scope."""
+        self.create_artifact("character-batch-a", "character-asset-batch", 1)
+        self.create_artifact(
+            "member-pack-a",
+            "character-pack",
+            1,
+            identity_provenance="approved-member-v1",
+        )
+        envelope = {
+            **self.envelope,
+            "task_id": "character-scope-with-member-pack",
+            "inputs": [
+                *(artifact_id for artifact_id in self.envelope["inputs"] if artifact_id != "scene-contract-S03-v4"),
+                "character-batch-a",
+                "member-pack-a",
+            ],
+            "constraints": {
+                **self.envelope["constraints"],
+                "image_operation": "image-inspect",
+                "image_context": {
+                    **self.image_context(),
+                    "scope_identity": {
+                        "kind": "character-asset-batch",
+                        "id": "character-batch-a",
+                    },
+                    "allowed_character_pack_ids": ["member-pack-a"],
+                    "continuity_exception": None,
+                },
+            },
+        }
+
+        self.assertEqual(
+            self.root / "tasks" / "character-scope-with-member-pack.json",
+            create_task(self.root, envelope),
+        )
+
     def test_character_batch_image_scope_rejects_other_batch_or_pack_inputs(self):
         """Catches one character scope silently authorizing another batch or pack."""
         self.create_artifact("character-batch-a", "character-asset-batch", 1)
@@ -578,7 +615,7 @@ class TaskTests(unittest.TestCase):
                     **self.envelope,
                     "task_id": f"character-scope-with-{extra_scope_type}",
                     "inputs": [
-                        *self.envelope["inputs"],
+                        *(artifact_id for artifact_id in self.envelope["inputs"] if artifact_id != "scene-contract-S03-v4"),
                         "character-batch-a",
                         extra_scope_id,
                     ],
@@ -601,6 +638,83 @@ class TaskTests(unittest.TestCase):
                     PermissionError, "exactly one character-asset-batch"
                 ):
                     create_task(self.root, envelope)
+
+    def test_scene_contract_scope_rejects_a_character_batch_input(self):
+        """Catches a scene scope gaining an independent character batch."""
+        self.create_image_context_artifacts()
+        self.create_artifact("character-batch-a", "character-asset-batch", 1)
+        envelope = {
+            **self.envelope,
+            "task_id": "scene-scope-with-character-batch",
+            "inputs": [
+                *self.envelope["inputs"],
+                "scene-S03-v1",
+                "host-pack-v1",
+                "character-batch-a",
+            ],
+            "constraints": {
+                **self.envelope["constraints"],
+                "image_operation": "image-inspect",
+                "image_context": self.image_context(),
+            },
+        }
+
+        with self.assertRaisesRegex(PermissionError, "exactly one scene-contract"):
+            create_task(self.root, envelope)
+
+    def test_character_batch_scope_rejects_a_scene_contract_input(self):
+        """Catches a character scope gaining an independent Scene Contract."""
+        self.create_artifact("character-batch-a", "character-asset-batch", 1)
+        self.create_artifact("scene-contract-S04-v1", "scene-contract", 1)
+        envelope = {
+            **self.envelope,
+            "task_id": "character-scope-with-scene-contract",
+            "inputs": [
+                *(artifact_id for artifact_id in self.envelope["inputs"] if artifact_id != "scene-contract-S03-v4"),
+                "character-batch-a",
+                "scene-contract-S04-v1",
+            ],
+            "constraints": {
+                **self.envelope["constraints"],
+                "image_operation": "image-inspect",
+                "image_context": {
+                    **self.image_context(),
+                    "scope_identity": {
+                        "kind": "character-asset-batch",
+                        "id": "character-batch-a",
+                    },
+                    "allowed_character_pack_ids": [],
+                    "continuity_exception": None,
+                },
+            },
+        }
+
+        with self.assertRaisesRegex(
+            PermissionError, "exactly one character-asset-batch"
+        ):
+            create_task(self.root, envelope)
+
+    def test_claim_revalidates_exact_image_scope_inputs(self):
+        """Catches a persisted image task gaining another scope before claim."""
+        self.create_image_context_artifacts()
+        envelope = {
+            **self.envelope,
+            "task_id": "claim-rechecks-image-scope",
+            "inputs": [*self.envelope["inputs"], "scene-S03-v1", "host-pack-v1"],
+            "constraints": {
+                **self.envelope["constraints"],
+                "image_operation": "image-inspect",
+                "image_context": self.image_context(),
+            },
+        }
+        task_path = create_task(self.root, envelope)
+        self.create_artifact("scene-contract-S04-v1", "scene-contract", 1)
+        persisted = json.loads(task_path.read_text(encoding="utf-8"))
+        persisted["inputs"].append("scene-contract-S04-v1")
+        task_path.write_text(json.dumps(persisted), encoding="utf-8")
+
+        with self.assertRaisesRegex(PermissionError, "exactly one scene-contract"):
+            claim_task(self.root, envelope["task_id"], "worker-a")
 
     def test_image_bearing_inputs_cannot_make_the_context_opt_in(self):
         """Catches ordinary task inputs exposing undeclared neighboring images."""

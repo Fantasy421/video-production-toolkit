@@ -48,3 +48,33 @@ needed.
 Changed files are `scripts/toolkit/image_context.py` and
 `tests/test_tasks.py`, plus this report. No image files were opened,
 generated, or inspected.
+
+## Correction Round 1
+
+The initial cardinality check treated every `character-pack` input as a
+character scope. That conflated explicitly authorized member/reference packs
+with an independent character scope. The bounded,
+schema-required `allowed_character_pack_ids` list is now used as the declared
+member role: a listed approved pack is an authorized member and is excluded
+from character scope-candidate counting. An unlisted character pack remains
+an independent candidate and is rejected alongside any extra
+`character-asset-batch`.
+
+Cardinality is now global across the two families. A scene-contract scope
+rejects every declared character-asset-batch, and a character-asset-batch
+scope rejects every declared Scene Contract. This preserves one scope even
+when there are no duplicate candidates within the selected family.
+
+### TDD Evidence
+
+- RED: a valid character batch with an explicitly allowlisted member pack
+  failed as a second scope; scene-plus-batch and batch-plus-scene contexts
+  both incorrectly passed real `create_task` authorization.
+- GREEN: the five focused runtime regressions passed, including a
+  `claim_task` revalidation regression for a persisted envelope that gains a
+  second scene scope before claim.
+- Focused: `python -m unittest tests.test_image_context tests.test_tasks tests.test_package -v` — 87 passed.
+
+No schema change was needed: the existing closed image-context schema already
+defines the member-role field as a unique, safe, maximum-eight list. The
+runtime applies its role semantics when relating that context to task inputs.
