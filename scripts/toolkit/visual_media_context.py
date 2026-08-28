@@ -20,6 +20,7 @@ SAFE_ID_RE = re.compile(
 MIME_TYPE_RE = re.compile(
     r"[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*"
 )
+CHECKSUM_RE = re.compile(r"[A-Fa-f0-9]{8,128}")
 BASE64_TOKEN_RE = re.compile(
     r"(?<![A-Za-z0-9+/=])"
     r"([A-Za-z0-9+/]+(?:[ \t\r\n]+[A-Za-z0-9+/]+)*={0,2})"
@@ -224,7 +225,6 @@ MEDIA_METADATA_FIELDS = frozenset(
         "fps",
         "readiness",
         "checksum",
-        "sha256",
     }
 )
 ISSUE_FIELDS = frozenset({"code", "artifact_id", "message", "severity"})
@@ -688,42 +688,15 @@ def compact_visual_media_result(
 ) -> dict[str, Any]:
     """Return one closed, bounded, metadata-only visual-media handoff."""
     normalized_context = validate_visual_media_context(context)
-    if not isinstance(result, Mapping):
-        raise ValueError("visual media handoff must be an object")
-    _validate_scrubbed_json(result, budget=VISUAL_RESULT_BUDGET_BYTES)
-    fields = set(result)
-    missing = HANDOFF_FIELDS - fields
-    unknown = fields - HANDOFF_FIELDS
-    if missing:
-        raise ValueError(
-            "visual_media_handoff is missing fields: " + ", ".join(sorted(missing))
-        )
-    if unknown:
-        raise ValueError(
-            "visual_media_handoff has unknown fields: " + ", ".join(sorted(unknown))
-        )
-
-    compact = dict(result)
-    artifact_ids = _id_list(
-        compact["artifact_ids"],
-        "artifact_ids",
-        max_items=MAX_HANDOFF_ITEMS,
-    )
-    paths = _path_list(
-        compact["paths"],
-        "paths",
-        roots=("artifacts/", "media/"),
-        max_items=MAX_HANDOFF_ITEMS,
-    )
+    compact = validate_compact_visual_media_handoff(result)
+    artifact_ids = compact["artifact_ids"]
+    paths = compact["paths"]
     if any(
         not any(_path_is_bound_to_artifact(path, artifact_id) for artifact_id in artifact_ids)
         for path in paths
     ):
         raise ValueError("visual media handoff contains an undeclared path")
-    media = _validate_media_metadata(compact["media"])
-    checks = _short_text_list(compact["checks"], "checks")
     issues = _validate_issues(compact["issues"], artifact_ids, normalized_context)
-    _require_text(compact["summary"], "summary", max_length=64)
 
     preview = compact["review_preview_path"]
     if preview is not None:
@@ -741,14 +714,67 @@ def compact_visual_media_result(
     elif normalized_context["max_review_previews"] not in {0, 1}:
         raise ValueError("visual media handoff has an invalid preview budget")
 
-    compact["artifact_ids"] = artifact_ids
-    compact["paths"] = paths
-    compact["media"] = media
-    compact["checks"] = checks
     compact["issues"] = issues
     serialized = _serialize_json(compact, "visual media handoff")
     if len(serialized) > normalized_context["context_budget_bytes"]:
         raise ValueError("visual media handoff exceeds the declared context budget")
+    return compact
+
+
+def validate_compact_visual_media_handoff(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Return one strict, closed handoff without dereferencing any path string.
+
+    This intrinsic boundary validates every shape rule that does not depend on
+    a claimed task scope. Callers that have scope authority add exact Artifact
+    and preview binding checks after this function succeeds.
+    """
+    if not isinstance(result, Mapping):
+        raise ValueError("visual media handoff must be an object")
+    _validate_scrubbed_json(result, budget=VISUAL_RESULT_BUDGET_BYTES)
+    fields = set(result)
+    missing = HANDOFF_FIELDS - fields
+    unknown = fields - HANDOFF_FIELDS
+    if missing:
+        raise ValueError(
+            "visual_media_handoff is missing fields: " + ", ".join(sorted(missing))
+        )
+    if unknown:
+        raise ValueError(
+            "visual_media_handoff has unknown fields: " + ", ".join(sorted(unknown))
+        )
+
+    artifact_ids = _id_list(
+        result["artifact_ids"], "artifact_ids", max_items=MAX_HANDOFF_ITEMS
+    )
+    paths = _path_list(
+        result["paths"],
+        "paths",
+        roots=("artifacts/", "media/"),
+        max_items=MAX_HANDOFF_ITEMS,
+    )
+    media = _validate_media_metadata(result["media"])
+    checks = _short_text_list(result["checks"], "checks")
+    issues = _validate_compact_issues(result["issues"])
+    _require_text(result["summary"], "summary", max_length=64)
+
+    preview = result["review_preview_path"]
+    if preview is not None and (
+        not _project_path(preview)
+        or len(preview) > 256
+        or not preview.startswith("previews/")
+    ):
+        raise ValueError("review_preview_path must be one project-contained preview path")
+
+    compact = {
+        "artifact_ids": artifact_ids,
+        "paths": paths,
+        "media": media,
+        "checks": checks,
+        "issues": issues,
+        "summary": result["summary"],
+        "review_preview_path": preview,
+    }
+    _serialize_json(compact, "visual media handoff")
     return compact
 
 
@@ -921,64 +947,81 @@ def _validate_media_metadata(value: Any) -> dict[str, Any]:
         raise ValueError("visual media metadata has unknown fields: " + ", ".join(sorted(unknown)))
     normalized = dict(value)
     kind = normalized.get("kind")
-    if kind is not None and kind not in {"image", "video", "visual"}:
+    if "kind" in normalized and kind not in {"image", "video", "visual"}:
         raise ValueError("visual media metadata kind is not recognized")
-    for field in ("format", "readiness", "checksum", "sha256"):
+    for field in ("format", "readiness"):
         if field in normalized:
-            _require_text(normalized[field], f"media {field}", max_length=128)
-    mime_type = normalized.get("mime_type")
-    if mime_type is not None:
-        if not isinstance(mime_type, str) or MIME_TYPE_RE.fullmatch(mime_type) is None:
+            _require_text(normalized[field], f"media {field}", max_length=64)
+    if "mime_type" in normalized:
+        mime_type = normalized["mime_type"]
+        if (
+            not isinstance(mime_type, str)
+            or len(mime_type) > 128
+            or MIME_TYPE_RE.fullmatch(mime_type) is None
+        ):
             raise ValueError("media mime_type must be canonical")
         if not mime_type.startswith(("image/", "video/")):
             raise ValueError("media mime_type must be visual")
+    if "checksum" in normalized:
+        checksum = normalized["checksum"]
+        if not isinstance(checksum, str) or CHECKSUM_RE.fullmatch(checksum) is None:
+            raise ValueError("media checksum must be a bounded hexadecimal digest")
     for field in ("width", "height"):
-        number = normalized.get(field)
-        if number is not None and (
-            isinstance(number, bool)
-            or not isinstance(number, int)
-            or not 1 <= number <= 100_000
+        if field in normalized:
+            number = normalized[field]
+            if (
+                isinstance(number, bool)
+                or not isinstance(number, int)
+                or not 1 <= number <= 16_384
+            ):
+                raise ValueError(f"media {field} must be a positive bounded integer")
+    if "duration_ms" in normalized:
+        duration = normalized["duration_ms"]
+        if (
+            isinstance(duration, bool)
+            or not isinstance(duration, int)
+            or not 0 <= duration <= 36_000_000
         ):
-            raise ValueError(f"media {field} must be a positive bounded integer")
-    duration = normalized.get("duration_ms")
-    if duration is not None and (
-        isinstance(duration, bool)
-        or not isinstance(duration, (int, float))
-        or not math.isfinite(duration)
-        or duration < 0
-        or duration > 86_400_000
-    ):
-        raise ValueError("media duration_ms must be finite and bounded")
-    fps = normalized.get("fps")
-    if fps is not None and (
-        isinstance(fps, bool)
-        or not isinstance(fps, (int, float))
-        or not math.isfinite(fps)
-        or not 0 < fps <= 1_000
-    ):
-        raise ValueError("media fps must be finite and bounded")
+            raise ValueError("media duration_ms must be a bounded integer")
+    if "fps" in normalized:
+        fps = normalized["fps"]
+        if (
+            isinstance(fps, bool)
+            or not isinstance(fps, (int, float))
+            or not math.isfinite(fps)
+            or not 0 < fps <= 240
+        ):
+            raise ValueError("media fps must be finite and bounded")
     return normalized
 
 
 def _validate_issues(
     value: Any, artifact_ids: list[str], context: Mapping[str, Any]
 ) -> list[dict[str, Any]]:
-    if not isinstance(value, list) or len(value) > MAX_HANDOFF_ITEMS:
-        raise ValueError("issues must be a bounded list")
+    normalized = _validate_compact_issues(value)
     scope_id = context["scope_identity"]["id"]
     authorized = set(artifact_ids) | set(context["allowed_artifact_ids"])
     authorized.update(scope_id if isinstance(scope_id, list) else [scope_id])
     continuity = context["continuity_exception"]
     if continuity is not None:
         authorized.add(continuity["artifact_id"])
+    for issue in normalized:
+        if "artifact_id" in issue and issue["artifact_id"] not in authorized:
+            raise ValueError("visual media issue names an undeclared Artifact ID")
+    return normalized
+
+
+def _validate_compact_issues(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or len(value) > MAX_HANDOFF_ITEMS:
+        raise ValueError("issues must be a bounded list")
     normalized = []
     for issue in value:
         if not isinstance(issue, Mapping) or not set(issue) <= ISSUE_FIELDS:
             raise ValueError("issues must contain closed compact issue objects")
         if not _safe_id(issue.get("code")):
             raise ValueError("each visual media issue requires a stable code")
-        if "artifact_id" in issue and issue["artifact_id"] not in authorized:
-            raise ValueError("visual media issue names an undeclared Artifact ID")
+        if "artifact_id" in issue and not _safe_id(issue["artifact_id"]):
+            raise ValueError("visual media issue Artifact ID must be safe")
         for field in ("message", "severity"):
             if field in issue:
                 _require_text(issue[field], f"issue {field}", max_length=64)
@@ -1054,7 +1097,7 @@ def _id_list(
         raise ValueError(f"{label} requires at least {min_items} item")
     if max_items is not None and len(value) > max_items:
         raise ValueError(f"{label} exceeds its {max_items}-item limit")
-    if not all(_safe_id(item) for item in value):
+    if not all(_safe_id(item) and len(item) <= 128 for item in value):
         raise ValueError(f"{label} must contain safe Artifact IDs")
     if len(set(value)) != len(value):
         raise ValueError(f"{label} must not contain duplicates")
@@ -1071,7 +1114,10 @@ def _path_list(
     if (
         not isinstance(value, list)
         or len(value) > max_items
-        or not all(_project_path(path) and path.startswith(roots) for path in value)
+        or not all(
+            _project_path(path) and len(path) <= 256 and path.startswith(roots)
+            for path in value
+        )
     ):
         raise ValueError(f"{label} must contain bounded project-contained paths")
     if len(set(value)) != len(value):

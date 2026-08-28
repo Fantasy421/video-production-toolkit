@@ -6,6 +6,7 @@ from scripts.toolkit.visual_media_context import (
     classify_visual_media_task,
     compact_visual_media_result,
     project_legacy_image_context,
+    validate_compact_visual_media_handoff,
     validate_declared_visual_media_inputs,
     validate_result_envelope,
     validate_visual_media_context,
@@ -678,6 +679,40 @@ class VisualMediaContextTests(unittest.TestCase):
                 ValueError, message
             ):
                 compact_visual_media_result(self.context(), result)
+
+    def test_intrinsic_handoff_validation_is_closed_before_scope_binding(self):
+        """Catches callers accepting malformed metadata before scope-specific checks."""
+        handoff = self.handoff(
+            media={
+                "kind": "video",
+                "format": "mp4",
+                "mime_type": "video/mp4",
+                "width": 1080,
+                "height": 1920,
+                "duration_ms": 12_400,
+                "fps": 25,
+                "readiness": "review-ready",
+                "checksum": "a1b2c3d4",
+            }
+        )
+        self.assertEqual(handoff, validate_compact_visual_media_handoff(handoff))
+
+        cases = (
+            ({**handoff, "unknown": "field"}, "unknown top-level field"),
+            ({**handoff, "media": {**handoff["media"], "sha256": "a1b2c3d4"}}, "unsupported media field"),
+            ({**handoff, "issues": [{"code": "issue-1", "extra": "field"}]}, "unknown issue field"),
+            ({**handoff, "checks": ["same", "same"]}, "duplicate checks"),
+            ({**handoff, "paths": ["../outside.mp4"]}, "malformed path"),
+            ({**handoff, "review_preview_path": ["previews/a.mp4", "previews/b.mp4"]}, "multiple previews"),
+            ({**handoff, "media": {**handoff["media"], "checksum": "not hex"}}, "malformed checksum"),
+            ({**handoff, "media": {**handoff["media"], "kind": None}}, "null media scalar"),
+            ({**handoff, "media": {**handoff["media"], "duration_ms": 12.5}}, "fractional duration"),
+            ({**handoff, "paths": ["media/" + "a" * 251]}, "oversized path"),
+            ({**handoff, "review_preview_path": "previews/" + "a" * 248}, "oversized preview path"),
+        )
+        for result, name in cases:
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                validate_compact_visual_media_handoff(result)
 
     def test_universal_scrub_rejects_recursive_visual_payload_forms(self):
         """Catches non-visual task results relaying visual payloads or inspection history."""

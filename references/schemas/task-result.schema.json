@@ -45,13 +45,15 @@
         "media": {
           "type": "object",
           "properties": {
-            "kind": {"type": "string", "minLength": 1, "maxLength": 64},
+            "kind": {"type": "string", "enum": ["image", "video", "visual"]},
             "format": {"type": "string", "minLength": 1, "maxLength": 64},
+            "mime_type": {"type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"},
             "width": {"type": "integer", "minimum": 1, "maximum": 16384},
             "height": {"type": "integer", "minimum": 1, "maximum": 16384},
             "duration_ms": {"type": "integer", "minimum": 0, "maximum": 36000000},
             "fps": {"type": "number", "exclusiveMinimum": 0, "maximum": 240},
-            "readiness": {"type": "string", "minLength": 1, "maxLength": 64}
+            "readiness": {"type": "string", "minLength": 1, "maxLength": 64},
+            "checksum": {"type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[A-Fa-f0-9]{8,128}$"}
           },
           "additionalProperties": false
         },

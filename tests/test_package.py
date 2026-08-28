@@ -257,14 +257,46 @@ class PackageTests(unittest.TestCase):
         media = handoff["media"]
         self.assertEqual("object", media["type"])
         self.assertEqual(
-            ["kind", "format", "width", "height", "duration_ms", "fps", "readiness"],
+            [
+                "kind",
+                "format",
+                "mime_type",
+                "width",
+                "height",
+                "duration_ms",
+                "fps",
+                "readiness",
+                "checksum",
+            ],
             list(media["properties"]),
         )
         self.assertFalse(media["additionalProperties"])
-        for name in ("kind", "format", "readiness"):
+        self.assertEqual(
+            {"type": "string", "enum": ["image", "video", "visual"]},
+            media["properties"]["kind"],
+        )
+        for name in ("format", "readiness"):
             with self.subTest(name=name):
                 self.assertEqual("string", media["properties"][name]["type"])
                 self.assertEqual(64, media["properties"][name]["maxLength"])
+        self.assertEqual(
+            {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 128,
+                "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$",
+            },
+            media["properties"]["mime_type"],
+        )
+        self.assertEqual(
+            {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 128,
+                "pattern": "^[A-Fa-f0-9]{8,128}$",
+            },
+            media["properties"]["checksum"],
+        )
         self.assertEqual(
             {"type": "integer", "minimum": 1, "maximum": 16384},
             media["properties"]["width"],
@@ -301,11 +333,13 @@ class PackageTests(unittest.TestCase):
             "media": {
                 "kind": f"{high_codepoint}k",
                 "format": f"{high_codepoint}f",
+                "mime_type": "video/mp4",
                 "width": 16384,
                 "height": 16384,
                 "duration_ms": 36000000,
                 "fps": 240,
                 "readiness": f"{high_codepoint}r",
+                "checksum": "0123456789abcdef" * 4,
             },
             "checks": [f"{high_codepoint}{index}" for index in range(8)],
             "issues": [
