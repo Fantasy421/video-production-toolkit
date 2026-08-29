@@ -22,6 +22,9 @@
   tests.test_voice_tasks -v` — 25 tests passed.
 - Full available suite: all tests except the three modules requiring the absent
   `jsonschema` package — 410 tests passed, 4 skipped.
+- Offline full suite with the controller-provided cached dependency runtime:
+  `UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest discover -s tests -q`
+  — 514 tests passed, 4 skipped.
 - Package runtime validation: `validate_package(Path("."))` returned `[]`.
 - `git diff --check` passed.
 
