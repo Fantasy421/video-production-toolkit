@@ -452,6 +452,17 @@ class PersistedVisualMediaValidationTests(unittest.TestCase):
         encoded_values = (
             "QUFB" * 16,
             " ".join(["QUFB"] * 16),
+            " ".join(["Q"] * 32),
+            " ".join(["QU"] * 16),
+            " ".join(["QUF"] * 12),
+            "\t".join(["QUF"] * 12),
+            "\r\n".join(["QUF"] * 12),
+            " ".join(["-"] * 32),
+            " ".join(["Q-"] * 16),
+            " ".join(["QU-"] * 12),
+            " ".join(["QQ=="] * 16),
+            "\t".join(["QQ=="] * 16),
+            "\r\n".join(["QQ=="] * 16),
             "QUFB-" * 12,
             "A" * 64,
         )

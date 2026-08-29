@@ -311,3 +311,66 @@ UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --wit
 All probes in this round manipulated only dictionaries, strings, schemas, and
 filesystem metadata. No media was opened, decoded, rendered, played,
 displayed, extracted, or perceptually inspected.
+
+## Fix round 5: alignment-independent encoding fragments and voice list bounds
+
+### Changes
+
+- Removed the incorrect intermediate-quartet alignment condition from the
+  structural Base64/Base64URL scrub. It now joins whitespace-separated
+  unpadded fragments at any quantum position and separately recognizes a
+  bounded sequence of independently padded canonical fragments without
+  decoding either representation.
+- Added source-independent coverage for one-, two-, and three-character
+  whitespace splits, space/tab/CRLF separators, Base64URL fragments, and
+  independently padded fragments. The same encoded values are exercised at
+  Artifact create/read, task completion, and persisted-result recovery.
+- Applied Artifact's `parents` maximum of 256 to voice runtime identity lists,
+  and applied Artifact's pronunciation maximum count and 500-character item
+  limit before records can be accepted by voice runtime. Duplicate
+  pronunciations remain available to the semantic validator so it can retain
+  its stable `invalid-voice-profile` issue code.
+- Expanded the voice/Artifact parity matrix with accepted and rejected parent
+  counts and pronunciation count/text boundaries in both schema and runtime
+  assertions.
+
+### RED evidence
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts.ArtifactTests.test_artifact_rejects_structural_encodings_at_create_and_read tests.test_tasks.TaskTests.test_completion_rejects_structural_encodings_in_error_text tests.test_validation.PersistedVisualMediaValidationTests.test_recovery_rejects_structural_encodings_in_persisted_result_text tests.test_voice.VoiceSchemaTests.test_voice_and_artifact_boundaries_share_all_persisted_limits -v
+# Ran 4 tests; FAILED (failures=14, errors=4)
+```
+
+The failures captured three-character space/tab/CRLF fragments, Base64URL
+fragments, independently padded short fragments, and voice records with 257
+parents, 257 pronunciations, or a 501-character pronunciation. Some later
+completion subtests reported an inactive claim after an accepted fragment had
+incorrectly consumed the one claim; this is expected evidence of the same
+completion-boundary bypass.
+
+### GREEN evidence
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts.ArtifactTests.test_artifact_rejects_structural_encodings_at_create_and_read tests.test_tasks.TaskTests.test_completion_rejects_structural_encodings_in_error_text tests.test_validation.PersistedVisualMediaValidationTests.test_recovery_rejects_structural_encodings_in_persisted_result_text tests.test_visual_media_context.VisualMediaContextTests.test_universal_scrub_rejects_neutral_numeric_arrays_and_encoded_paths tests.test_package.PackageTests.test_draft202012_and_runtime_match_handoff_mime_kind_decisions tests.test_voice.VoiceSchemaTests.test_voice_and_artifact_boundaries_share_all_persisted_limits -v
+# Ran 6 tests in 0.176s; OK
+
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_voice tests.test_voice_tasks tests.test_visual_media_context -v
+# Ran 80 tests in 1.017s; OK
+```
+
+All round-five probes are metadata-only: strings, dictionaries, JSON schema,
+and bounded structural validation. No media was opened, decoded, rendered,
+played, displayed, extracted, or perceptually inspected.
+
+### Post-fingerprint covering evidence
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts tests.test_visual_media_context tests.test_tasks tests.test_validation tests.test_end_to_end tests.test_package tests.test_voice tests.test_voice_tasks tests.test_image_context tests.test_coverage -v
+# Ran 387 tests in 7.831s; OK (skipped=4)
+
+python3 scripts/validate_package.py
+# package valid
+
+git diff --check
+# no output (clean)
+```

@@ -261,6 +261,17 @@ class ArtifactTests(unittest.TestCase):
         encoded_values = (
             ("single-token", "QUFB" * 16),
             ("whitespace-chunked", " ".join(["QUFB"] * 16)),
+            ("space-one-char-chunks", " ".join(["Q"] * 32)),
+            ("space-two-char-chunks", " ".join(["QU"] * 16)),
+            ("space-three-char-chunks", " ".join(["QUF"] * 12)),
+            ("tab-three-char-chunks", "\t".join(["QUF"] * 12)),
+            ("crlf-three-char-chunks", "\r\n".join(["QUF"] * 12)),
+            ("base64url-one-char-chunks", " ".join(["-"] * 32)),
+            ("base64url-two-char-chunks", " ".join(["Q-"] * 16)),
+            ("base64url-three-char-chunks", " ".join(["QU-"] * 12)),
+            ("independently-padded-chunks", " ".join(["QQ=="] * 16)),
+            ("tab-padded-chunks", "\t".join(["QQ=="] * 16)),
+            ("crlf-padded-chunks", "\r\n".join(["QQ=="] * 16)),
             ("base64url", "QUFB-" * 12),
             ("low-entropy", "A" * 64),
         )

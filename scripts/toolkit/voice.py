@@ -504,6 +504,8 @@ def _within_shared_artifact_bounds(
             )
         ):
             return False
+        if not _within_pronunciation_limits(record["pronunciations"]):
+            return False
         rate = record["speaking_rate"]
         return (
             not isinstance(rate, bool)
@@ -537,6 +539,14 @@ def _within_duration_ceiling(value: Any) -> bool:
     )
 
 
+def _within_pronunciation_limits(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) <= 256
+        and all(_bounded_text(item, 500) for item in value)
+    )
+
+
 def _within_timing_segment_ceilings(value: Any) -> bool:
     if not isinstance(value, list) or len(value) > 512:
         return False
@@ -556,7 +566,11 @@ def _within_timing_segment_ceilings(value: Any) -> bool:
 
 
 def _safe_id_list(value: Any) -> bool:
-    if not isinstance(value, list) or not all(_safe_id(item) for item in value):
+    if (
+        not isinstance(value, list)
+        or len(value) > 256
+        or not all(_safe_id(item) for item in value)
+    ):
         return False
     return len(value) == len(set(value))
 
