@@ -128,11 +128,77 @@ class RepresentativeSliceTests(unittest.TestCase):
         self.voice_timing = self.artifacts[-1]
 
     def select(self, contracts):
-        current_contracts = [
-            {**contract, "voice_timing_id": "voice-timing-v1"}
+        if any(
+            not isinstance(contract, dict)
+            or not {"scene_id", "start_ms", "end_ms", "primary_carrier", "purpose"}.issubset(contract)
             for contract in contracts
+        ):
+            raise ValueError("scene contract does not match scene-contract-v1")
+        current_contracts, artifacts = self.currentize(contracts, self.artifacts)
+        return select_representative_slice(current_contracts, artifacts)
+
+    @staticmethod
+    def currentize(contracts, artifacts):
+        """Attach exact scene-timing lineage to representative-slice fixtures."""
+        timing_id = artifacts[-1]["artifact_id"]
+        timed_id = "timed-semantic-beats-v1"
+        scene_timing_id = "scene-timing-contracts-v1"
+        beat_ids = [f"B{index:02d}" for index in range(1, len(contracts) + 1)]
+        timed = {
+            "artifact_id": timed_id,
+            "type": "timed-semantic-beats",
+            "version": 1,
+            "status": "approved",
+            "parents": ["semantic-beats-v1", timing_id],
+            "path": "metadata/timed-semantic-beats-v1.json",
+            "semantic_beats_id": "semantic-beats-v1",
+            "voice_timing_id": timing_id,
+            "timing_kind": "real",
+            "beats": [
+                {
+                    "beat_id": beat_id,
+                    "speech_start_ms": contract["start_ms"],
+                    "speech_end_ms": contract["end_ms"],
+                    "keyword_start_ms": contract["start_ms"] + 1,
+                    "keyword_end_ms": contract["end_ms"] - 1,
+                    "emphasis_ms": (contract["start_ms"] + contract["end_ms"]) // 2,
+                    "visual_window_ms": [contract["start_ms"], contract["end_ms"]],
+                    "approved_anchor_commitment": "sha256:" + "0" * 64,
+                }
+                for beat_id, contract in zip(beat_ids, contracts)
+            ],
+        }
+        current_contracts = [
+            {
+                **contract,
+                "voice_timing_id": timing_id,
+                "timed_semantic_beats_id": timed_id,
+                "scene_timing_contracts_id": scene_timing_id,
+                "beat_ids": [beat_id],
+            }
+            for beat_id, contract in zip(beat_ids, contracts)
         ]
-        return select_representative_slice(current_contracts, self.artifacts)
+        scene_timing = {
+            "artifact_id": scene_timing_id,
+            "type": "scene-timing-contracts",
+            "version": 1,
+            "status": "approved",
+            "parents": [timed_id],
+            "path": "metadata/scene-timing-contracts-v1.json",
+            "timed_semantic_beats_id": timed_id,
+            "scenes": [
+                {
+                    "scene_id": contract["scene_id"],
+                    "scene_window_ms": [contract["start_ms"], contract["end_ms"]],
+                    "beat_ids": [beat_id],
+                    "primary_carrier": contract["primary_carrier"],
+                    "support_layer": None,
+                    "visual_window_ms": [contract["start_ms"], contract["end_ms"]],
+                }
+                for beat_id, contract in zip(beat_ids, contracts)
+            ],
+        }
+        return current_contracts, [*artifacts, timed, scene_timing]
 
     def test_scene_contract_uses_exact_real_timing_and_spoken_boundaries(self):
         """Catches estimates, a wrong timing ID, and silence-bound intervals."""
@@ -156,7 +222,7 @@ class RepresentativeSliceTests(unittest.TestCase):
             "purpose": "show the first semantic segment",
         }
 
-        with self.assertRaisesRegex(ValueError, "full artifact"):
+        with self.assertRaisesRegex(ValueError, "timed semantic beats"):
             validate_scene_contract(contract, timing)
         with self.assertRaisesRegex(ValueError, "artifacts"):
             select_representative_slice([contract], timing)
@@ -168,10 +234,19 @@ class RepresentativeSliceTests(unittest.TestCase):
                 allow_legacy_unresolved_timing=True,
             ),
         )
+        with self.assertRaisesRegex(ValueError, "timed semantic beats"):
+            validate_scene_contract(contract, artifacts=artifacts)
+        current_contracts, current_artifacts = self.currentize([contract], artifacts)
+        with self.assertRaisesRegex(ValueError, "full artifact"):
+            validate_scene_contract(current_contracts[0], timing)
+        self.assertEqual(
+            current_contracts[0],
+            validate_scene_contract(current_contracts[0], artifacts=current_artifacts),
+        )
         with self.assertRaisesRegex(ValueError, "authoritative voice timing"):
             validate_scene_contract(
-                {**contract, "voice_timing_id": "voice-timing-v1"},
-                artifacts=artifacts,
+                {**current_contracts[0], "voice_timing_id": "voice-timing-v1"},
+                artifacts=current_artifacts,
             )
         estimated = self.voice_artifacts(
             narration_id="narration-v2",
@@ -181,18 +256,22 @@ class RepresentativeSliceTests(unittest.TestCase):
             segments=timing["segments"],
             timing_kind="estimated",
         )
+        estimated_contracts, estimated_artifacts = self.currentize([contract], estimated)
         with self.assertRaisesRegex(ValueError, "authoritative voice timing"):
-            validate_scene_contract(contract, artifacts=estimated)
+            validate_scene_contract(estimated_contracts[0], artifacts=estimated_artifacts)
+        silent_contracts, silent_artifacts = self.currentize(
+            [{**contract, "start_ms": 5000, "end_ms": 7000}], artifacts
+        )
         with self.assertRaisesRegex(ValueError, "spoken timing segment"):
             validate_scene_contract(
-                {**contract, "start_ms": 5000, "end_ms": 7000},
-                artifacts=artifacts,
+                silent_contracts[0], artifacts=silent_artifacts
             )
 
-        selected = select_representative_slice(
+        current_contracts, current_artifacts = self.currentize(
             [contract, {**contract, "scene_id": "S02", "start_ms": 6000, "end_ms": 12000}],
             artifacts,
         )
+        selected = select_representative_slice(current_contracts, current_artifacts)
         self.assertEqual("voice-timing-v2", selected.voice_timing_id)
 
     def test_slice_covers_highest_risk_carriers(self):

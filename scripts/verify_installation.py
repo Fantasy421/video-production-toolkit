@@ -182,7 +182,11 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
     contracts_path = root / "tests" / "fixtures" / "knowledge-video-minimal" / "scene-contracts.json"
     try:
         contracts = json.loads(contracts_path.read_text(encoding="utf-8"))
-        selected_slice = select_representative_slice(contracts, voice_records)
+        selected_slice = select_representative_slice(
+            contracts,
+            voice_records,
+            allow_legacy_unresolved_timing=True,
+        )
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
         return {
             "ok": False,

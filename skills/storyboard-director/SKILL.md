@@ -12,7 +12,17 @@ scene contracts. Do not produce media.
 Owned capability: `storyboard.plan`
 
 Allowed inputs: accept only one claimed task-envelope with capability
-`storyboard.plan` and its declared beat, style, layout, and registry references.
+`storyboard.plan` and its declared current approved `timed-semantic-beats`, style,
+layout, and registry references. Never storyboard from estimated timing or an
+untimed semantic-beat artifact.
+
+Timing contract: build `scene-timing-contracts` from the exact current
+`timed_semantic_beats_id`. Every timed Beat ID is assigned exactly once, in
+ordered consecutive membership per scene; keep every approved keyword visual
+window inside that scene's spoken boundary and contracted visual window. A
+Scene Contract must name its exact `timed_semantic_beats_id`,
+`scene_timing_contracts_id`, and `beat_ids`; a `voice_timing_id` alone is a
+legacy recovery projection and MUST NOT be authored for new work.
 
 Visual-media boundary: visual execution is isolated child agent only. A child
 uses one claimed immutable envelope, one exact `scope_identity`, and its exact
@@ -27,10 +37,13 @@ and cost artifact IDs, checks, warnings, and the Storyboard and cost decision
 request.
 
 Stopping conditions: stop when a beat lacks exactly one primary carrier or has
-more than one secondary layer; request a revised contract. Stop for a missing
-Visual direction approval and return `waiting_user`. It must produce the
-storyboard and cost artifact, then return `waiting_user` to request Storyboard and
-cost approval; do not require that approval before producing its request.
+more than one secondary layer; request a revised contract. Stop when a Beat ID
+is omitted, duplicated, reordered, non-consecutive within its scene, or its
+keyword visual window crosses a scene boundary; request a merged or revised
+metadata-only contract. Stop for a missing Visual direction approval and return
+`waiting_user`. It must produce the
+storyboard and cost artifact, then return `waiting_user` to request Storyboard
+and cost approval; do not require that approval before producing its request.
 
 Follow `../../references/schemas/task-envelope.schema.json`,
 `../../references/schemas/task-result.schema.json`,
