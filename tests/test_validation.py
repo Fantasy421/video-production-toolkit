@@ -1255,6 +1255,31 @@ class ValidationTests(unittest.TestCase):
 
                 self.assertIn("invalid-artifact-metadata", {item["code"] for item in result["errors"]})
 
+    def test_legacy_semantic_beats_projection_rejects_new_timing_fields_before_graph(self):
+        """Catches persisted legacy timing projections smuggling new contract fields."""
+        cases = (
+            ("beats", [{"unexpected": "metadata"}]),
+            ("scenes", [{"unexpected": "metadata"}]),
+            ("semantic_beats_id", "semantic-beats-v1"),
+            ("timed_semantic_beats_id", "timed-semantic-beats-v1"),
+            ("timing_kind", "real"),
+        )
+        for field, value in cases:
+            with self.subTest(field=field):
+                self.write_artifact(
+                    "semantic-beats-v0",
+                    "semantic-beats",
+                    1,
+                    "approved",
+                    "metadata/semantic-beats-v0.json",
+                    voice_timing_id="voice-timing-v0",
+                    **{field: value},
+                )
+
+                result = validate_project(self.root)
+
+                self.assertIn("invalid-artifact-metadata", {item["code"] for item in result["errors"]})
+
     def write_visual_placeholder(self, relative):
         path = self.root / relative
         path.write_bytes(b"opaque visual fixture; structural validation must not read it")

@@ -607,6 +607,7 @@ def _validate_timing_artifact_contract(artifact: Mapping[str, Any]) -> None:
     if artifact_type == "semantic-beats":
         if "beats" not in artifact:
             if "voice_timing_id" in artifact:
+                _validate_legacy_semantic_beats_projection(artifact)
                 return
             raise ValueError("semantic-beats requires approved beats")
         _validate_exact_timing_fields(
@@ -646,6 +647,12 @@ def _validate_exact_timing_fields(
     allowed = set(ARTIFACT_REQUIRED_KEYS) | optional
     if not required.issubset(artifact) or not set(artifact).issubset(allowed):
         raise ValueError("timing artifact fields must match its closed contract")
+
+
+def _validate_legacy_semantic_beats_projection(artifact: Mapping[str, Any]) -> None:
+    allowed = set(ARTIFACT_REQUIRED_KEYS) | {"output_contract", "voice_timing_id"}
+    if set(artifact) - allowed:
+        raise ValueError("legacy semantic-beats projection must not carry new timing metadata")
 
 
 def _require_timing_id(value: Any, label: str) -> None:

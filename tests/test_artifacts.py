@@ -158,6 +158,39 @@ class ArtifactTests(unittest.TestCase):
                 with TemporaryDirectory() as folder, self.assertRaises(ValueError):
                     create_artifact(Path(folder), artifact)
 
+    @staticmethod
+    def legacy_semantic_beats_projection():
+        return {
+            "artifact_id": "semantic-beats-v0",
+            "type": "semantic-beats",
+            "version": 1,
+            "status": "approved",
+            "parents": [],
+            "path": "metadata/semantic-beats-v0.json",
+            "voice_timing_id": "voice-timing-v0",
+        }
+
+    def test_legacy_semantic_beats_projection_rejects_new_timing_fields(self):
+        """Catches legacy compatibility carrying new timing metadata or nested scenes."""
+        legacy = self.legacy_semantic_beats_projection()
+        artifacts.validate_artifact_record(legacy)
+
+        cases = (
+            ("beats", [{"unexpected": "metadata"}]),
+            ("scenes", [{"unexpected": "metadata"}]),
+            ("semantic_beats_id", "semantic-beats-v1"),
+            ("timed_semantic_beats_id", "timed-semantic-beats-v1"),
+            ("timing_kind", "real"),
+        )
+        for field, value in cases:
+            with self.subTest(field=field):
+                record = {**legacy, field: value}
+
+                with self.assertRaises(ValueError):
+                    artifacts.validate_artifact_record(record)
+                with TemporaryDirectory() as folder, self.assertRaises(ValueError):
+                    create_artifact(Path(folder), record)
+
     def test_existing_artifact_id_cannot_be_overwritten(self):
         """Catches a later artifact write replacing an immutable version."""
         create_artifact(self.root, self.artifact)
