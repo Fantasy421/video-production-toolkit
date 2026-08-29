@@ -45,6 +45,18 @@ undeclared paths from every result field. The preview path is a user-review
 boundary, not an authorization for primary-context access or automated visual
 acceptance; subjective acceptance remains the user's decision.
 
+Base64 screening is structural and never decodes content. Whitespace is
+removed before checking canonical tokens and padding, including whitespace
+before or within `=` padding. Explicit padding, Base64/Base64URL symbols, long
+single tokens, low-entropy or short-period repetitions, and repeated canonical
+padded fragments are rejected. Pure alphabetic unpadded Base64 split at word
+boundaries is lexically indistinguishable from ordinary prose without decoding;
+the deterministic conservative boundary accepts bounded, non-periodic ASCII
+multiword sequences as prose. This deliberate ambiguity is not authority to
+relay encoded content: producers must use typed IDs/checksums and compact
+natural-language fields, while all explicit or structurally repeated encoding
+forms remain forbidden.
+
 Successful generate, edit, render, frame-extract, and contact-sheet operations
 must register at least one Artifact of the operation's exact image/video kind,
 and the handoff must declare the same non-empty `media.kind`. `image-inspect`

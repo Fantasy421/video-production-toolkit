@@ -437,3 +437,82 @@ All round-six work used strings, dictionaries, JSON metadata, and filesystem
 metadata only. No media was opened, decoded, rendered, played, displayed,
 extracted, or perceptually inspected. No install, push, or Task 1 work was
 performed.
+
+## Fix round 7: padding normalization and conservative prose boundary
+
+### Deterministic boundary and unavoidable tradeoff
+
+Pure alphabetic unpadded Base64 split on whitespace and ordinary alphabetic
+multiword prose can produce the same character sequence after whitespace is
+removed. Without decoding or external language classification, no lexical
+validator can both reject every value in the first set and accept every value
+in the second set. The strict forms of those two requirements are therefore
+mathematically incompatible under the no-decoding constraint.
+
+The smallest auditable conservative policy is now explicit in runtime and in
+`references/policies/visual-media-isolation.md`:
+
+- normalize whitespace before structural decisions, including whitespace
+  before or within `=` padding;
+- reject canonical long single tokens, explicit padding, Base64/Base64URL
+  symbols, low-entropy/short-period repetitions, and repeated canonical padded
+  fragments;
+- accept only bounded, non-periodic ASCII multiword sequences as ordinary
+  prose when they contain no explicit encoding syntax.
+
+This preserves `This report will pass local review today` while acknowledging
+that an alphabet-only, non-periodic encoded value deliberately formatted as
+words is lexically ambiguous and falls on the prose side of the boundary.
+
+### Changes
+
+- Widened candidate recognition to include `=` as a whitespace-separated
+  symbol, then removed whitespace once before canonical token or padded
+  fragment-sequence validation.
+- Added a deterministic bounded-prose classifier and normalized short-period
+  detector; neither branches on an attacker-selected fragment interval.
+- Expanded the shared fingerprinted fixture table to the full Cartesian
+  interval-by-separator and padded-count-by-separator matrices. Added space,
+  tab, and CRLF cases with whitespace before and within padding, plus exact
+  alphabetic and punctuated harmless-prose controls reused through Artifact
+  create/read, task completion, and persisted recovery.
+
+### RED evidence
+
+The final tests were added before production changes. On `4b96bfc`, the three
+lifecycle methods failed on every new reviewed case: ten accepted
+padding-whitespace boundary probes and two rejected exact-prose controls.
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts.ArtifactTests.test_artifact_rejects_structural_encodings_at_create_and_read tests.test_tasks.TaskTests.test_completion_rejects_structural_encodings_in_error_text tests.test_validation.PersistedVisualMediaValidationTests.test_recovery_rejects_structural_encodings_in_persisted_result_text -q
+# Ran 3 tests in 2.095s; FAILED (failures=10, errors=2)
+```
+
+### GREEN evidence
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts.ArtifactTests.test_artifact_rejects_structural_encodings_at_create_and_read tests.test_tasks.TaskTests.test_completion_rejects_structural_encodings_in_error_text tests.test_validation.PersistedVisualMediaValidationTests.test_recovery_rejects_structural_encodings_in_persisted_result_text -q
+# Ran 3 tests in 2.171s; OK
+
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts tests.test_visual_media_context tests.test_tasks tests.test_validation tests.test_image_context -q
+# Ran 232 tests in 5.535s; OK
+
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts tests.test_visual_media_context tests.test_tasks tests.test_validation tests.test_end_to_end tests.test_package tests.test_voice tests.test_voice_tasks tests.test_image_context tests.test_coverage -q
+# Ran 387 tests in 10.461s; OK (skipped=4)
+
+python3 scripts/validate_package.py
+# package valid
+
+python3 -c '... compare declared and computed release fingerprints ...'
+# sha256:f4e71f546866711319f00305a6501f3f7bdae47226523582647b07664cf31a18
+# sha256:f4e71f546866711319f00305a6501f3f7bdae47226523582647b07664cf31a18
+# True
+
+git diff --check
+# no output (clean)
+```
+
+All round-seven work used strings, dictionaries, JSON metadata, and filesystem
+metadata only. No media was opened, decoded, rendered, played, displayed,
+extracted, or perceptually inspected. No install, push, or Task 1 work was
+performed.

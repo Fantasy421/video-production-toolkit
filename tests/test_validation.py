@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from scripts.toolkit.validation import validate_project
 from tests.encoding_boundary_cases import (
-    HARMLESS_PROSE_CONTROL,
+    HARMLESS_PROSE_CONTROLS,
     STRUCTURAL_ENCODING_CASES,
     TYPED_CHECKSUM_TEXT_CONTROL,
     TYPED_SAFE_ID_CONTROL,
@@ -471,30 +471,33 @@ class PersistedVisualMediaValidationTests(unittest.TestCase):
                     result, result_path, "visual-media-result-invalid"
                 )
 
-        safe_task = self.nonvisual_task(TYPED_SAFE_ID_CONTROL)
-        safe_task_path = self.write_task(safe_task)
-        safe_result_path = self.write_result(
-            safe_task["task_id"],
-            {
-                **self.plain_result(safe_task["task_id"], status="failed"),
-                "checks": [TYPED_CHECKSUM_TEXT_CONTROL],
-                "warnings": [HARMLESS_PROSE_CONTROL],
-                "error": HARMLESS_PROSE_CONTROL,
-            },
-            directory="status",
-        )
-        validation = self.assert_validation_preserves(
-            safe_task_path, safe_result_path
-        )
-        self.assertEqual(
-            [],
-            [
-                issue
-                for issue in validation["errors"]
-                if issue.get("path")
-                == safe_result_path.relative_to(self.root).as_posix()
-            ],
-        )
+        for index, (name, prose) in enumerate(HARMLESS_PROSE_CONTROLS):
+            task_id = TYPED_SAFE_ID_CONTROL if index == 0 else "safe-prose-result"
+            safe_task = self.nonvisual_task(task_id)
+            safe_task_path = self.write_task(safe_task)
+            safe_result_path = self.write_result(
+                safe_task["task_id"],
+                {
+                    **self.plain_result(safe_task["task_id"], status="failed"),
+                    "checks": [TYPED_CHECKSUM_TEXT_CONTROL],
+                    "warnings": [prose],
+                    "error": prose,
+                },
+                directory="status",
+            )
+            with self.subTest(control=name):
+                validation = self.assert_validation_preserves(
+                    safe_task_path, safe_result_path
+                )
+                self.assertEqual(
+                    [],
+                    [
+                        issue
+                        for issue in validation["errors"]
+                        if issue.get("path")
+                        == safe_result_path.relative_to(self.root).as_posix()
+                    ],
+                )
 
     def test_valid_nonvisual_task_and_result_remain_recoverable(self):
         """Catches the visual recovery boundary rejecting ordinary compact results."""

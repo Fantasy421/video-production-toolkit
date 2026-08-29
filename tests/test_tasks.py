@@ -15,7 +15,7 @@ from scripts.toolkit import tasks
 from scripts.toolkit.tasks import claim_task, complete_task, create_task, retry_decision
 from scripts.toolkit.visual_media_context import ACTIVE_VISUAL_MEDIA_OPERATIONS
 from tests.encoding_boundary_cases import (
-    HARMLESS_PROSE_CONTROL,
+    HARMLESS_PROSE_CONTROLS,
     STRUCTURAL_ENCODING_CASES,
     TYPED_CHECKSUM_TEXT_CONTROL,
     TYPED_SAFE_ID_CONTROL,
@@ -848,20 +848,23 @@ class TaskTests(unittest.TestCase):
             ):
                 complete_task(self.root, result)
 
-        safe_envelope = self.non_visual_envelope(task_id=TYPED_SAFE_ID_CONTROL)
-        create_task(self.root, safe_envelope)
-        safe_claim = claim_task(self.root, TYPED_SAFE_ID_CONTROL, "worker-a")
-        safe_result = {
-            "task_id": TYPED_SAFE_ID_CONTROL,
-            "status": "blocked",
-            "inputs": safe_envelope["inputs"],
-            "artifacts": [],
-            "checks": [TYPED_CHECKSUM_TEXT_CONTROL],
-            "warnings": [HARMLESS_PROSE_CONTROL],
-            **safe_claim,
-            "error": HARMLESS_PROSE_CONTROL,
-        }
-        self.assertEqual("resumable", complete_task(self.root, safe_result))
+        for index, (name, prose) in enumerate(HARMLESS_PROSE_CONTROLS):
+            task_id = TYPED_SAFE_ID_CONTROL if index == 0 else "safe-prose-result"
+            safe_envelope = self.non_visual_envelope(task_id=task_id)
+            create_task(self.root, safe_envelope)
+            safe_claim = claim_task(self.root, task_id, "worker-a")
+            safe_result = {
+                "task_id": task_id,
+                "status": "blocked",
+                "inputs": safe_envelope["inputs"],
+                "artifacts": [],
+                "checks": [TYPED_CHECKSUM_TEXT_CONTROL],
+                "warnings": [prose],
+                **safe_claim,
+                "error": prose,
+            }
+            with self.subTest(control=name):
+                self.assertEqual("resumable", complete_task(self.root, safe_result))
 
     def test_general_result_scrub_preserves_harmless_digest_metadata(self):
         """Catches the payload heuristic rejecting hashes or ordinary base64 prose."""

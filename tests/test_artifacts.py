@@ -14,7 +14,7 @@ from jsonschema import Draft202012Validator
 from scripts.toolkit import artifacts
 from scripts.toolkit.artifacts import approve_artifact, create_artifact, read_approval
 from tests.encoding_boundary_cases import (
-    HARMLESS_PROSE_CONTROL,
+    HARMLESS_PROSE_CONTROLS,
     STRUCTURAL_ENCODING_CASES,
     TYPED_CHECKSUM_CONTROL,
     TYPED_SAFE_ID_CONTROL,
@@ -289,15 +289,21 @@ class ArtifactTests(unittest.TestCase):
                     stored.write_text(json.dumps(tampered), encoding="utf-8")
                     self.assertIsNone(artifacts._read_valid_artifact(stored))
 
-        safe_control = {
-            **self.artifact,
-            "artifact_id": TYPED_SAFE_ID_CONTROL,
-            "path": "metadata/encoding-boundary-safe-control.json",
-            "text": HARMLESS_PROSE_CONTROL,
-            "checksum": TYPED_CHECKSUM_CONTROL,
-        }
-        stored = create_artifact(self.root, safe_control)
-        self.assertEqual(safe_control, artifacts._read_valid_artifact(stored))
+        for index, (name, prose) in enumerate(HARMLESS_PROSE_CONTROLS):
+            safe_control = {
+                **self.artifact,
+                "artifact_id": (
+                    TYPED_SAFE_ID_CONTROL if index == 0 else "safe-prose-v2"
+                ),
+                "path": f"metadata/encoding-boundary-safe-{index}.json",
+                "text": prose,
+                "checksum": TYPED_CHECKSUM_CONTROL,
+            }
+            with self.subTest(control=name):
+                stored = create_artifact(self.root, safe_control)
+                self.assertEqual(
+                    safe_control, artifacts._read_valid_artifact(stored)
+                )
 
     def test_artifact_schema_rejects_unsafe_project_paths(self):
         """Catches schema consumers accepting paths the runtime must reject."""

@@ -22,9 +22,10 @@ MIME_TYPE_RE = re.compile(
 CHECKSUM_RE = re.compile(r"[A-Fa-f0-9]{8,128}")
 BASE64_CANDIDATE_RE = re.compile(
     r"(?<![A-Za-z0-9+/_=-])"
-    r"([A-Za-z0-9+/_-]+={0,2}(?:\s+[A-Za-z0-9+/_-]+={0,2})*)"
+    r"([A-Za-z0-9+/_=-]+(?:\s+[A-Za-z0-9+/_=-]+)*)"
     r"(?![A-Za-z0-9+/_=-])"
 )
+BASE64_PADDED_FRAGMENT_RE = re.compile(r"[A-Za-z0-9+/_-]+={1,2}")
 REMOTE_URL_RE = re.compile(
     r"(?<![A-Za-z0-9_.-])(?:https?|ftp|ftps|file|s3|gs|ipfs|ssh)://[^\s<>\"']+",
     re.IGNORECASE,
@@ -1180,21 +1181,54 @@ def _contains_binary_like_base64(value: str, normalized_key: str) -> bool:
         return False
     for match in BASE64_CANDIDATE_RE.finditer(value):
         chunks = re.split(r"\s+", match.group(1).strip())
-        encoded_length = sum(map(len, chunks))
-        if encoded_length < 32:
+        normalized = "".join(chunks)
+        if len(normalized) < 32:
             continue
-        if not any("=" in chunk for chunk in chunks[:-1]):
-            if _is_canonical_base64_token("".join(chunks)):
-                return True
+        if _is_conservative_natural_language_candidate(chunks, normalized):
             continue
-        bodies = [chunk.rstrip("=") for chunk in chunks]
-        if not all(_is_canonical_base64_token(chunk) for chunk in chunks):
-            continue
-        symbols = set("".join(bodies))
-        if symbols & {"+", "/"} and symbols & {"-", "_"}:
-            continue
-        return True
+        if _is_canonical_base64_token(normalized):
+            return True
+        if _is_canonical_padded_fragment_sequence(normalized):
+            return True
     return False
+
+
+def _is_conservative_natural_language_candidate(
+    chunks: list[str], normalized: str
+) -> bool:
+    """Preserve bounded ordinary words where lexical Base64 is undecidable.
+
+    Without decoding, a whitespace-separated ASCII word sequence can be
+    identical to alphabet-only unpadded Base64.  The coordinator therefore
+    accepts only a bounded, non-periodic multiword form as prose.  Explicit
+    Base64 symbols, padding, long single tokens, and repeated/low-entropy
+    structures remain outside this exception.
+    """
+    return (
+        2 <= len(chunks) <= 32
+        and len(normalized) <= 256
+        and all(re.fullmatch(r"[A-Za-z]+", chunk) is not None for chunk in chunks)
+        and not _has_short_repeated_period(normalized)
+    )
+
+
+def _has_short_repeated_period(value: str) -> bool:
+    for period_length in range(1, min(16, len(value) // 3) + 1):
+        period = value[:period_length]
+        repeated = (period * ((len(value) // period_length) + 1))[: len(value)]
+        if repeated == value:
+            return True
+    return False
+
+
+def _is_canonical_padded_fragment_sequence(value: str) -> bool:
+    fragments = BASE64_PADDED_FRAGMENT_RE.findall(value)
+    if len(fragments) < 2 or "".join(fragments) != value:
+        return False
+    if not all(_is_canonical_base64_token(fragment) for fragment in fragments):
+        return False
+    symbols = set("".join(fragment.rstrip("=") for fragment in fragments))
+    return not (symbols & {"+", "/"} and symbols & {"-", "_"})
 
 
 def _normalized_key(key: str) -> str:
