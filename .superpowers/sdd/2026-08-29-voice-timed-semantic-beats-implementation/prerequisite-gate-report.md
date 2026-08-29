@@ -59,9 +59,11 @@ access call. `git diff --check` completed cleanly.
 fingerprinted. The manifest release fingerprint was refreshed only after the
 final code and test changes; release version remains `0.1.4`.
 
-## Conclusion
+## Initial implementation checkpoint
 
-The prerequisite gate is closed. Task 1 has not been started.
+The initial implementation was committed for independent review. The review
+then found follow-up parity gaps, which are documented and closed in the three
+fix rounds below. Task 1 was not started.
 
 ## Fix round 1: structural boundary follow-up
 
@@ -218,3 +220,43 @@ git diff --check
 
 All work remained JSON/dict/string/schema-only; no media content was decoded,
 opened, rendered, played, displayed, extracted, or inspected.
+
+## Final reviewed state
+
+The prerequisite gate is closed at code commit `a85019a` after one task review
+and three scoped fix/re-review rounds. The final scoped reviewer reported every
+Critical and Important finding addressed, with no new breakage.
+
+Commit chain:
+
+- `fbaa73e` — close the original visual-isolation prerequisite set;
+- `fc122e8` — close URI, inspect-MIME, promotion, and lexical-path parity gaps;
+- `ab31fb8` — separate colon-free generic identifiers from explicit non-media
+  namespaces;
+- `a85019a` — align task-result worker and claim identifiers.
+
+Fresh verification at exact code HEAD `a85019a`:
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest discover -s tests -q
+# Ran 484 tests in 7.884s; OK (skipped=4)
+
+python3 scripts/validate_package.py
+# package valid
+
+python3 -c "... compare manifest release_fingerprint with _release_fingerprint(root) ..."
+# sha256:1db956c2c043833f3c7f9a0d5bab8e970afc980cc8c79d214f42fbeff46eea50
+# sha256:1db956c2c043833f3c7f9a0d5bab8e970afc980cc8c79d214f42fbeff46eea50
+# True
+
+git diff --check 1a4739d..a85019a
+# no output (clean)
+
+git status --short --branch
+# ## codex/visual-media-isolation
+```
+
+The prescribed forbidden-call scan found only the literal `ffprobe` word in
+the voiceover-producer documentation; it found no executable visual-media or
+Base64-decoder call in the coordinator-safe visual boundary. No install, push,
+or Task 1 work was performed.
