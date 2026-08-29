@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Video Production Toolkit Real Timed Semantic Beats Artifact",
+  "type": "object",
+  "required": ["artifact_id", "type", "version", "status", "parents", "path", "semantic_beats_id", "voice_timing_id", "timing_kind", "beats"],
+  "properties": {
+    "artifact_id": {"$ref": "#/$defs/safeId"},
+    "type": {"const": "timed-semantic-beats"},
+    "version": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["draft", "approved", "stale", "superseded", "invalid"]},
+    "parents": {"$ref": "#/$defs/parents"},
+    "path": {"$ref": "#/$defs/projectPath"},
+    "output_contract": {"type": "string", "minLength": 1, "maxLength": 128},
+    "semantic_beats_id": {"$ref": "#/$defs/safeId"},
+    "voice_timing_id": {"$ref": "#/$defs/safeId"},
+    "timing_kind": {"const": "real"},
+    "beats": {"type": "array", "minItems": 1, "maxItems": 512, "items": {"$ref": "#/$defs/beat"}, "uniqueItems": true}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "safeId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"},
+    "parents": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
+    "projectPath": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"},
+    "milliseconds": {"type": "integer", "minimum": 0, "maximum": 36000000},
+    "window": {"type": "array", "prefixItems": [{"$ref": "#/$defs/milliseconds"}, {"$ref": "#/$defs/milliseconds"}], "items": false, "minItems": 2, "maxItems": 2},
+    "beat": {
+      "type": "object",
+      "required": ["beat_id", "speech_start_ms", "speech_end_ms", "keyword_start_ms", "keyword_end_ms", "emphasis_ms", "visual_window_ms"],
+      "properties": {
+        "beat_id": {"$ref": "#/$defs/safeId"},
+        "speech_start_ms": {"$ref": "#/$defs/milliseconds"},
+        "speech_end_ms": {"$ref": "#/$defs/milliseconds"},
+        "keyword_start_ms": {"$ref": "#/$defs/milliseconds"},
+        "keyword_end_ms": {"$ref": "#/$defs/milliseconds"},
+        "emphasis_ms": {"$ref": "#/$defs/milliseconds"},
+        "visual_window_ms": {"$ref": "#/$defs/window"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

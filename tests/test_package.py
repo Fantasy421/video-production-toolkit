@@ -68,6 +68,202 @@ class PackageTests(unittest.TestCase):
         )
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
+    def schema(self, name):
+        return json.loads(
+            (ROOT / "references" / "schemas" / name).read_text(encoding="utf-8")
+        )
+
+    def split_schema_validator(self, name):
+        return Draft202012Validator(self.schema(name))
+
+    def test_split_timing_schemas_are_closed_and_bounded(self):
+        """Catches reopened or estimated semantic timing contracts."""
+        semantic = self.schema("semantic-beats.schema.json")
+        timed = self.schema("timed-semantic-beats.schema.json")
+        scenes = self.schema("scene-timing-contracts.schema.json")
+        validation = self.schema("timing-validation.schema.json")
+
+        self.assertFalse(semantic["additionalProperties"])
+        self.assertEqual("real", timed["properties"]["timing_kind"]["const"])
+        self.assertEqual(
+            1,
+            scenes["$defs"]["scene"]["properties"]["primary_carrier"][
+                "minLength"
+            ],
+        )
+        self.assertEqual(
+            3,
+            validation["$defs"]["examples"]["additionalProperties"][
+                "maxItems"
+            ],
+        )
+
+    def test_split_timing_schemas_accept_new_records_and_legacy_projection(self):
+        """Catches new artifacts losing required lineage or legacy reads losing timing."""
+        semantic = {
+            "artifact_id": "semantic-beats-v1",
+            "type": "semantic-beats",
+            "version": 1,
+            "status": "approved",
+            "parents": ["narration-v1"],
+            "path": "artifacts/semantic-beats-v1.json",
+            "narration_id": "narration-v1",
+            "beats": [
+                {
+                    "beat_id": "B01",
+                    "text_ref": "narration-v1:S01:L1",
+                    "keyword": "timing",
+                    "intent": "core-concept-emphasis",
+                    "priority": "primary",
+                    "preferred_carrier": "motion-graphics",
+                    "approval_provenance": "user:keyword-review-v1",
+                }
+            ],
+        }
+        timed = {
+            "artifact_id": "timed-semantic-beats-v1",
+            "type": "timed-semantic-beats",
+            "version": 1,
+            "status": "approved",
+            "parents": ["semantic-beats-v1", "voice-timing-v1"],
+            "path": "artifacts/timed-semantic-beats-v1.json",
+            "semantic_beats_id": "semantic-beats-v1",
+            "voice_timing_id": "voice-timing-v1",
+            "timing_kind": "real",
+            "beats": [
+                {
+                    "beat_id": "B01",
+                    "speech_start_ms": 1000,
+                    "speech_end_ms": 2000,
+                    "keyword_start_ms": 1200,
+                    "keyword_end_ms": 1600,
+                    "emphasis_ms": 1400,
+                    "visual_window_ms": [1080, 1900],
+                }
+            ],
+        }
+        legacy = {
+            "artifact_id": "semantic-beats-v0",
+            "type": "semantic-beats",
+            "version": 1,
+            "status": "approved",
+            "parents": ["voice-timing-v0"],
+            "path": "artifacts/semantic-beats-v0.json",
+            "voice_timing_id": "voice-timing-v0",
+        }
+
+        self.assertEqual(
+            [], list(self.split_schema_validator("semantic-beats.schema.json").iter_errors(semantic))
+        )
+        self.assertEqual(
+            [], list(self.split_schema_validator("timed-semantic-beats.schema.json").iter_errors(timed))
+        )
+        self.assertEqual(
+            [],
+            list(
+                Draft202012Validator(self.schema("artifact.schema.json")).iter_errors(
+                    legacy
+                )
+            ),
+        )
+        authoring_attempt = json.loads(json.dumps(semantic))
+        authoring_attempt["voice_timing_id"] = "voice-timing-v1"
+        self.assertTrue(
+            list(
+                self.split_schema_validator("semantic-beats.schema.json").iter_errors(
+                    authoring_attempt
+                )
+            )
+        )
+
+    def test_split_timing_schemas_reject_unapproved_or_unbounded_records(self):
+        """Catches estimated timing, anonymous beats, duplicate IDs, layers, or diagnostics."""
+        semantic = {
+            "artifact_id": "semantic-beats-v1", "type": "semantic-beats",
+            "version": 1, "status": "approved", "parents": ["narration-v1"],
+            "path": "artifacts/semantic-beats-v1.json", "narration_id": "narration-v1",
+            "beats": [{"beat_id": "B01", "text_ref": "narration-v1:S01:L1", "keyword": "timing", "intent": "core-concept-emphasis", "priority": "primary", "preferred_carrier": "motion-graphics", "approval_provenance": "user:keyword-review-v1"}],
+        }
+        timed = {
+            "artifact_id": "timed-semantic-beats-v1", "type": "timed-semantic-beats",
+            "version": 1, "status": "approved", "parents": ["semantic-beats-v1", "voice-timing-v1"],
+            "path": "artifacts/timed-semantic-beats-v1.json", "semantic_beats_id": "semantic-beats-v1", "voice_timing_id": "voice-timing-v1", "timing_kind": "real",
+            "beats": [{"beat_id": "B01", "speech_start_ms": 1000, "speech_end_ms": 2000, "keyword_start_ms": 1200, "keyword_end_ms": 1600, "emphasis_ms": 1400, "visual_window_ms": [1080, 1900]}],
+        }
+        scenes = {
+            "artifact_id": "scene-timing-contracts-v1", "type": "scene-timing-contracts",
+            "version": 1, "status": "approved", "parents": ["timed-semantic-beats-v1"],
+            "path": "artifacts/scene-timing-contracts-v1.json", "timed_semantic_beats_id": "timed-semantic-beats-v1",
+            "scenes": [{"scene_id": "S01", "scene_window_ms": [1000, 2000], "beat_ids": ["B01"], "primary_carrier": "motion-graphics", "support_layer": "caption-emphasis", "visual_window_ms": [1080, 1900]}],
+        }
+        validation = {
+            "status": "blocked", "checks_run": 18,
+            "issue_counts": {"BEAT_OUTSIDE_SCENE": 4},
+            "examples": {"BEAT_OUTSIDE_SCENE": ["B01", "B02", "B03"]},
+        }
+        cases = (
+            ("estimated-timing", "timed-semantic-beats.schema.json", timed, lambda record: record.update({"timing_kind": "estimated"})),
+            ("missing-approval", "semantic-beats.schema.json", semantic, lambda record: record["beats"][0].pop("approval_provenance")),
+            ("duplicate-beat", "semantic-beats.schema.json", semantic, lambda record: record["beats"].append(dict(record["beats"][0]))),
+            ("multiple-support-layers", "scene-timing-contracts.schema.json", scenes, lambda record: record["scenes"][0].update({"support_layer": ["caption-emphasis", "annotation"]})),
+            ("four-examples", "timing-validation.schema.json", validation, lambda record: record["examples"]["BEAT_OUTSIDE_SCENE"].append("B04")),
+        )
+        for name, schema_name, fixture, mutate in cases:
+            with self.subTest(name=name):
+                record = json.loads(json.dumps(fixture))
+                mutate(record)
+                self.assertTrue(
+                    list(self.split_schema_validator(schema_name).iter_errors(record))
+                )
+
+    def test_split_timing_schema_mutations_fail_after_fingerprint_refresh(self):
+        """Catches a refreshed release blessing weaker timing boundaries."""
+        cases = (
+            (
+                "estimated-timing",
+                "references/schemas/timed-semantic-beats.schema.json",
+                lambda schema: schema["properties"].update({"timing_kind": {"const": "estimated"}}),
+                "invalid:timed-semantic-beats-timing-kind",
+            ),
+            (
+                "missing-approval",
+                "references/schemas/semantic-beats.schema.json",
+                lambda schema: schema["$defs"]["beat"]["required"].remove("approval_provenance"),
+                "invalid:semantic-beats-approval-provenance",
+            ),
+            (
+                "duplicate-beat-ids",
+                "references/schemas/semantic-beats.schema.json",
+                lambda schema: schema["$defs"]["beats"].update({"uniqueItems": False}),
+                "invalid:semantic-beats-contract",
+            ),
+            (
+                "multiple-support-layers",
+                "references/schemas/scene-timing-contracts.schema.json",
+                lambda schema: schema["$defs"].update({"supportLayer": {"type": "array", "maxItems": 2}}),
+                "invalid:scene-timing-contracts-contract",
+            ),
+            (
+                "four-returned-examples",
+                "references/schemas/timing-validation.schema.json",
+                lambda schema: schema["$defs"]["examples"]["additionalProperties"].update({"maxItems": 4}),
+                "invalid:timing-validation-contract",
+            ),
+        )
+        for name, relative, mutate, expected in cases:
+            with self.subTest(name=name), TemporaryDirectory() as folder:
+                package = self.copy_package(folder)
+                path = package / relative
+                schema = json.loads(path.read_text(encoding="utf-8"))
+                mutate(schema)
+                path.write_text(json.dumps(schema), encoding="utf-8")
+                self.refresh_release_fingerprint(package)
+
+                errors = validate_package(package)
+
+                self.assertNotIn("invalid:release-fingerprint", errors)
+                self.assertIn(expected, errors)
+
     def test_visual_media_schema_is_closed_and_bounded(self):
         """Catches a visual-media task context that expands beyond its isolated scope."""
         schema = json.loads(

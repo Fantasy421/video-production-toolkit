@@ -55,7 +55,7 @@
     "timing_kind": {"$ref": "#/$defs/token64"},
     "uploaded_audio_id": {"$ref": "#/$defs/safeId"},
     "voice_id": {"$ref": "#/$defs/safeId"},
-    "voice_timing_id": {"$ref": "#/$defs/safeId"},
+    "voice_timing_id": {"$ref": "#/$defs/safeId", "deprecated": true, "readOnly": true},
     "voiceover_id": {"$ref": "#/$defs/safeId"}
   },
   "additionalProperties": false,

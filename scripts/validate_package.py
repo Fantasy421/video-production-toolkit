@@ -183,9 +183,13 @@ REQUIRED_FILES = (
     "references/schemas/layout-pack.schema.json",
     "references/schemas/project.schema.json",
     "references/schemas/scene-contract.schema.json",
+    "references/schemas/scene-timing-contracts.schema.json",
     "references/schemas/style-pack.schema.json",
     "references/schemas/task-envelope.schema.json",
     "references/schemas/task-result.schema.json",
+    "references/schemas/semantic-beats.schema.json",
+    "references/schemas/timed-semantic-beats.schema.json",
+    "references/schemas/timing-validation.schema.json",
     "references/schemas/voice-source-decision.schema.json",
     "references/schemas/voice-profile.schema.json",
     "references/schemas/voiceover.schema.json",
@@ -313,6 +317,27 @@ def validate_package(root: Path) -> list[str]:
         _validate_voiceover_schema(voiceover, errors)
     if timing is not None:
         _validate_voice_timing_schema(timing, errors)
+
+    semantic = _read_json_object(
+        root, "references/schemas/semantic-beats.schema.json", errors
+    )
+    timed = _read_json_object(
+        root, "references/schemas/timed-semantic-beats.schema.json", errors
+    )
+    scenes = _read_json_object(
+        root, "references/schemas/scene-timing-contracts.schema.json", errors
+    )
+    validation = _read_json_object(
+        root, "references/schemas/timing-validation.schema.json", errors
+    )
+    if semantic is not None:
+        _validate_semantic_beats_schema(semantic, errors)
+    if timed is not None:
+        _validate_timed_semantic_beats_schema(timed, errors)
+    if scenes is not None:
+        _validate_scene_timing_contracts_schema(scenes, errors)
+    if validation is not None:
+        _validate_timing_validation_schema(validation, errors)
     return errors
 
 
@@ -452,6 +477,171 @@ def _validate_artifact_schema(
         != "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
     ):
         errors.append("invalid:artifact-mime")
+    if properties.get("voice_timing_id") != {
+        "$ref": "#/$defs/safeId",
+        "deprecated": True,
+        "readOnly": True,
+    }:
+        errors.append("invalid:legacy-semantic-timing-projection")
+
+
+def _safe_id_definition() -> dict[str, Any]:
+    return {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$",
+    }
+
+
+def _bounded_windows(definitions: Mapping[str, Any]) -> bool:
+    milliseconds = _mapping(definitions.get("milliseconds"))
+    window = _mapping(definitions.get("window"))
+    return (
+        milliseconds == {"type": "integer", "minimum": 0, "maximum": 36000000}
+        and window.get("prefixItems")
+        == [
+            {"$ref": "#/$defs/milliseconds"},
+            {"$ref": "#/$defs/milliseconds"},
+        ]
+        and window.get("items") is False
+        and window.get("minItems") == 2
+        and window.get("maxItems") == 2
+    )
+
+
+def _carrier_definition() -> dict[str, Any]:
+    return {
+        "type": "string",
+        "minLength": 1,
+        "enum": [
+            "a-roll",
+            "b-roll",
+            "scene",
+            "demo",
+            "motion-graphics",
+            "evidence",
+        ],
+    }
+
+
+def _validate_semantic_beats_schema(
+    schema: Mapping[str, Any], errors: list[str]
+) -> None:
+    properties = _mapping(schema.get("properties"))
+    definitions = _mapping(schema.get("$defs"))
+    beat = _mapping(definitions.get("beat"))
+    beats = _mapping(definitions.get("beats"))
+    beat_properties = _mapping(beat.get("properties"))
+    if (
+        schema.get("additionalProperties") is not False
+        or _required_fields(schema)
+        != {
+            "artifact_id", "type", "version", "status", "parents", "path",
+            "narration_id", "beats",
+        }
+        or properties.get("type") != {"const": "semantic-beats"}
+        or properties.get("status") != {"const": "approved"}
+        or "voice_timing_id" in properties
+        or definitions.get("safeId") != _safe_id_definition()
+        or beats.get("minItems") != 1
+        or beats.get("maxItems") != 512
+        or beats.get("uniqueItems") is not True
+        or beat.get("additionalProperties") is not False
+        or _required_fields(beat)
+        != {
+            "beat_id", "text_ref", "keyword", "intent", "priority",
+            "preferred_carrier", "approval_provenance",
+        }
+        or beat_properties.get("priority") != {"enum": ["primary", "secondary"]}
+        or beat_properties.get("preferred_carrier") != {"$ref": "#/$defs/carrier"}
+        or definitions.get("carrier") != _carrier_definition()
+    ):
+        errors.append("invalid:semantic-beats-contract")
+    if "approval_provenance" not in _required_fields(beat):
+        errors.append("invalid:semantic-beats-approval-provenance")
+
+
+def _validate_timed_semantic_beats_schema(
+    schema: Mapping[str, Any], errors: list[str]
+) -> None:
+    properties = _mapping(schema.get("properties"))
+    definitions = _mapping(schema.get("$defs"))
+    beat = _mapping(definitions.get("beat"))
+    beats = _mapping(properties.get("beats"))
+    if (
+        schema.get("additionalProperties") is not False
+        or not {
+            "semantic_beats_id", "voice_timing_id", "timing_kind", "beats"
+        }.issubset(_required_fields(schema))
+        or properties.get("type") != {"const": "timed-semantic-beats"}
+        or properties.get("timing_kind") != {"const": "real"}
+        or definitions.get("safeId") != _safe_id_definition()
+        or beats.get("minItems") != 1
+        or beats.get("maxItems") != 512
+        or beats.get("uniqueItems") is not True
+        or beat.get("additionalProperties") is not False
+        or _required_fields(beat)
+        != {
+            "beat_id", "speech_start_ms", "speech_end_ms", "keyword_start_ms",
+            "keyword_end_ms", "emphasis_ms", "visual_window_ms",
+        }
+        or not _bounded_windows(definitions)
+    ):
+        errors.append("invalid:timed-semantic-beats-contract")
+    if properties.get("timing_kind") != {"const": "real"}:
+        errors.append("invalid:timed-semantic-beats-timing-kind")
+
+
+def _validate_scene_timing_contracts_schema(
+    schema: Mapping[str, Any], errors: list[str]
+) -> None:
+    properties = _mapping(schema.get("properties"))
+    definitions = _mapping(schema.get("$defs"))
+    scene = _mapping(definitions.get("scene"))
+    scene_properties = _mapping(scene.get("properties"))
+    support = _mapping(definitions.get("supportLayer"))
+    if (
+        schema.get("additionalProperties") is not False
+        or not {"timed_semantic_beats_id", "scenes"}.issubset(
+            _required_fields(schema)
+        )
+        or properties.get("type") != {"const": "scene-timing-contracts"}
+        or definitions.get("safeId") != _safe_id_definition()
+        or scene.get("additionalProperties") is not False
+        or _required_fields(scene)
+        != {
+            "scene_id", "scene_window_ms", "beat_ids", "primary_carrier",
+            "support_layer", "visual_window_ms",
+        }
+        or scene_properties.get("primary_carrier")
+        != {"$ref": "#/$defs/carrier", "minLength": 1}
+        or definitions.get("carrier") != _carrier_definition()
+        or support != {"type": ["string", "null"], "minLength": 1, "maxLength": 128}
+        or not _bounded_windows(definitions)
+    ):
+        errors.append("invalid:scene-timing-contracts-contract")
+
+
+def _validate_timing_validation_schema(
+    schema: Mapping[str, Any], errors: list[str]
+) -> None:
+    properties = _mapping(schema.get("properties"))
+    definitions = _mapping(schema.get("$defs"))
+    examples = _mapping(definitions.get("examples"))
+    issue_counts = _mapping(definitions.get("issueCounts"))
+    if (
+        schema.get("additionalProperties") is not False
+        or _required_fields(schema) != {"status", "checks_run"}
+        or properties.get("status") != {"enum": ["blocked", "passed"]}
+        or properties.get("checks_run")
+        != {"type": "integer", "minimum": 0, "maximum": 1000000}
+        or examples.get("type") != "object"
+        or _mapping(examples.get("additionalProperties")).get("maxItems") != 3
+        or _mapping(examples.get("additionalProperties")).get("uniqueItems") is not True
+        or issue_counts.get("type") != "object"
+    ):
+        errors.append("invalid:timing-validation-contract")
 
 
 def _validate_visual_media_schema(
