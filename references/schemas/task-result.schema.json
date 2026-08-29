@@ -4,10 +4,10 @@
   "type": "object",
   "required": ["task_id", "status", "inputs", "artifacts", "checks", "warnings", "worker_id", "claim_token"],
   "properties": {
-    "task_id": {"type": "string", "minLength": 1},
+    "task_id": {"$ref": "#/$defs/safeId"},
     "status": {"enum": ["blocked", "waiting_external", "waiting_user", "succeeded", "failed", "cancelled"]},
-    "inputs": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
-    "artifacts": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "inputs": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
+    "artifacts": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
     "checks": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
     "warnings": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
     "worker_id": {"type": "string", "minLength": 1},
@@ -141,7 +141,7 @@
   ],
   "additionalProperties": false,
   "$defs": {
-    "safeId": {"type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"},
+    "safeId": {"type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"},
     "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"},
     "artifactPath": {"allOf": [{"$ref": "#/$defs/projectPath"}, {"pattern": "^(?:artifacts|media)/"}]},
     "previewPath": {"allOf": [{"$ref": "#/$defs/projectPath"}, {"pattern": "^previews/"}]},

@@ -15,6 +15,7 @@ from scripts.toolkit.tasks import (
 )
 from scripts.toolkit.visual_media_context import (
     validate_compact_visual_media_handoff,
+    validate_result_envelope,
 )
 
 
@@ -549,6 +550,42 @@ class PackageTests(unittest.TestCase):
             with self.subTest(media=media):
                 self.assertEqual(expected, validator.is_valid(result))
                 self.assertEqual(expected, runtime_valid)
+
+    def test_generic_task_and_result_ids_are_colon_free(self):
+        """Catches schema/runtime treating URI-like strings as generic identifiers."""
+        envelope = {
+            "task_id": "gopher:task-v1",
+            "capability": "project.manage",
+            "inputs": ["artifact-v1"],
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "project-report-v1",
+            "constraints": {"visual_media_operation": "none"},
+        }
+        self.assertFalse(self.task_envelope_validator().is_valid(envelope))
+        with self.assertRaises(ValueError):
+            validate_current_task_envelope(envelope)
+
+        result = {
+            "task_id": "task-v1",
+            "status": "succeeded",
+            "inputs": [],
+            "artifacts": ["gopher:artifact-v1"],
+            "checks": ["adapter-selected:chatcut"],
+            "warnings": [],
+            "worker_id": "worker-v1",
+            "claim_token": "claim-v1",
+        }
+        self.assertFalse(self.task_result_validator().is_valid(result))
+        with self.assertRaises(ValueError):
+            validate_result_envelope(result)
+
+        validate_result_envelope(
+            {
+                **result,
+                "artifacts": ["artifact-v1"],
+                "checks": ["adapter-selected:chatcut"],
+            }
+        )
 
     def test_visual_media_handoff_has_a_bounded_compact_result_shape(self):
         """Catches a visual-media result whose variable handoff fields exceed its budget."""

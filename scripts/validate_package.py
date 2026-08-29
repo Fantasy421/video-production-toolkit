@@ -407,7 +407,7 @@ def _validate_artifact_schema(
         "type": "string",
         "minLength": 1,
         "maxLength": 128,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$",
     }:
         errors.append("invalid:artifact-safe-id")
     if _required_fields(schema) != {
@@ -472,7 +472,7 @@ def _validate_visual_media_schema(
     if definitions.get("safeId") != {
         "type": "string",
         "maxLength": 128,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$",
     }:
         errors.append("invalid:visual-media-safe-id")
     if definitions.get("uniqueSafeArtifactIds") != {
@@ -524,6 +524,7 @@ def _validate_task_envelope_schema(
     schema: Mapping[str, Any], errors: list[str]
 ) -> None:
     properties = _mapping(schema.get("properties"))
+    definitions = _mapping(schema.get("$defs"))
     constraints = _mapping(properties.get("constraints"))
     constraint_properties = _mapping(constraints.get("properties"))
     if constraint_properties.get("visual_media_context") != {
@@ -537,6 +538,19 @@ def _validate_task_envelope_schema(
         errors.append("invalid:visual-media-operations")
     if constraint_properties.get("visual_operation") != LEGACY_VISUAL_OPERATION:
         errors.append("invalid:legacy-visual-operation")
+    if (
+        definitions.get("safeId")
+        != {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$",
+        }
+        or properties.get("task_id") != {"$ref": "#/$defs/safeId"}
+        or _mapping(properties.get("inputs")).get("items")
+        != {"$ref": "#/$defs/safeId"}
+    ):
+        errors.append("invalid:task-generic-safe-id")
     conditions = constraints.get("allOf")
     visual_conditions = (
         [
@@ -617,6 +631,21 @@ def _validate_task_result_schema(
         or media.get("additionalProperties") is not False
     ):
         errors.append("invalid:visual-media-mime-contract")
+    safe_id = _mapping(_mapping(schema.get("$defs")).get("safeId"))
+    if (
+        safe_id
+        != {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$",
+        }
+        or properties.get("task_id") != {"$ref": "#/$defs/safeId"}
+        or _mapping(properties.get("inputs")).get("items")
+        != {"$ref": "#/$defs/safeId"}
+        or _mapping(properties.get("artifacts")).get("items")
+        != {"$ref": "#/$defs/safeId"}
+    ):
+        errors.append("invalid:task-result-generic-safe-id")
 
 
 def _contains_key(value: Any, key: str) -> bool:

@@ -15,7 +15,7 @@ from pathlib import PurePosixPath
 from typing import Any, Optional
 
 
-SAFE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"
+SAFE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"
 SAFE_ID_RE = re.compile(SAFE_ID_PATTERN)
 
 CONTEXT_REQUIRED_FIELDS = frozenset(

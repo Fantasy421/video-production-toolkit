@@ -31,7 +31,7 @@
   },
   "additionalProperties": false,
   "$defs": {
-    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"},
+    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"},
     "parents": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
     "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"},
     "nonEmptyText": {"type": "string", "minLength": 1, "maxLength": 500}

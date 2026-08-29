@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 
 SAFE_ID_RE = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"
+    r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"
 )
 HANDOFF_PATH_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
 MIME_TYPE_RE = re.compile(
@@ -441,7 +441,8 @@ SAFE_SCHEME_TOKEN_PREFIXES = {
     "decision_provenance": frozenset({"user"}),
     "identity_provenance": frozenset({"user"}),
     "profile_provenance": frozenset({"user"}),
-    "provenance": frozenset({"chatcut", "user"}),
+    "provenance": frozenset({"chatcut", "user", "user-upload"}),
+    "validation_evidence": frozenset({"isolated-image-inspect"}),
 }
 VISUAL_INSPECT_OPERATIONS = frozenset({"image-inspect", "video-inspect"})
 VISUAL_OUTPUT_OPERATIONS = ACTIVE_VISUAL_MEDIA_OPERATIONS - VISUAL_INSPECT_OPERATIONS

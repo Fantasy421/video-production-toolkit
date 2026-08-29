@@ -21,6 +21,7 @@ from scripts.toolkit.image_context import (
 from scripts.toolkit.project_state import _state_lock
 from scripts.toolkit.runtime_paths import project_path, project_root, storage_directory
 from scripts.toolkit.visual_media_context import (
+    SAFE_ID_RE,
     VISUAL_MEDIA_OPERATIONS,
     classify_visual_media_artifact,
     classify_visual_media_task,
@@ -975,7 +976,7 @@ def _require_nonempty_string(value: Any, label: str) -> None:
 
 def _require_safe_id(value: Any, label: str) -> None:
     _require_nonempty_string(value, label)
-    if value in {".", ".."} or "/" in value or "\\" in value:
+    if len(value) > 128 or SAFE_ID_RE.fullmatch(value) is None:
         raise ValueError(f"{label} must be a safe single path component")
 
 

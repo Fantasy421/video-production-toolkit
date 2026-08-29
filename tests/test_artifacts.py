@@ -384,6 +384,25 @@ class ArtifactTests(unittest.TestCase):
             ),
             ({**base, "path": "."}, False),
             ({**base, "path": "artifacts/./promotion-v1.json"}, False),
+            ({**base, "artifact_id": "gopher:opaque-resource"}, False),
+            (
+                {
+                    **base,
+                    "promotion": {
+                        "provenance": {"artifact_id": "gopher:opaque-resource"}
+                    },
+                },
+                False,
+            ),
+            (
+                {
+                    **base,
+                    "promotion": {
+                        "provenance": {"project_id": "gopher:opaque-resource"}
+                    },
+                },
+                False,
+            ),
         )
         for record, expected in cases:
             runtime_valid = True
@@ -394,6 +413,79 @@ class ArtifactTests(unittest.TestCase):
             with self.subTest(record=record):
                 self.assertEqual(expected, validator.is_valid(record))
                 self.assertEqual(expected, runtime_valid)
+
+    def test_colon_free_ids_keep_explicit_provenance_namespaces(self):
+        """Catches generic IDs reopening URI syntax or losing approved provenance."""
+        schema = json.loads(
+            (
+                Path(__file__).parents[1]
+                / "references/schemas/artifact.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        validator = Draft202012Validator(schema)
+        record = {
+            "artifact_id": "artifact-v1",
+            "type": "report",
+            "version": 1,
+            "status": "approved",
+            "parents": ["parent-v1"],
+            "path": "artifacts/artifact-v1.json",
+            "consent_provenance": "user:consent-v1",
+            "decision_provenance": "user:decision-v1",
+            "identity_provenance": "user:identity-v1",
+            "profile_provenance": "user:profile-v1",
+            "provenance": "chatcut:voice",
+            "promotion": {
+                "provenance": {
+                    "artifact_id": "source-v1",
+                    "project_id": "project-v1",
+                }
+            },
+        }
+        self.assertTrue(validator.is_valid(record))
+        artifacts.validate_artifact_record(record)
+
+    def test_artifact_keeps_evidence_backed_explicit_scheme_tokens(self):
+        """Catches the coordinator scrub rejecting documented uploaded/inspection metadata."""
+        schema = json.loads(
+            (
+                Path(__file__).parents[1]
+                / "references/schemas/artifact.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        validator = Draft202012Validator(schema)
+        record = {
+            "artifact_id": "uploaded-voice-v2",
+            "type": "voiceover",
+            "version": 1,
+            "status": "approved",
+            "parents": ["upload-v2"],
+            "path": "artifacts/uploaded-voice-v2.json",
+            "provenance": "user-upload:upload-v2",
+            "promotion": {
+                "validation_evidence": [
+                    "isolated-image-inspect:alpha-transparency-present"
+                ]
+            },
+        }
+
+        self.assertTrue(validator.is_valid(record))
+        artifacts.validate_artifact_record(record)
+
+        for key, value in (
+            ("provenance", "gopher:upload-v2"),
+            ("validation_evidence", ["gopher:alpha-transparency-present"]),
+        ):
+            unsafe = {
+                **record,
+                "promotion": dict(record["promotion"]),
+            }
+            if key == "provenance":
+                unsafe[key] = value
+            else:
+                unsafe["promotion"][key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                artifacts.validate_artifact_record(unsafe)
 
     def test_serialization_failure_leaves_no_artifact_and_retry_succeeds(self):
         """Catches a failed JSON write reserving an ID or publishing a partial file."""

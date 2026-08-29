@@ -30,7 +30,7 @@ DECORATIVE_KINDS = {
     "caption-enter",
     "idle-loop",
 }
-SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
+SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9][A-Za-z0-9_-]*)*$")
 
 
 def evaluate_coverage(shots: list[dict[str, Any]]) -> dict[str, Any]:

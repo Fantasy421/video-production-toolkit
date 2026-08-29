@@ -117,3 +117,59 @@ git diff --check
 
 All work remained JSON/dict/string/schema-only; no media content was decoded,
 opened, rendered, played, displayed, extracted, or inspected.
+
+## Fix round 2: colon-free generic identifiers
+
+### Changes
+
+- Made generic Artifact, task, context, scene, voice, and coverage identifiers
+  colon-free in their runtime patterns and matching Draft 2020-12 schemas.
+  This includes nested `promotion.provenance.artifact_id` and `project_id`.
+- Added closed task-envelope and task-result schema contracts for generic task,
+  input, and output Artifact IDs; runtime task ID validation now uses the same
+  bounded generic-ID pattern.
+- Retained colons only for explicit non-media contracts: `user:` and
+  `user-upload:` provenance, `chatcut:` provenance/installed skills,
+  `adapter-selected:` checks, and
+  `isolated-image-inspect:` validation evidence. The adapter token validator
+  is intentionally separate because it validates registered skill namespaces,
+  not Artifact/task identity.
+- Added the observed upload provenance and isolated-alpha inspection evidence
+  to their exact field-specific allowlists. Arbitrary schemes remain rejected.
+
+### RED evidence
+
+The focused fixture added actual nested `promotion.provenance` IDs and generic
+task/result IDs before implementation. Fresh execution showed the universal
+runtime scrub already rejected `gopher:` nested values, while the Artifact
+schema and task-envelope schema still accepted colon-bearing generic IDs.
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts.ArtifactTests.test_artifact_schema_and_runtime_match_closed_promotion_metadata tests.test_artifacts.ArtifactTests.test_colon_free_ids_keep_explicit_provenance_namespaces tests.test_package.PackageTests.test_generic_task_and_result_ids_are_colon_free -v
+# Ran 3 tests; FAILED (4 failures)
+```
+
+### GREEN evidence
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts.ArtifactTests.test_artifact_schema_and_runtime_match_closed_promotion_metadata tests.test_artifacts.ArtifactTests.test_colon_free_ids_keep_explicit_provenance_namespaces tests.test_artifacts.ArtifactTests.test_artifact_keeps_evidence_backed_explicit_scheme_tokens tests.test_package.PackageTests.test_generic_task_and_result_ids_are_colon_free tests.test_voice.VoiceSchemaTests -v
+# Ran 7 tests; OK
+
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts tests.test_visual_media_context tests.test_tasks tests.test_voice_tasks tests.test_voice tests.test_image_context tests.test_validation -v
+# Ran 275 tests in 4.164s; OK
+
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_coverage -v
+# Ran 12 tests in 0.000s; OK
+
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts tests.test_visual_media_context tests.test_tasks tests.test_package tests.test_voice_tasks tests.test_voice tests.test_image_context tests.test_validation tests.test_coverage -v
+# Ran 318 tests; OK
+
+python3 scripts/validate_package.py
+# package valid
+
+git diff --check
+# no output (clean)
+```
+
+All work remained JSON/dict/string/schema-only; no media content was decoded,
+opened, rendered, played, displayed, extracted, or inspected.
