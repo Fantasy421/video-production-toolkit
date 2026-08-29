@@ -22,7 +22,7 @@ MIME_TYPE_RE = re.compile(
 CHECKSUM_RE = re.compile(r"[A-Fa-f0-9]{8,128}")
 BASE64_TOKEN_RE = re.compile(
     r"(?<![A-Za-z0-9+/_=-])"
-    r"([A-Za-z0-9+/_-]+(?:[\r\n]+[A-Za-z0-9+/_-]+)*={0,2})"
+    r"([A-Za-z0-9+/_-]+(?:[ \t\r\n]+[A-Za-z0-9+/_-]+)*={0,2})"
     r"(?![A-Za-z0-9+/_=-])"
 )
 REMOTE_URL_RE = re.compile(
@@ -392,9 +392,6 @@ HISTORY_CONTEXT_TOKENS = frozenset(
 )
 HISTORY_CONTAINER_TOKENS = frozenset(
     {"history", "log", "logs", "messages", "record", "records", "trace", "turn", "turns"}
-)
-NUMERIC_MEDIA_KEY_TOKENS = frozenset(
-    {"frame", "frames", "luma", "pixel", "pixels", "rgb", "rgba", "sample", "samples", "waveform"}
 )
 SAFE_ID_VALUE_KEYS = frozenset(
     {
@@ -1078,13 +1075,11 @@ def _scrub_value(
         raise ValueError(
             "visual media result must not contain an image payload or other media payload"
         )
-    if (
-        isinstance(value, (list, tuple))
-        and key_tokens & NUMERIC_MEDIA_KEY_TOKENS
-        and _contains_numeric_leaf(value)
+    if isinstance(value, (list, tuple)) and _contains_numeric_leaf(value) and not (
+        normalized_key == "segments" and _is_closed_timing_segments(value)
     ):
         raise ValueError(
-            "visual media result must not contain numeric sample, pixel, or frame arrays"
+            "visual media result must not contain untyped numeric arrays"
         )
     if isinstance(value, (bytes, bytearray, memoryview)):
         raise ValueError(
@@ -1178,15 +1173,19 @@ def _scrub_value(
 
 
 def _contains_binary_like_base64(value: str, normalized_key: str) -> bool:
-    if "path" in normalized_key:
-        return False
     compact_value = value.strip()
     if _allows_safe_id_value(normalized_key, compact_value) or _is_typed_checksum(
         normalized_key, compact_value
     ):
         return False
     for match in BASE64_TOKEN_RE.finditer(value):
-        payload_text = "".join(re.split(r"\s+", match.group(1).strip()))
+        candidate = match.group(1).strip()
+        chunks = re.split(r"\s+", candidate)
+        if len(chunks) > 1 and any(
+            len(chunk.rstrip("=")) % 4 for chunk in chunks[:-1]
+        ):
+            continue
+        payload_text = "".join(chunks)
         if len(payload_text) < 32 or not _is_canonical_base64_token(payload_text):
             continue
         return True
@@ -1218,6 +1217,35 @@ def _contains_numeric_leaf(value: Any) -> bool:
     if isinstance(value, (list, tuple)):
         return any(_contains_numeric_leaf(item) for item in value)
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_closed_timing_segments(value: Any) -> bool:
+    if not isinstance(value, (list, tuple)) or len(value) > 512:
+        return False
+    for segment in value:
+        if not isinstance(segment, Mapping) or set(segment) != {
+            "start_ms",
+            "end_ms",
+            "text",
+        }:
+            return False
+        start, end, text = (
+            segment["start_ms"],
+            segment["end_ms"],
+            segment["text"],
+        )
+        if (
+            isinstance(start, bool)
+            or not isinstance(start, int)
+            or isinstance(end, bool)
+            or not isinstance(end, int)
+            or not 0 <= start < end <= 36_000_000
+            or not isinstance(text, str)
+            or not text.strip()
+            or len(text) > 1_000
+        ):
+            return False
+    return True
 
 
 def _allows_safe_id_value(normalized_key: str, value: str) -> bool:

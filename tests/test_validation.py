@@ -447,6 +447,30 @@ class PersistedVisualMediaValidationTests(unittest.TestCase):
             result, result_path, "visual-media-result-invalid"
         )
 
+    def test_recovery_rejects_structural_encodings_in_persisted_result_text(self):
+        """Catches recovery trusting fragmented or low-entropy encoded error text."""
+        encoded_values = (
+            "QUFB" * 16,
+            " ".join(["QUFB"] * 16),
+            "QUFB-" * 12,
+            "A" * 64,
+        )
+        for index, value in enumerate(encoded_values, 1):
+            with self.subTest(index=index):
+                task = self.nonvisual_task(f"encoded-result-{index}")
+                task_path = self.write_task(task)
+                result_path = self.write_result(
+                    task["task_id"],
+                    {
+                        **self.plain_result(task["task_id"], status="failed"),
+                        "error": value,
+                    },
+                )
+                result = self.assert_validation_preserves(task_path, result_path)
+                self.assert_only_issue_for(
+                    result, result_path, "visual-media-result-invalid"
+                )
+
     def test_valid_nonvisual_task_and_result_remain_recoverable(self):
         """Catches the visual recovery boundary rejecting ordinary compact results."""
         self.write_artifact(

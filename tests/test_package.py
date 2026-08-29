@@ -527,8 +527,12 @@ class PackageTests(unittest.TestCase):
             ({"kind": "image", "mime_type": "image/png"}, True),
             ({"kind": "video", "mime_type": "video/mp4"}, True),
             ({"kind": "visual", "mime_type": "image/png"}, True),
+            ({"mime_type": "image/png"}, True),
             ({"kind": "image", "mime_type": "video/mp4"}, False),
             ({"kind": "video", "mime_type": "image/png"}, False),
+            ({"mime_type": "audio/wav"}, False),
+            ({"kind": "visual", "mime_type": "audio/wav"}, False),
+            ({"kind": "image", "mime_type": "audio/wav"}, False),
         )
         for media, expected in cases:
             handoff = {**base_handoff, "media": media}
@@ -665,9 +669,9 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(
             {
                 "type": "string",
-                "minLength": 3,
+                "minLength": 7,
                 "maxLength": 128,
-                "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$",
+                "pattern": "^(?:image|video)/[a-z0-9][a-z0-9!#$&^_.+-]*$",
             },
             media["properties"]["mime_type"],
         )

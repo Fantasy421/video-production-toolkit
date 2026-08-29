@@ -260,3 +260,54 @@ The prescribed forbidden-call scan found only the literal `ffprobe` word in
 the voiceover-producer documentation; it found no executable visual-media or
 Base64-decoder call in the coordinator-safe visual boundary. No install, push,
 or Task 1 work was performed.
+
+## Fix round 4: structural encoding and voice/Artifact boundary parity
+
+### Changes
+
+- Extended structural Base64/Base64URL detection across whitespace-separated
+  chunks and removed the blanket `path` exemption. Typed safe IDs and explicit
+  checksums remain exempt only in their exact fields.
+- Rejected untyped numeric arrays under every key while retaining the closed,
+  bounded voice timing-segment shape.
+- Restricted every task-result handoff MIME to `image/` or `video/`, including
+  omitted and generic `visual` kinds, matching runtime acceptance.
+- Aligned voice schemas and runtime bounds with persisted Artifact limits for
+  IDs, paths, text, speaking rate, durations, and timing segment ceilings.
+  Voice bundle screening applies those shared limits without masking semantic
+  issue codes such as invalid profile fields or unsafe media paths; full
+  Artifact validation remains authoritative at persistence and read boundaries.
+- Updated the fixed-length path fixture to use schema-safe punctuation rather
+  than a Base64URL-shaped repeated token, and removed an obsolete numeric-key
+  heuristic constant.
+
+### RED evidence
+
+The following metadata-only command was run before the round-four production
+changes. One Package method name was stale, yielding one loader error; the
+remaining focused probes produced the expected 19 failures for path-carried,
+whitespace-split, and low-entropy encodings, untyped numeric arrays, MIME
+parity, and voice/Artifact bound parity.
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts.ArtifactTests.test_artifact_rejects_structural_encodings_at_create_and_read tests.test_tasks.TaskTests.test_completion_rejects_structural_encodings_in_error_text tests.test_validation.PersistedVisualMediaValidationTests.test_recovery_rejects_structural_encodings_in_persisted_result_text tests.test_visual_media_context.VisualMediaContextTests.test_universal_scrub_rejects_neutral_numeric_arrays_and_encoded_paths tests.test_package.PackageTests.test_task_result_visual_media_handoff_mime_schema_runtime_parity tests.test_voice.VoiceSchemaTests.test_voice_and_artifact_boundaries_share_all_persisted_limits -v
+# Ran 6 tests; FAILED (failures=19, errors=1)
+```
+
+### GREEN evidence
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts.ArtifactTests.test_artifact_rejects_structural_encodings_at_create_and_read tests.test_tasks.TaskTests.test_completion_rejects_structural_encodings_in_error_text tests.test_validation.PersistedVisualMediaValidationTests.test_recovery_rejects_structural_encodings_in_persisted_result_text tests.test_visual_media_context.VisualMediaContextTests.test_universal_scrub_rejects_neutral_numeric_arrays_and_encoded_paths tests.test_package.PackageTests.test_draft202012_and_runtime_match_handoff_mime_kind_decisions tests.test_voice.VoiceSchemaTests.test_voice_and_artifact_boundaries_share_all_persisted_limits -v
+# Ran 6 tests in 0.058s; OK
+
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_voice tests.test_voice_tasks tests.test_visual_media_context -v
+# Ran 80 tests in 1.551s; OK
+
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts tests.test_visual_media_context tests.test_tasks tests.test_validation tests.test_end_to_end tests.test_package tests.test_voice tests.test_voice_tasks tests.test_image_context tests.test_coverage -v
+# Before the fingerprint refresh: Ran 387 tests; FAILED (failures=2, errors=17, skipped=4).
+# One assertion was updated to the new MIME constraint; the other failure and all 17 errors were invalid:release-fingerprint consequences.
+```
+
+All probes in this round manipulated only dictionaries, strings, schemas, and
+filesystem metadata. No media was opened, decoded, rendered, played,
+displayed, extracted, or perceptually inspected.

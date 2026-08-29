@@ -256,6 +256,39 @@ class ArtifactTests(unittest.TestCase):
 
         self.assertIsNone(artifacts._read_valid_artifact(path))
 
+    def test_artifact_rejects_structural_encodings_at_create_and_read(self):
+        """Catches closed text and path carriers bypassing the shared payload scrub."""
+        encoded_values = (
+            ("single-token", "QUFB" * 16),
+            ("whitespace-chunked", " ".join(["QUFB"] * 16)),
+            ("base64url", "QUFB-" * 12),
+            ("low-entropy", "A" * 64),
+        )
+        for carrier in ("path", "text"):
+            for name, value in encoded_values:
+                with self.subTest(carrier=carrier, name=name):
+                    record = {
+                        **self.artifact,
+                        "artifact_id": f"create-{carrier}-{name}",
+                        "path": f"metadata/create-{carrier}-{name}.json",
+                        carrier: value,
+                    }
+                    with self.assertRaisesRegex(ValueError, "Base64|binary"):
+                        create_artifact(self.root, record)
+
+                    stored = create_artifact(
+                        self.root,
+                        {
+                            **self.artifact,
+                            "artifact_id": f"read-{carrier}-{name}",
+                            "path": f"metadata/read-{carrier}-{name}.json",
+                        },
+                    )
+                    tampered = json.loads(stored.read_text(encoding="utf-8"))
+                    tampered[carrier] = value
+                    stored.write_text(json.dumps(tampered), encoding="utf-8")
+                    self.assertIsNone(artifacts._read_valid_artifact(stored))
+
     def test_artifact_schema_rejects_unsafe_project_paths(self):
         """Catches schema consumers accepting paths the runtime must reject."""
         schema = json.loads(

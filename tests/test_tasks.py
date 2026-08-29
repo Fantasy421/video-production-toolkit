@@ -820,6 +820,34 @@ class TaskTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, message):
                 complete_task(self.root, result)
 
+    def test_completion_rejects_structural_encodings_in_error_text(self):
+        """Catches task completion accepting fragmented or low-entropy payload text."""
+        task_id = "encoded-error-result"
+        envelope = self.non_visual_envelope(task_id=task_id)
+        create_task(self.root, envelope)
+        claim = claim_task(self.root, task_id, "worker-a")
+        encoded_values = (
+            "QUFB" * 16,
+            " ".join(["QUFB"] * 16),
+            "QUFB-" * 12,
+            "A" * 64,
+        )
+        for value in encoded_values:
+            result = {
+                "task_id": task_id,
+                "status": "blocked",
+                "inputs": envelope["inputs"],
+                "artifacts": [],
+                "checks": [],
+                "warnings": [],
+                **claim,
+                "error": value,
+            }
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValueError, "Base64|binary"
+            ):
+                complete_task(self.root, result)
+
     def test_general_result_scrub_preserves_harmless_digest_metadata(self):
         """Catches the payload heuristic rejecting hashes or ordinary base64 prose."""
         task_id = "non-image-result-harmless-metadata"

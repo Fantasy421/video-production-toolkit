@@ -892,8 +892,10 @@ class VisualMediaContextTests(unittest.TestCase):
     def test_intrinsic_handoff_matches_schema_path_and_issue_id_bounds(self):
         """Catches runtime strings accepted outside the handoff schema's ASCII bounds."""
         exact_id = "a" * 128
-        exact_path = "media/" + "a" * 250
-        exact_preview = "previews/" + "a" * 247
+        # Use path-safe punctuation so this boundary fixture does not resemble
+        # a Base64URL payload, which the universal scrub now rejects.
+        exact_path = "media/" + "a." * 125
+        exact_preview = "previews/" + "a." * 123 + "a"
         accepted = self.handoff(
             artifact_ids=[exact_id],
             paths=[exact_path],
@@ -1004,6 +1006,27 @@ class VisualMediaContextTests(unittest.TestCase):
                 "artifact_ids": ["asset-SUQz-v1"],
                 "checks": ["sha256=" + "0123456789abcdef" * 4],
                 "summary": "Local project metadata is ready.",
+            }
+        )
+
+    def test_universal_scrub_rejects_neutral_numeric_arrays_and_encoded_paths(self):
+        """Catches payload detection depending on carrier names or line endings."""
+        cases = (
+            {"path": "A" * 64},
+            {"error": " ".join(["QUFB"] * 16)},
+            {"measurements": [0, 1, 2, 3]},
+        )
+        for value in cases:
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValueError, "Base64|binary|numeric"
+            ):
+                validate_result_envelope(value)
+
+        validate_result_envelope(
+            {
+                "segments": [
+                    {"start_ms": 0, "end_ms": 1_000, "text": "Narration."}
+                ]
             }
         )
 

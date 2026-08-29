@@ -7,7 +7,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from scripts.toolkit import voice
+from jsonschema import Draft202012Validator
+
+from scripts.toolkit import artifacts, voice
 from scripts.toolkit.voice import (
     has_current_voice_lineage,
     probe_audio_duration_ms,
@@ -562,6 +564,62 @@ class VoiceSchemaTests(unittest.TestCase):
                     voice.PROJECT_PATH_PATTERN,
                     schema["$defs"]["projectPath"]["pattern"],
                 )
+
+    def test_voice_and_artifact_boundaries_share_all_persisted_limits(self):
+        """Catches voice records accepted at their boundary but rejected by Artifact storage."""
+        records = VoiceBundleTests().bundle()
+        artifact_schema = json.loads(
+            (ROOT / "references/schemas/artifact.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        artifact_validator = Draft202012Validator(artifact_schema)
+        cases = (
+            (0, {}, True),
+            (1, {}, True),
+            (2, {}, True),
+            (3, {}, True),
+            (0, {"artifact_id": "v" * 129}, False),
+            (1, {"language": "界" * 65}, False),
+            (1, {"provider": "界" * 129}, False),
+            (1, {"emotion": "界" * 129}, False),
+            (1, {"speaking_rate": 4.1}, False),
+            (2, {"output_contract": "界" * 129}, False),
+            (2, {"path": "界" * 509 + ".wav"}, False),
+            (2, {"duration_ms": 36_000_001}, False),
+            (3, {"duration_ms": 36_000_001}, False),
+            (
+                3,
+                {
+                    "segments": [
+                        {
+                            "start_ms": 0,
+                            "end_ms": 36_000_001,
+                            "text": "Narration.",
+                        }
+                    ]
+                },
+                False,
+            ),
+        )
+        for index, updates, expected in cases:
+            record = {**records[index], **updates}
+            voice_schema = json.loads(
+                (ROOT / "references/schemas" / f"{record['type']}.schema.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            runtime_valid = voice._valid_voice_record(record)
+            artifact_runtime_valid = True
+            try:
+                artifacts.validate_artifact_record(record)
+            except ValueError:
+                artifact_runtime_valid = False
+            with self.subTest(type=record["type"], updates=updates):
+                self.assertEqual(expected, Draft202012Validator(voice_schema).is_valid(record))
+                self.assertEqual(expected, artifact_validator.is_valid(record))
+                self.assertEqual(expected, runtime_valid)
+                self.assertEqual(expected, artifact_runtime_valid)
 
 
 if __name__ == "__main__":
