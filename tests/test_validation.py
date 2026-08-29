@@ -4,7 +4,7 @@ import shutil
 import struct
 from tempfile import TemporaryDirectory
 import unittest
-import zlib
+from unittest.mock import patch
 
 from scripts.toolkit.validation import validate_project
 
@@ -952,39 +952,10 @@ class ValidationTests(unittest.TestCase):
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(json.dumps(artifact), encoding="utf-8")
 
-    @staticmethod
-    def png_chunk(kind, payload):
-        checksum = zlib.crc32(kind + payload) & 0xFFFFFFFF
-        return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", checksum)
-
-    @classmethod
-    def rgba_png_bytes(cls, alpha):
-        header = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
-        pixel = bytes((32, 64, 96, alpha))
-        return (
-            b"\x89PNG\r\n\x1a\n"
-            + cls.png_chunk(b"IHDR", header)
-            + cls.png_chunk(b"IDAT", zlib.compress(b"\x00" + pixel))
-            + cls.png_chunk(b"IEND", b"")
-        )
-
-    def write_rgba_png(self, relative, alpha):
+    def write_visual_placeholder(self, relative):
         path = self.root / relative
-        path.write_bytes(self.rgba_png_bytes(alpha))
+        path.write_bytes(b"opaque visual fixture; structural validation must not read it")
         return path
-
-    def promoted_png_error_codes(self, contents):
-        path = "media/presenter_points-right_right_v01.png"
-        (self.root / path).write_bytes(contents)
-        self.write_artifact(
-            "promoted-character-v1",
-            "promoted-asset",
-            1,
-            "approved",
-            path,
-            **self.promoted_character_metadata(),
-        )
-        return {item["code"] for item in validate_project(self.root)["errors"]}
 
     def promoted_character_metadata(self):
         return {
@@ -1007,35 +978,74 @@ class ValidationTests(unittest.TestCase):
             }
         }
 
-    def test_promoted_character_action_requires_real_transparency(self):
-        """Catches metadata-only alpha claims accepting a fully opaque PNG."""
-        self.write_rgba_png("media/presenter_points-right_right_v01.png", 255)
+    def test_structural_validation_never_reads_or_decodes_visual_media(self):
+        """Catches metadata-only recovery reopening pixels for alpha inspection."""
+        relative = "media/presenter_points-right_right_v01.png"
+        target = self.root / relative
+        target.write_bytes(b"visual bytes must remain opaque to this validator")
+        metadata = self.promoted_character_metadata()
+        metadata["promotion"]["validation_evidence"].append(
+            "isolated-image-inspect:alpha-transparency-present"
+        )
         self.write_artifact(
             "promoted-character-v1",
             "promoted-asset",
             1,
             "approved",
-            "media/presenter_points-right_right_v01.png",
+            relative,
+            **metadata,
+        )
+        original_read_bytes = Path.read_bytes
+
+        def guarded_read_bytes(path):
+            if path == target:
+                raise AssertionError("structural validator read visual bytes")
+            return original_read_bytes(path)
+
+        with patch.object(
+            Path, "read_bytes", autospec=True, side_effect=guarded_read_bytes
+        ):
+            result = validate_project(self.root)
+
+        self.assertNotIn(
+            "promoted-character-action-alpha-inspection-required",
+            {item["code"] for item in result["errors"]},
+        )
+
+    def test_promoted_character_alpha_requires_isolated_inspection_evidence(self):
+        """Catches an alpha claim passing without isolated image-inspect evidence."""
+        relative = "media/presenter_points-right_right_v01.png"
+        (self.root / relative).write_bytes(b"opaque structural fixture")
+        self.write_artifact(
+            "promoted-character-v1",
+            "promoted-asset",
+            1,
+            "approved",
+            relative,
             **self.promoted_character_metadata(),
         )
 
         result = validate_project(self.root)
 
         self.assertIn(
-            "promoted-character-action-alpha-missing",
+            "promoted-character-action-alpha-inspection-required",
             {item["code"] for item in result["errors"]},
         )
 
-    def test_promoted_character_action_with_real_transparency_passes(self):
-        """Catches a real transparent pixel being rejected as metadata-only alpha."""
-        self.write_rgba_png("media/presenter_points-right_right_v01.png", 0)
+    def test_promoted_character_action_with_isolated_alpha_evidence_passes(self):
+        """Catches compact isolated inspection evidence being ignored."""
+        self.write_visual_placeholder("media/presenter_points-right_right_v01.png")
+        metadata = self.promoted_character_metadata()
+        metadata["promotion"]["validation_evidence"].append(
+            "isolated-image-inspect:alpha-transparency-present"
+        )
         self.write_artifact(
             "promoted-character-v1",
             "promoted-asset",
             1,
             "approved",
             "media/presenter_points-right_right_v01.png",
-            **self.promoted_character_metadata(),
+            **metadata,
         )
 
         result = validate_project(self.root)
@@ -1051,7 +1061,7 @@ class ValidationTests(unittest.TestCase):
 
     def test_promoted_character_action_requires_neutral_owned_provenance(self):
         """Catches project-coupled or unattributed media entering cross-project reuse."""
-        self.write_rgba_png("media/presenter_points-right_right_v01.png", 0)
+        self.write_visual_placeholder("media/presenter_points-right_right_v01.png")
         metadata = self.promoted_character_metadata()
         promotion = metadata["promotion"]
         promotion["ownership"] = "current-project"
@@ -1077,7 +1087,7 @@ class ValidationTests(unittest.TestCase):
 
     def test_promoted_character_action_requires_explicit_neutral_scene_metadata(self):
         """Catches an absent scene field being treated as proven project independence."""
-        self.write_rgba_png("media/presenter_points-right_right_v01.png", 0)
+        self.write_visual_placeholder("media/presenter_points-right_right_v01.png")
         metadata = self.promoted_character_metadata()
         metadata["promotion"].pop("scene")
         self.write_artifact(
@@ -1098,7 +1108,7 @@ class ValidationTests(unittest.TestCase):
 
     def test_promoted_character_action_requires_identity_continuity_evidence(self):
         """Catches generic evidence satisfying the character identity promise."""
-        self.write_rgba_png("media/presenter_points-right_right_v01.png", 0)
+        self.write_visual_placeholder("media/presenter_points-right_right_v01.png")
         metadata = self.promoted_character_metadata()
         metadata["promotion"]["validation_evidence"] = ["alpha-reviewed"]
         self.write_artifact(
@@ -1117,199 +1127,10 @@ class ValidationTests(unittest.TestCase):
             {item["code"] for item in result["errors"]},
         )
 
-    def test_promoted_character_alpha_inspection_failure_is_an_issue(self):
-        """Catches corrupt or unsupported files crashing structural validation."""
-        path = "media/presenter_points-right_right_v01.png"
-        (self.root / path).write_bytes(b"not a png")
-        self.write_artifact(
-            "promoted-character-v1",
-            "promoted-asset",
-            1,
-            "approved",
-            path,
-            **self.promoted_character_metadata(),
-        )
-
-        result = validate_project(self.root)
-
-        self.assertIn(
-            "promoted-character-action-alpha-unverifiable",
-            {item["code"] for item in result["errors"]},
-        )
-
-    def test_promoted_character_png_with_bad_crc_is_unverifiable(self):
-        """Catches transparent pixel data bypassing a corrupt IDAT checksum."""
-        png = bytearray(self.rgba_png_bytes(0))
-        idat_type = png.index(b"IDAT")
-        idat_length = struct.unpack(">I", png[idat_type - 4 : idat_type])[0]
-        idat_crc = idat_type + 4 + idat_length
-        png[idat_crc] ^= 0x01
-        path = "media/presenter_points-right_right_v01.png"
-        (self.root / path).write_bytes(png)
-        self.write_artifact(
-            "promoted-character-v1",
-            "promoted-asset",
-            1,
-            "approved",
-            path,
-            **self.promoted_character_metadata(),
-        )
-
-        result = validate_project(self.root)
-
-        self.assertIn(
-            "promoted-character-action-alpha-unverifiable",
-            {item["code"] for item in result["errors"]},
-        )
-
-    def test_promoted_character_png_without_iend_is_unverifiable(self):
-        """Catches a complete pixel stream being accepted without terminal IEND."""
-        path = "media/presenter_points-right_right_v01.png"
-        (self.root / path).write_bytes(self.rgba_png_bytes(0)[:-12])
-        self.write_artifact(
-            "promoted-character-v1",
-            "promoted-asset",
-            1,
-            "approved",
-            path,
-            **self.promoted_character_metadata(),
-        )
-
-        result = validate_project(self.root)
-
-        self.assertIn(
-            "promoted-character-action-alpha-unverifiable",
-            {item["code"] for item in result["errors"]},
-        )
-
-    def test_promoted_character_png_requires_valid_chunk_structure(self):
-        """Catches reordered, duplicate, or post-IEND PNG chunks."""
-        valid = self.rgba_png_bytes(0)
-        signature = valid[:8]
-        ihdr = valid[8:33]
-        idat = valid[33:-12]
-        iend = valid[-12:]
-        malformed_files = {
-            "idat-before-ihdr": signature + idat + ihdr + iend,
-            "duplicate-ihdr": signature + ihdr + ihdr + idat + iend,
-            "trailing-data": valid + b"trailing",
-        }
-        for label, contents in malformed_files.items():
-            with self.subTest(label=label):
-                path = "media/presenter_points-right_right_v01.png"
-                (self.root / path).write_bytes(contents)
-                self.write_artifact(
-                    "promoted-character-v1",
-                    "promoted-asset",
-                    1,
-                    "approved",
-                    path,
-                    **self.promoted_character_metadata(),
-                )
-
-                result = validate_project(self.root)
-
-                self.assertIn(
-                    "promoted-character-action-alpha-unverifiable",
-                    {item["code"] for item in result["errors"]},
-                )
-
-    def test_promoted_character_png_rejects_illegal_plte_chunks(self):
-        """Catches misplaced, duplicate, malformed, or forbidden PLTE chunks."""
-        valid = self.rgba_png_bytes(0)
-        signature = valid[:8]
-        rgba_ihdr = valid[8:33]
-        rgba_idat = valid[33:-12]
-        iend = valid[-12:]
-        plte = self.png_chunk(b"PLTE", b"\x20\x40\x60")
-        grayscale_alpha_ihdr = self.png_chunk(
-            b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 4, 0, 0, 0)
-        )
-        grayscale_alpha_idat = self.png_chunk(
-            b"IDAT", zlib.compress(b"\x00\x20\x00")
-        )
-        malformed_files = {
-            "after-idat": signature + rgba_ihdr + rgba_idat + plte + iend,
-            "duplicate": signature + rgba_ihdr + plte + plte + rgba_idat + iend,
-            "invalid-length": (
-                signature
-                + rgba_ihdr
-                + self.png_chunk(b"PLTE", b"\x00")
-                + rgba_idat
-                + iend
-            ),
-            "forbidden-for-grayscale-alpha": (
-                signature
-                + grayscale_alpha_ihdr
-                + plte
-                + grayscale_alpha_idat
-                + iend
-            ),
-        }
-        for label, contents in malformed_files.items():
-            with self.subTest(label=label):
-                self.assertIn(
-                    "promoted-character-action-alpha-unverifiable",
-                    self.promoted_png_error_codes(contents),
-                )
-
-    def test_promoted_character_png_rejects_unknown_critical_chunks(self):
-        """Catches unknown chunks whose first type byte marks them critical."""
-        valid = self.rgba_png_bytes(0)
-        signature = valid[:8]
-        ihdr = valid[8:33]
-        idat_and_iend = valid[33:]
-        variants = {
-            "unknown-critical": (
-                self.png_chunk(b"VpAg", b"payload"),
-                True,
-            ),
-            "unknown-ancillary": (
-                self.png_chunk(b"vpAg", b"payload"),
-                False,
-            ),
-        }
-        for label, (chunk, expect_unverifiable) in variants.items():
-            with self.subTest(label=label):
-                codes = self.promoted_png_error_codes(
-                    signature + ihdr + chunk + idat_and_iend
-                )
-                self.assertEqual(
-                    expect_unverifiable,
-                    "promoted-character-action-alpha-unverifiable" in codes,
-                )
-
-    def test_promoted_character_png_rejects_invalid_zlib_or_scanline_streams(self):
-        """Catches nonterminal zlib streams and invalid decoded scanlines."""
-        valid = self.rgba_png_bytes(0)
-        signature_and_ihdr = valid[:33]
-        iend = valid[-12:]
-        pixel = bytes((32, 64, 96, 0))
-        scanline = b"\x00" + pixel
-        compressed = zlib.compress(scanline)
-        malformed_streams = {
-            "trailing-zlib-bytes": compressed + b"trailing",
-            "concatenated-zlib-stream": compressed + zlib.compress(scanline),
-            "incomplete-zlib-stream": compressed[:-1],
-            "wrong-decoded-size": zlib.compress(scanline + b"\x00"),
-            "invalid-filter": zlib.compress(b"\x05" + pixel),
-        }
-        for label, stream in malformed_streams.items():
-            with self.subTest(label=label):
-                contents = (
-                    signature_and_ihdr
-                    + self.png_chunk(b"IDAT", stream)
-                    + iend
-                )
-                self.assertIn(
-                    "promoted-character-action-alpha-unverifiable",
-                    self.promoted_png_error_codes(contents),
-                )
-
     def test_promoted_character_name_rejects_project_coupling(self):
         """Catches legacy shot identifiers in promoted character filenames."""
         path = "media/复利效应_S004_灰发猫耳少年_讲解_右侧_v01.png"
-        self.write_rgba_png(path, 0)
+        self.write_visual_placeholder(path)
         metadata = self.promoted_character_metadata()
         metadata["promotion"]["subject"] = "灰发猫耳少年"
         metadata["promotion"]["action"] = "讲解"
@@ -1333,7 +1154,7 @@ class ValidationTests(unittest.TestCase):
     def test_promoted_character_name_requires_version_suffix(self):
         """Catches promoted names that omit the legacy two-digit version suffix."""
         path = "media/presenter_points-right_right.png"
-        self.write_rgba_png(path, 0)
+        self.write_visual_placeholder(path)
         self.write_artifact(
             "promoted-character-v1",
             "promoted-asset",
@@ -1353,7 +1174,7 @@ class ValidationTests(unittest.TestCase):
     def test_promoted_character_name_requires_literal_subject_and_action(self):
         """Catches filename metadata drift for the declared subject or action."""
         path = "media/presenter_wave_right_v01.png"
-        self.write_rgba_png(path, 0)
+        self.write_visual_placeholder(path)
         self.write_artifact(
             "promoted-character-v1",
             "promoted-asset",
@@ -1372,7 +1193,7 @@ class ValidationTests(unittest.TestCase):
 
     def test_malformed_promotion_evidence_is_an_issue_not_an_exception(self):
         """Catches unhashable metadata values crashing structural validation."""
-        self.write_rgba_png("media/presenter_points-right_right_v01.png", 0)
+        self.write_visual_placeholder("media/presenter_points-right_right_v01.png")
         metadata = self.promoted_character_metadata()
         metadata["promotion"]["validation_evidence"] = [{}]
         self.write_artifact(

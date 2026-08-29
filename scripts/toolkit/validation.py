@@ -4,10 +4,9 @@ import json
 import math
 from pathlib import Path
 import re
-import struct
 from typing import Any, Iterable, Optional, Union
-import zlib
 
+from .artifacts import validate_artifact_record
 from .contracts import validate_scene_contract
 from .project_state import (
     LEGACY_PHASES,
@@ -28,6 +27,7 @@ from .tasks import (
     _validate_result_artifacts,
 )
 from .visual_media_context import (
+    ACTIVE_VISUAL_MEDIA_OPERATIONS,
     classify_visual_media_task,
     project_legacy_image_context,
     validate_declared_visual_media_inputs,
@@ -248,6 +248,14 @@ def _read_artifacts(root: Path, errors: list[dict[str, Any]]) -> dict[str, dict[
             errors.append(_issue("unsafe-runtime-storage", storage=_relative(root, path)))
             continue
         raw = _read_json_object(path)
+        if (
+            isinstance(raw, dict)
+            and isinstance(raw.get("artifact_id"), str)
+            and _safe_project_path(root, raw.get("path")) is None
+        ):
+            errors.append(
+                _issue("unsafe-artifact-path", artifact_id=raw["artifact_id"])
+            )
         if raw is None or not _valid_artifact(raw) or path.name != f"{raw.get('artifact_id')}.json":
             errors.append(_issue("invalid-artifact-metadata", path=_relative(root, path)))
             continue
@@ -260,20 +268,11 @@ def _read_artifacts(root: Path, errors: list[dict[str, Any]]) -> dict[str, dict[
 
 
 def _valid_artifact(artifact: dict[str, Any]) -> bool:
-    if not all(key in artifact for key in ARTIFACT_REQUIRED_KEYS):
+    try:
+        validate_artifact_record(artifact)
+    except (TypeError, ValueError):
         return False
-    if not all(isinstance(artifact[key], str) and artifact[key] for key in ("artifact_id", "type", "path")):
-        return False
-    if not _safe_component(artifact["artifact_id"]) or not _safe_component(artifact["type"]):
-        return False
-    if isinstance(artifact["version"], bool) or not isinstance(artifact["version"], int) or artifact["version"] < 1:
-        return False
-    return (
-        artifact["status"] in ARTIFACT_STATUSES
-        and isinstance(artifact["parents"], list)
-        and len(artifact["parents"]) == len(set(artifact["parents"]))
-        and all(isinstance(parent, str) and parent for parent in artifact["parents"])
-    )
+    return True
 
 
 def _read_approvals(root: Path, errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -507,163 +506,19 @@ def _check_promoted_character_action(
     evidence = promotion.get("validation_evidence")
     if not isinstance(evidence, list) or "identity-continuity-reviewed" not in evidence:
         errors.append(_issue("missing-character-identity-evidence", artifact_id=artifact_id))
-    source = _safe_project_path(root, artifact["path"])
-    if source is None or not source.is_file():
-        errors.append(
-            _issue("promoted-character-action-alpha-unverifiable", artifact_id=artifact_id)
-        )
-        return
-    if source.suffix.casefold() != ".png":
+    if Path(artifact["path"]).suffix.casefold() != ".png":
         errors.append(_issue("promoted-character-action-must-be-png", artifact_id=artifact_id))
         return
-    has_transparency = _inspect_png_transparency(source)
-    if has_transparency is None:
+    if (
+        not isinstance(evidence, list)
+        or "isolated-image-inspect:alpha-transparency-present" not in evidence
+    ):
         errors.append(
-            _issue("promoted-character-action-alpha-unverifiable", artifact_id=artifact_id)
+            _issue(
+                "promoted-character-action-alpha-inspection-required",
+                artifact_id=artifact_id,
+            )
         )
-    elif not has_transparency:
-        errors.append(_issue("promoted-character-action-alpha-missing", artifact_id=artifact_id))
-
-
-def _inspect_png_transparency(path: Path) -> Optional[bool]:
-    """Inspect non-interlaced 8/16-bit grayscale-alpha or RGBA PNG pixels."""
-    try:
-        data = path.read_bytes()
-        if data[:8] != b"\x89PNG\r\n\x1a\n":
-            return None
-        position = 8
-        chunk_index = 0
-        idat: list[bytes] = []
-        seen_ihdr = False
-        seen_plte = False
-        seen_idat = False
-        idat_closed = False
-        seen_iend = False
-        width = height = bit_depth = color_type = interlace = None
-        while position < len(data):
-            if position + 12 > len(data):
-                return None
-            length = struct.unpack(">I", data[position : position + 4])[0]
-            end = position + 12 + length
-            if end > len(data):
-                return None
-            kind = data[position + 4 : position + 8]
-            payload_end = position + 8 + length
-            payload = data[position + 8 : payload_end]
-            stored_crc = struct.unpack(">I", data[payload_end : end])[0]
-            if zlib.crc32(kind + payload) & 0xFFFFFFFF != stored_crc:
-                return None
-            if chunk_index == 0 and kind != b"IHDR":
-                return None
-            position = end
-            if kind == b"IHDR":
-                if seen_ihdr or chunk_index != 0 or length != 13:
-                    return None
-                width, height, bit_depth, color_type, compression, filter_method, interlace = struct.unpack(
-                    ">IIBBBBB", payload
-                )
-                if compression != 0 or filter_method != 0:
-                    return None
-                seen_ihdr = True
-            elif kind == b"PLTE":
-                if (
-                    not seen_ihdr
-                    or seen_plte
-                    or seen_idat
-                    or color_type == 4
-                    or length == 0
-                    or length % 3 != 0
-                    or length > 768
-                ):
-                    return None
-                seen_plte = True
-            elif kind == b"IDAT":
-                if not seen_ihdr or idat_closed:
-                    return None
-                seen_idat = True
-                idat.append(payload)
-            elif kind == b"IEND":
-                if length != 0 or not seen_idat or seen_iend or position != len(data):
-                    return None
-                seen_iend = True
-                break
-            else:
-                if kind[0] & 0x20 == 0:
-                    return None
-                if seen_idat:
-                    idat_closed = True
-            chunk_index += 1
-        if (
-            not seen_ihdr
-            or not seen_iend
-            or not isinstance(width, int)
-            or not isinstance(height, int)
-            or width < 1
-            or height < 1
-            or color_type not in {4, 6}
-            or interlace != 0
-            or bit_depth not in {8, 16}
-            or not idat
-        ):
-            return None
-        channels = 2 if color_type == 4 else 4
-        bytes_per_sample = bit_depth // 8
-        bytes_per_pixel = channels * bytes_per_sample
-        stride = width * bytes_per_pixel
-        expected_size = height * (stride + 1)
-        decompressor = zlib.decompressobj()
-        decompressed = decompressor.decompress(b"".join(idat), expected_size + 1)
-        if (
-            len(decompressed) != expected_size
-            or not decompressor.eof
-            or decompressor.unused_data
-            or decompressor.unconsumed_tail
-        ):
-            return None
-        previous = bytearray(stride)
-        offset = 0
-        for _row in range(height):
-            filter_type = decompressed[offset]
-            offset += 1
-            encoded = decompressed[offset : offset + stride]
-            offset += stride
-            reconstructed = bytearray(stride)
-            for index, value in enumerate(encoded):
-                left = reconstructed[index - bytes_per_pixel] if index >= bytes_per_pixel else 0
-                up = previous[index]
-                upper_left = previous[index - bytes_per_pixel] if index >= bytes_per_pixel else 0
-                predictor = _png_predictor(filter_type, left, up, upper_left)
-                if predictor is None:
-                    return None
-                reconstructed[index] = (value + predictor) & 0xFF
-            for pixel in range(width):
-                alpha_start = (pixel * channels + channels - 1) * bytes_per_sample
-                alpha = reconstructed[alpha_start : alpha_start + bytes_per_sample]
-                if any(value != 255 for value in alpha):
-                    return True
-            previous = reconstructed
-        return False
-    except (OSError, IndexError, ValueError, struct.error, zlib.error):
-        return None
-
-
-def _png_predictor(
-    filter_type: int, left: int, up: int, upper_left: int
-) -> Optional[int]:
-    if filter_type == 0:
-        return 0
-    if filter_type == 1:
-        return left
-    if filter_type == 2:
-        return up
-    if filter_type == 3:
-        return (left + up) // 2
-    if filter_type == 4:
-        estimate = left + up - upper_left
-        values = (left, up, upper_left)
-        distances = tuple(abs(estimate - value) for value in values)
-        return values[distances.index(min(distances))]
-    return None
 
 
 def _check_tasks(
@@ -695,6 +550,34 @@ def _check_tasks(
                 )
             )
             continue
+        constraints = envelope.get("constraints")
+        if isinstance(constraints, dict):
+            operation = constraints.get("visual_media_operation")
+            has_deprecated_authority = bool(
+                {"image_operation", "image_context", "visual_operation"}
+                & constraints.keys()
+            )
+            if operation in ACTIVE_VISUAL_MEDIA_OPERATIONS and not has_deprecated_authority:
+                try:
+                    validate_visual_media_context(
+                        constraints.get("visual_media_context")
+                    )
+                except ValueError:
+                    errors.append(
+                        _issue(
+                            "visual-media-context-invalid",
+                            path=_relative(root, path),
+                        )
+                    )
+                    continue
+                if constraints.get("execution_context") != "isolated-child-agent":
+                    errors.append(
+                        _issue(
+                            "visual-media-isolation-required",
+                            path=_relative(root, path),
+                        )
+                    )
+                    continue
         if not _valid_task_envelope(envelope):
             errors.append(_issue("invalid-task-envelope", path=_relative(root, path)))
             continue

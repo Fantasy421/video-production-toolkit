@@ -44,7 +44,12 @@ VISUAL_MEDIA_CONDITIONALS = [
             },
             "required": ["visual_media_operation"],
         },
-        "then": {"required": ["visual_media_context"]},
+        "then": {
+            "required": ["visual_media_context", "execution_context"],
+            "properties": {
+                "execution_context": {"const": "isolated-child-agent"}
+            },
+        },
     },
     {
         "if": {"required": ["visual_media_context"]},
@@ -144,6 +149,7 @@ REQUIRED_FILES = (
     "references/policies/invalidation.json",
     "references/policies/project-assets.md",
     "references/policies/visual-media-isolation.md",
+    "references/schemas/artifact.schema.json",
     "references/schemas/event.schema.json",
     "references/schemas/image-task-context.schema.json",
     "references/schemas/layout-pack.schema.json",
@@ -166,6 +172,7 @@ REQUIRED_FILES = (
     "scripts/validate_package.py",
     "scripts/verify_installation.py",
     "scripts/toolkit/adapters.py",
+    "scripts/toolkit/artifacts.py",
     "scripts/toolkit/contracts.py",
     "scripts/toolkit/image_context.py",
     "scripts/toolkit/invalidation.py",
@@ -193,6 +200,7 @@ REQUIRED_FILES = (
     "tests/test_tasks.py",
     "tests/test_validation.py",
     "tests/test_visual_media_context.py",
+    "tests/test_voice_tasks.py",
 )
 
 
@@ -230,8 +238,13 @@ def validate_package(root: Path) -> list[str]:
     image = _read_json_object(
         root, "references/schemas/image-task-context.schema.json", errors
     )
+    artifact = _read_json_object(
+        root, "references/schemas/artifact.schema.json", errors
+    )
     if image is not None:
         _validate_image_schema(image, errors)
+    if artifact is not None:
+        _validate_artifact_schema(artifact, errors)
 
     visual = _read_json_object(
         root, "references/schemas/visual-media-task-context.schema.json", errors
@@ -349,6 +362,52 @@ def _validate_image_schema(schema: Mapping[str, Any], errors: list[str]) -> None
         errors.append("invalid:image-preview-limit")
 
 
+def _validate_artifact_schema(
+    schema: Mapping[str, Any], errors: list[str]
+) -> None:
+    properties = _mapping(schema.get("properties"))
+    definitions = _mapping(schema.get("$defs"))
+    safe_id = _mapping(definitions.get("safeId"))
+    if safe_id != {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$",
+    }:
+        errors.append("invalid:artifact-safe-id")
+    if _required_fields(schema) != {
+        "artifact_id",
+        "type",
+        "version",
+        "status",
+        "parents",
+        "path",
+    } or schema.get("additionalProperties") is not True:
+        errors.append("invalid:artifact-shape")
+    path = _mapping(properties.get("path"))
+    if (
+        path.get("maxLength") != 512
+        or path.get("pattern")
+        != "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"
+    ):
+        errors.append("invalid:artifact-path")
+    if _mapping(properties.get("media_kind")).get("enum") != [
+        "audio",
+        "data",
+        "document",
+        "image",
+        "video",
+    ]:
+        errors.append("invalid:artifact-media-kind")
+    mime = _mapping(properties.get("mime_type"))
+    if (
+        mime.get("maxLength") != 128
+        or mime.get("pattern")
+        != "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
+    ):
+        errors.append("invalid:artifact-mime")
+
+
 def _validate_visual_media_schema(
     schema: Mapping[str, Any], errors: list[str]
 ) -> None:
@@ -367,6 +426,7 @@ def _validate_visual_media_schema(
     definitions = _mapping(schema.get("$defs"))
     if definitions.get("safeId") != {
         "type": "string",
+        "maxLength": 128,
         "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$",
     }:
         errors.append("invalid:visual-media-safe-id")

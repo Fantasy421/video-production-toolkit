@@ -80,9 +80,15 @@
         },
         "summary": {"type": "string", "minLength": 1, "maxLength": 64},
         "review_preview_path": {
-          "$ref": "#/$defs/previewPath",
-          "maxLength": 256,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+          "anyOf": [
+            {"type": "null"},
+            {
+              "allOf": [
+                {"$ref": "#/$defs/previewPath"},
+                {"maxLength": 256, "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"}
+              ]
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -125,7 +131,7 @@
   ],
   "additionalProperties": false,
   "$defs": {
-    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"},
+    "safeId": {"type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"},
     "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"},
     "artifactPath": {"allOf": [{"$ref": "#/$defs/projectPath"}, {"pattern": "^(?:artifacts|media)/"}]},
     "previewPath": {"allOf": [{"$ref": "#/$defs/projectPath"}, {"pattern": "^previews/"}]},

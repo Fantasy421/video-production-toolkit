@@ -109,9 +109,10 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
 
     pre_revision = resumed["pre_timing_revision"]
     records = pre_revision["artifacts"]
+    voice_records = pre_revision["voice_artifacts"]
     voice_source = [
         item
-        for item in records
+        for item in voice_records
         if item.get("type") == "voice-source-decision"
         and item.get("status") == "approved"
         and item.get("mode") in {"tts", "uploaded-voice"}
@@ -127,7 +128,7 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
             },
         }
     checks["voice_source_decision"] = "passed"
-    bundle = validate_authoritative_voice_bundle(records)
+    bundle = validate_authoritative_voice_bundle(voice_records)
     validation_issues = resumed["voice_timing_revision"]["voice_validation_issue_codes"]
     if (
         not bundle["ok"]
@@ -180,7 +181,7 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
     contracts_path = root / "tests" / "fixtures" / "knowledge-video-minimal" / "scene-contracts.json"
     try:
         contracts = json.loads(contracts_path.read_text(encoding="utf-8"))
-        selected_slice = select_representative_slice(contracts, records)
+        selected_slice = select_representative_slice(contracts, voice_records)
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
         return {
             "ok": False,
@@ -790,7 +791,11 @@ def _check_four_gates() -> bool:
         media.parent.mkdir(parents=True)
         media.write_bytes(_voice_fixture_wav(duration_ms=15_000))
         for index, (capability, gate, target_type, extra) in enumerate(cases, 1):
-            target_id = f"gate-{index}"
+            target_id = (
+                f"storyboard-gate-{index}"
+                if target_type == "storyboard"
+                else f"gate-{index}"
+            )
             task = _candidate(
                 f"gate-task-{index}", capability, [target_id], gate, target_id, **extra
             )
@@ -808,14 +813,27 @@ def _check_four_gates() -> bool:
                 }
                 else []
             )
-            artifacts = [_artifact(target_id, target_type), *gate_voice]
+            routing_scope = (
+                [_artifact("smoke-routing-scene-contract-v1", "scene-contract")]
+                if "smoke-routing-scene-contract-v1" in task["inputs"]
+                else []
+            )
+            artifacts = [
+                _artifact(target_id, target_type),
+                *routing_scope,
+                *gate_voice,
+            ]
             state = {"candidate_tasks": [task], "locked_task_ids": []}
             if calculate_ready_tasks(state, artifacts, [], root=routing_root):
                 return False
             approval = {"target_id": target_id, "scope": gate, "decision": "approved"}
             if calculate_ready_tasks(
                 state,
-                [_artifact(target_id, "unrelated-review-artifact"), *gate_voice],
+                [
+                    _artifact(target_id, "unrelated-review-artifact"),
+                    *routing_scope,
+                    *gate_voice,
+                ],
                 [approval],
                 root=routing_root,
             ):
@@ -824,7 +842,11 @@ def _check_four_gates() -> bool:
                 state, artifacts, [approval], root=routing_root
             ) != [capability]:
                 return False
-            descendant_id = f"gate-input-{index}"
+            descendant_id = (
+                f"storyboard-input-{index}"
+                if target_type == "storyboard"
+                else f"gate-input-{index}"
+            )
             unrelated_task = _candidate(
                 f"unrelated-gate-task-{index}",
                 capability,
@@ -839,14 +861,27 @@ def _check_four_gates() -> bool:
             }
             if calculate_ready_tasks(
                 unrelated_state,
-                [artifacts[0], _artifact(descendant_id, "task-input"), *gate_voice],
+                [
+                    artifacts[0],
+                    _artifact(
+                        descendant_id,
+                        "storyboard" if target_type == "storyboard" else "task-input",
+                    ),
+                    *routing_scope,
+                    *gate_voice,
+                ],
                 [approval],
                 root=routing_root,
             ):
                 return False
             related_artifacts = [
                 artifacts[0],
-                _artifact(descendant_id, "task-input", parents=[target_id]),
+                _artifact(
+                    descendant_id,
+                    "storyboard" if target_type == "storyboard" else "task-input",
+                    parents=[target_id],
+                ),
+                *routing_scope,
                 *gate_voice,
             ]
             if calculate_ready_tasks(
@@ -991,9 +1026,13 @@ def _run_resume_scenario(
                             "kind": "scene-contract",
                             "id": "contract-S02-v2",
                         },
-                        "allowed_artifact_ids": ["storyboard-v1"],
+                        "allowed_artifact_ids": [],
                         "historical_access": "character-only",
-                        "continuity_exception": None,
+                        "continuity_exception": {
+                            "artifact_id": "storyboard-v1",
+                            "user_requested": True,
+                            "reason": "Use this exact current storyboard input.",
+                        },
                         "max_review_previews": 0,
                         "context_budget_bytes": 32_768,
                     },
@@ -1013,19 +1052,17 @@ def _run_resume_scenario(
         second = resume_project(project)
         if first != second:
             raise RuntimeError("resume is not deterministic")
-        create_artifact(
-            project,
-            _artifact(
-                "voice-timing-v2",
-                "voice-timing",
-                version=2,
-                parents=["voiceover-v1"],
-                voiceover_id="voiceover-v1",
-                timing_kind="real",
-                duration_ms=voice_timing_duration_ms,
-                segments=_timing_segments(voice_timing_duration_ms),
-            ),
+        voice_timing_v2 = _artifact(
+            "voice-timing-v2",
+            "voice-timing",
+            version=2,
+            parents=["voiceover-v1"],
+            voiceover_id="voiceover-v1",
+            timing_kind="real",
+            duration_ms=voice_timing_duration_ms,
+            segments=_timing_segments(voice_timing_duration_ms),
         )
+        create_artifact(project, voice_timing_v2)
         declared_descendants = [
             "contract-S01-v1",
             "contract-S02-v1",
@@ -1048,7 +1085,9 @@ def _run_resume_scenario(
         post_artifacts = {
             item["artifact_id"]: item for item in post_revision["artifacts"]
         }
-        post_bundle = validate_authoritative_voice_bundle(post_artifacts.values())
+        post_bundle = validate_authoritative_voice_bundle(
+            [*voice_artifacts, voice_timing_v2]
+        )
         structural = validate_project(project)
         voice_validation_issue_codes = sorted(
             {
@@ -1066,6 +1105,7 @@ def _run_resume_scenario(
             **post_revision,
             "pre_timing_revision": {
                 "artifacts": first["artifacts"],
+                "voice_artifacts": voice_artifacts,
                 "ready_tasks": first["ready_tasks"],
             },
             "direction_ready_actions": direction_ready_actions,
@@ -1392,6 +1432,52 @@ def _candidate(
     else:
         constraints.setdefault("visual_media_operation", visual_operation)
         constraints.setdefault("execution_context", "isolated-child-agent")
+        if "visual_media_context" not in constraints:
+            scope_id = next(
+                (
+                    artifact_id
+                    for artifact_id in inputs
+                    if "contract" in artifact_id.casefold()
+                ),
+                "smoke-routing-scene-contract-v1",
+            )
+            if scope_id not in inputs:
+                inputs.append(scope_id)
+            continuity_id = next(
+                (
+                    artifact_id
+                    for artifact_id in inputs
+                    if artifact_id != scope_id
+                    and any(
+                        marker in artifact_id.casefold()
+                        for marker in (
+                            "storyboard",
+                            "scene-",
+                            "preview",
+                            "image",
+                            "video",
+                            "screen",
+                        )
+                    )
+                ),
+                None,
+            )
+            constraints["visual_media_context"] = {
+                "scope_identity": {"kind": "scene-contract", "id": scope_id},
+                "allowed_artifact_ids": [],
+                "historical_access": "character-only",
+                "continuity_exception": (
+                    {
+                        "artifact_id": continuity_id,
+                        "user_requested": True,
+                        "reason": "Use this exact current visual production input.",
+                    }
+                    if continuity_id is not None
+                    else None
+                ),
+                "max_review_previews": 1,
+                "context_budget_bytes": 32_768,
+            }
     if capability in {
         "storyboard.plan",
         "scene.produce",

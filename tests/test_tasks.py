@@ -52,6 +52,18 @@ class CurrentTaskEnvelopeMetadataTests(unittest.TestCase):
                 )
             )
 
+    def test_public_persisted_validator_keeps_legacy_recovery_readable(self):
+        """Catches recovery importing a private/current-only validator."""
+        legacy = self.envelope(
+            visual_operation="non-image",
+            image_operation="structure-only",
+        )
+
+        tasks.validate_persisted_task_envelope(legacy)
+
+        with self.assertRaisesRegex(ValueError, "legacy .* authority is read-only"):
+            tasks.validate_current_task_envelope(legacy)
+
     def test_scene_schema_separates_current_and_persisted_legacy_authority(self):
         """Catches the scene schema requiring authority rejected by current runtime."""
         schema = json.loads(
@@ -326,9 +338,12 @@ class TaskTests(unittest.TestCase):
     def visual_input_envelope(self, *, task_id, artifact_id, operation="video-inspect"):
         envelope = self.visual_envelope(task_id=task_id, operation=operation)
         envelope["inputs"] = [*envelope["inputs"], artifact_id]
-        envelope["constraints"]["visual_media_context"][
-            "allowed_artifact_ids"
-        ] = [artifact_id]
+        envelope["constraints"]["visual_media_context"]["allowed_artifact_ids"] = []
+        envelope["constraints"]["visual_media_context"]["continuity_exception"] = {
+            "artifact_id": artifact_id,
+            "user_requested": True,
+            "reason": "Use this exact current visual Artifact.",
+        }
         return envelope
 
     def legacy_constraints(self, **updates):
@@ -774,7 +789,7 @@ class TaskTests(unittest.TestCase):
         """Catches non-image task results bypassing the shared result scrub."""
         leaks = (
             ("checks", ["embedded=data:image/png;base64,AAEC"], "image payload"),
-            ("warnings", ["preview=https://example.invalid/scene.png"], "image payload"),
+            ("warnings", ["preview=https://example.invalid/scene.png"], "URL|scheme"),
             ("error", "prompt history: first, second", "prompt history"),
             (
                 "warnings",
@@ -783,7 +798,7 @@ class TaskTests(unittest.TestCase):
                         b"RIFF" + b"\0" * 4 + b"WAVE" + b"\0" * 128
                     ).decode("ascii")
                 ],
-                "image payload",
+                "Base64|binary",
             ),
             ("checks", ["x" * 33_000], "result budget"),
         )
@@ -1573,7 +1588,7 @@ class TaskTests(unittest.TestCase):
             1,
             path="media/conflicting-media-v1.png",
             media_kind="video",
-            mime_type=" image/png",
+            mime_type="image/png",
             historical=False,
         )
         conflicting = {
@@ -1813,7 +1828,7 @@ class TaskTests(unittest.TestCase):
                 },
             }
             with self.subTest(field=field), self.assertRaisesRegex(
-                ValueError, "image payload|prompt history"
+                ValueError, "payload|prompt history|URL|scheme"
             ):
                 complete_task(self.root, result)
 
@@ -1853,8 +1868,8 @@ class TaskTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "context budget"):
             complete_task(self.root, result)
 
-    def test_completion_classifies_every_produced_artifact_against_the_operation(self):
-        """Catches image outputs or malformed media emerging from incompatible tasks."""
+    def test_nonvisual_completion_rejects_a_visual_artifact(self):
+        """Catches a visual output emerging from a task declared non-visual."""
         self.create_artifact(
             "scene-image-output-v1",
             "scene-image",
@@ -1880,6 +1895,73 @@ class TaskTests(unittest.TestCase):
                     "warnings": [],
                     **non_image_claim,
                 },
+            )
+
+    def test_current_visual_completion_enforces_operation_output_kinds(self):
+        """Catches lifecycle completion crossing image/video output contracts."""
+
+        def handoff(artifact_id, kind, suffix):
+            return {
+                "artifact_ids": [artifact_id],
+                "paths": [f"media/{artifact_id}.{suffix}"],
+                "media": {"kind": kind, "format": suffix},
+                "checks": [],
+                "issues": [],
+                "summary": "Visual output is ready.",
+                "review_preview_path": None,
+            }
+
+        rejected = (
+            *((operation, "motion-preview-S03-v2", "video", "mp4") for operation in (
+                "image-generate",
+                "image-edit",
+                "image-inspect",
+            )),
+            *((operation, "image-preview-S03-v2", "image", "png") for operation in (
+                "video-generate",
+                "video-edit",
+                "video-render",
+                "video-inspect",
+            )),
+        )
+        for index, (operation, artifact_id, kind, suffix) in enumerate(rejected, 1):
+            task = self.visual_envelope(
+                task_id=f"output-kind-rejected-{index}",
+                operation=operation,
+            )
+            create_task(self.root, task)
+            claim = claim_task(self.root, task["task_id"], "worker-a")
+            result = self.result_for(
+                claim,
+                task_id=task["task_id"],
+                artifacts=[artifact_id],
+                visual_media_handoff=handoff(artifact_id, kind, suffix),
+            )
+            with self.subTest(operation=operation), self.assertRaisesRegex(
+                ValueError, "cannot return|cannot declare"
+            ):
+                complete_task(self.root, result)
+
+        for index, operation in enumerate(("frame-extract", "contact-sheet"), 1):
+            task = self.visual_envelope(
+                task_id=f"image-output-accepted-{index}",
+                operation=operation,
+            )
+            create_task(self.root, task)
+            claim = claim_task(self.root, task["task_id"], "worker-a")
+            self.assertEqual(
+                "completed",
+                complete_task(
+                    self.root,
+                    self.result_for(
+                        claim,
+                        task_id=task["task_id"],
+                        artifacts=["image-preview-S03-v2"],
+                        visual_media_handoff=handoff(
+                            "image-preview-S03-v2", "image", "png"
+                        ),
+                    ),
+                ),
             )
 
         self.create_artifact(

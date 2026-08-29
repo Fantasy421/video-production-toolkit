@@ -1,5 +1,6 @@
 import base64
 import unittest
+from unittest.mock import patch
 
 from scripts.toolkit.visual_media_context import (
     classify_visual_media_artifact,
@@ -34,7 +35,7 @@ class VisualMediaContextTests(unittest.TestCase):
         inputs=None,
         context=None,
         capability="scene.produce",
-        output_contract="scene-image-v1",
+        output_contract="visual-result-v1",
     ):
         constraints = {"visual_media_operation": operation}
         if operation != "none":
@@ -340,6 +341,27 @@ class VisualMediaContextTests(unittest.TestCase):
         )
         self.assertEqual(exact, compact_visual_media_result(self.context(), exact))
 
+        with self.assertRaisesRegex(ValueError, "Artifact ID|authority|bound"):
+            classify_visual_media_artifact(
+                self.artifact(
+                    "media",
+                    "scene-video",
+                    media_kind="video",
+                    path="media/unrelated.mp4",
+                )
+            )
+
+        self.assertEqual(
+            "non-visual",
+            classify_visual_media_artifact(
+                self.artifact(
+                    "license-v1",
+                    "license-document",
+                    path="artifacts/licenses/source.txt",
+                )
+            ),
+        )
+
     def test_task_classification_uses_capability_output_and_returned_artifacts(self):
         """Catches any runtime classification signal being treated as worker-controlled."""
         non_visual = self.envelope(
@@ -452,7 +474,7 @@ class VisualMediaContextTests(unittest.TestCase):
         """Catches review scope quietly discovering another current visual Artifact."""
         context = self.context(
             scope={"kind": "review-batch", "id": ["asset-1", "asset-2"]},
-            allowed=["asset-1", "asset-2"],
+            allowed=[],
         )
         envelope = self.envelope(
             operation="video-inspect",
@@ -523,7 +545,13 @@ class VisualMediaContextTests(unittest.TestCase):
 
     def test_visual_history_requires_explicit_origin_and_continuity_is_current_visual(self):
         """Catches missing origin metadata or a non-visual continuity exception."""
-        context = self.context(allowed=["scene-S02-v3"])
+        context = self.context(
+            continuity_exception={
+                "artifact_id": "scene-S02-v3",
+                "user_requested": True,
+                "reason": "Use this exact current reference.",
+            }
+        )
         envelope = self.envelope(
             inputs=["scene-contract-S03-v2", "scene-S02-v3"], context=context
         )
@@ -627,6 +655,152 @@ class VisualMediaContextTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(PermissionError, "historical.*character"):
             validate_declared_visual_media_inputs(envelope, forbidden)
+
+    def test_plain_allowlist_only_authorizes_independently_approved_character_assets(self):
+        """Catches current scene-bound media bypassing an exact continuity exception."""
+        scope = self.artifact("scene-contract-S03-v2", "scene-contract")
+        for artifact_type, suffix in (("scene-image", "png"), ("scene-video", "mp4")):
+            context = self.context(allowed=["scene-S04-v1"])
+            envelope = self.envelope(
+                inputs=["scene-contract-S03-v2", "scene-S04-v1"],
+                context=context,
+            )
+            artifacts = {
+                "scene-contract-S03-v2": scope,
+                "scene-S04-v1": self.artifact(
+                    "scene-S04-v1",
+                    artifact_type,
+                    status="approved",
+                    historical=False,
+                    path=f"media/scene-S04-v1.{suffix}",
+                ),
+            }
+            with self.subTest(artifact_type=artifact_type), self.assertRaisesRegex(
+                PermissionError, "continuity exception|character asset"
+            ):
+                validate_declared_visual_media_inputs(envelope, artifacts)
+
+        character_context = self.context(allowed=["character-lin-v4"])
+        validate_declared_visual_media_inputs(
+            self.envelope(
+                inputs=["scene-contract-S03-v2", "character-lin-v4"],
+                context=character_context,
+            ),
+            {
+                "scene-contract-S03-v2": scope,
+                "character-lin-v4": self.artifact(
+                    "character-lin-v4",
+                    "character-model-sheet",
+                    status="approved",
+                    historical=False,
+                    path="media/character-lin-v4.png",
+                ),
+            },
+        )
+
+    def test_one_continuity_exception_cannot_authorize_a_neighbor_through_allowlist(self):
+        """Catches one exact exception silently broadening to a second scene asset."""
+        context = self.context(
+            allowed=["scene-S04-v1"],
+            continuity_exception={
+                "artifact_id": "scene-S02-v1",
+                "user_requested": True,
+                "reason": "Use this exact current eyeline reference.",
+            },
+        )
+        envelope = self.envelope(
+            inputs=[
+                "scene-contract-S03-v2",
+                "scene-S02-v1",
+                "scene-S04-v1",
+            ],
+            context=context,
+        )
+        artifacts = {
+            "scene-contract-S03-v2": self.artifact(
+                "scene-contract-S03-v2", "scene-contract"
+            ),
+            "scene-S02-v1": self.artifact(
+                "scene-S02-v1",
+                "scene-image",
+                status="approved",
+                historical=False,
+                path="media/scene-S02-v1.png",
+            ),
+            "scene-S04-v1": self.artifact(
+                "scene-S04-v1",
+                "scene-video",
+                status="approved",
+                historical=False,
+                path="media/scene-S04-v1.mp4",
+            ),
+        }
+        with self.assertRaisesRegex(PermissionError, "continuity exception|character asset"):
+            validate_declared_visual_media_inputs(envelope, artifacts)
+
+    def test_classifier_fails_closed_for_named_capture_forms_and_unknown_signals(self):
+        """Catches screenshots/captures and future adapters laundering through none."""
+        named_types = (
+            "screenshot",
+            "thumbnail",
+            "keyframe",
+            "browser-screenshot",
+            "browser-capture",
+            "app-capture",
+            "evidence-capture",
+        )
+        for artifact_type in named_types:
+            artifact_id = f"{artifact_type}-v1"
+            with self.subTest(artifact_type=artifact_type):
+                self.assertNotEqual(
+                    "non-visual",
+                    classify_visual_media_artifact(
+                        self.artifact(
+                            artifact_id,
+                            artifact_type,
+                            path=f"media/{artifact_id}.png",
+                        )
+                    ),
+                )
+
+        ordinary = (
+            self.artifact(
+                "license-v1", "document", path="artifacts/licenses/source.txt"
+            ),
+            self.artifact("table-v1", "data", path="artifacts/tables/source.csv"),
+        )
+        for artifact in ordinary:
+            with self.subTest(artifact=artifact):
+                self.assertEqual(
+                    "non-visual", classify_visual_media_artifact(artifact)
+                )
+
+        ambiguous_artifacts = (
+            self.artifact("capture-v1", "capture"),
+            self.artifact("future-v1", "future-artifact", media_kind=None),
+        )
+        for artifact in ambiguous_artifacts:
+            with self.subTest(artifact=artifact), self.assertRaisesRegex(
+                ValueError, "ambiguous|cannot classify"
+            ):
+                classify_visual_media_artifact(artifact)
+
+        non_visual = self.envelope(
+            operation="none",
+            inputs=[],
+            capability="project.manage",
+            output_contract="project-state-v1",
+        )
+        for mutation in (
+            {**non_visual, "capability": "browser.capture"},
+            {**non_visual, "capability": "future.adapter"},
+            {**non_visual, "output_contract": "browser-screenshot-v1"},
+            {**non_visual, "output_contract": "binary-output-v1"},
+        ):
+            with self.subTest(mutation=mutation), self.assertRaises(
+                (PermissionError, ValueError)
+            ):
+                validate_declared_visual_media_inputs(mutation, {})
 
     def test_legacy_generate_and_inspect_records_project_without_mutation(self):
         """Catches legacy v2 records becoming unreadable or being rewritten in place."""
@@ -799,6 +973,89 @@ class VisualMediaContextTests(unittest.TestCase):
                 "warnings": ["Metadata: value, next item."],
             }
         )
+
+    def test_universal_scrub_rejects_all_remote_schemes_without_decoding_base64(self):
+        """Catches non-HTTP URLs and structural Base64 bypassing the common scrub."""
+        for remote in (
+            "ftp://example.invalid/asset.bin",
+            "s3://bucket/asset.png",
+            "file://host/share/asset.mov",
+            "//cdn.example.invalid/asset.webp",
+        ):
+            with self.subTest(remote=remote), self.assertRaisesRegex(
+                ValueError, "URL|scheme"
+            ):
+                validate_result_envelope({"warnings": [remote]})
+
+        canonical_binary_like = (
+            "AAECAwQFBgcICQoLDA0ODxAREhMUFRYX"
+            "GBkaGxwdHh8gISIjJCUmJygpKissLS4v"
+        )
+        with patch(
+            "base64.b64decode",
+            side_effect=AssertionError("scrubber must never decode Base64"),
+        ):
+            with self.assertRaisesRegex(ValueError, "Base64|binary"):
+                validate_result_envelope({"checks": [canonical_binary_like]})
+
+        validate_result_envelope(
+            {
+                "artifact_ids": ["asset-SUQz-v1"],
+                "checks": ["sha256=" + "0123456789abcdef" * 4],
+                "summary": "Local project metadata is ready.",
+            }
+        )
+
+    def test_universal_scrub_does_not_exempt_arbitrary_id_fields_from_base64(self):
+        """Catches payload-shaped data escaping through a generic ID field name."""
+        canonical_binary_like = (
+            "AAECAwQFBgcICQoLDA0ODxAREhMUFRYX"
+            "GBkaGxwdHh8gISIjJCUmJygpKissLS4v"
+        )
+
+        for key in ("opaque_id", "opaque_ids"):
+            with self.subTest(key=key), self.assertRaisesRegex(
+                ValueError, "Base64|binary"
+            ):
+                validate_result_envelope({key: canonical_binary_like})
+
+        validate_result_envelope({"artifact_id": canonical_binary_like})
+
+    def test_operation_and_output_contract_kinds_are_compatible(self):
+        """Catches image/video operations declaring an output of the opposite kind."""
+        artifacts = {
+            "scene-contract-S03-v2": self.artifact(
+                "scene-contract-S03-v2", "scene-contract"
+            )
+        }
+        incompatible = (
+            ("image-generate", "rendered-video-v1"),
+            ("image-edit", "scene-video-v1"),
+            ("image-inspect", "video-report-v1"),
+            ("video-generate", "scene-image-v1"),
+            ("video-edit", "image-preview-v1"),
+            ("video-render", "thumbnail-image-v1"),
+            ("video-inspect", "image-report-v1"),
+            ("frame-extract", "scene-video-v1"),
+            ("contact-sheet", "rendered-video-v1"),
+        )
+        for operation, output_contract in incompatible:
+            with self.subTest(operation=operation), self.assertRaisesRegex(
+                ValueError, "operation|output.*kind|compatible"
+            ):
+                validate_declared_visual_media_inputs(
+                    self.envelope(
+                        operation=operation, output_contract=output_contract
+                    ),
+                    artifacts,
+                )
+
+        for operation in ("frame-extract", "contact-sheet"):
+            with self.subTest(operation=operation):
+                validate_declared_visual_media_inputs(
+                    self.envelope(operation=operation, output_contract="scene-image-v1"),
+                    artifacts,
+                )
 
     def test_visual_result_envelope_applies_context_budget_and_closed_handoff(self):
         """Catches a valid-looking handoff bypassing recursive or declared-budget checks."""

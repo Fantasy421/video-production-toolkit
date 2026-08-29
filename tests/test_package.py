@@ -13,6 +13,9 @@ from scripts.toolkit.tasks import (
     _validate_persisted_envelope,
     validate_current_task_envelope,
 )
+from scripts.toolkit.visual_media_context import (
+    validate_compact_visual_media_handoff,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -35,6 +38,14 @@ class PackageTests(unittest.TestCase):
             )
             registry = registry.with_resource(path.as_uri(), resource)
         return Draft202012Validator(envelope, registry=registry)
+
+    def task_result_validator(self):
+        schema = json.loads(
+            (ROOT / "references/schemas/task-result.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        return Draft202012Validator(schema)
 
     def copy_package(self, folder):
         package = Path(folder) / "package"
@@ -174,7 +185,12 @@ class PackageTests(unittest.TestCase):
                     },
                     "required": ["visual_media_operation"],
                 },
-                "then": {"required": ["visual_media_context"]},
+                "then": {
+                    "required": ["visual_media_context", "execution_context"],
+                    "properties": {
+                        "execution_context": {"const": "isolated-child-agent"}
+                    },
+                },
             },
             conditionals,
         )
@@ -210,6 +226,7 @@ class PackageTests(unittest.TestCase):
             {
                 "visual_media_operation": "image-inspect",
                 "visual_media_context": visual_context,
+                "execution_context": "isolated-child-agent",
             },
             {"image_operation": "structure-only"},
             {"image_operation": "image-inspect", "image_context": image_context},
@@ -267,6 +284,7 @@ class PackageTests(unittest.TestCase):
             "constraints": {
                 "visual_media_operation": "image-generate",
                 "visual_media_context": visual_context,
+                "execution_context": "isolated-child-agent",
             },
         }
         persisted_legacy = {
@@ -328,8 +346,105 @@ class PackageTests(unittest.TestCase):
             list(handoff["properties"]),
         )
         self.assertFalse(handoff["additionalProperties"])
-        self.assertEqual("#/$defs/previewPath", handoff["properties"]["review_preview_path"]["$ref"])
+        self.assertEqual(
+            [
+                {"type": "null"},
+                {
+                    "allOf": [
+                        {"$ref": "#/$defs/previewPath"},
+                        {
+                            "maxLength": 256,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+                        },
+                    ]
+                },
+            ],
+            handoff["properties"]["review_preview_path"]["anyOf"],
+        )
         self.assertTrue(schema["properties"]["image_handoff"]["deprecated"])
+
+    def test_draft202012_schema_and_runtime_match_active_execution_and_preview_null(self):
+        """Catches schema/runtime drift in both acceptance directions."""
+        envelope_validator = self.task_envelope_validator()
+        context = {
+            "scope_identity": {
+                "kind": "scene-contract",
+                "id": "scene-contract-S03-v2",
+            },
+            "allowed_artifact_ids": [],
+            "historical_access": "character-only",
+            "continuity_exception": None,
+            "max_review_previews": 1,
+            "context_budget_bytes": 32_768,
+        }
+        base_envelope = {
+            "task_id": "render-S03-v1",
+            "capability": "scene.produce",
+            "inputs": ["scene-contract-S03-v2"],
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "scene-video-v1",
+            "constraints": {
+                "visual_media_operation": "video-render",
+                "visual_media_context": context,
+                "execution_context": "isolated-child-agent",
+            },
+        }
+        envelope_cases = (
+            (base_envelope, True),
+            (
+                {
+                    **base_envelope,
+                    "constraints": {
+                        key: value
+                        for key, value in base_envelope["constraints"].items()
+                        if key != "execution_context"
+                    },
+                },
+                False,
+            ),
+            (
+                {
+                    **base_envelope,
+                    "constraints": {
+                        **base_envelope["constraints"],
+                        "execution_context": "primary-coordinator",
+                    },
+                },
+                False,
+            ),
+        )
+        for envelope, expected in envelope_cases:
+            runtime_valid = True
+            try:
+                validate_current_task_envelope(envelope)
+            except ValueError:
+                runtime_valid = False
+            with self.subTest(envelope=envelope):
+                self.assertEqual(expected, envelope_validator.is_valid(envelope))
+                self.assertEqual(expected, runtime_valid)
+
+        handoff = {
+            "artifact_ids": ["media-S03-v4"],
+            "paths": ["media/media-S03-v4.mp4"],
+            "media": {"kind": "video", "mime_type": "video/mp4"},
+            "checks": [],
+            "issues": [],
+            "summary": "Ready for user review.",
+            "review_preview_path": None,
+        }
+        result = {
+            "task_id": "render-S03-v1",
+            "status": "waiting_user",
+            "inputs": ["scene-contract-S03-v2"],
+            "artifacts": ["media-S03-v4"],
+            "checks": [],
+            "warnings": [],
+            "worker_id": "worker-1",
+            "claim_token": "claim-1",
+            "visual_media_handoff": handoff,
+        }
+        self.assertTrue(self.task_result_validator().is_valid(result))
+        self.assertEqual(handoff, validate_compact_visual_media_handoff(handoff))
 
     def test_visual_media_handoff_has_a_bounded_compact_result_shape(self):
         """Catches a visual-media result whose variable handoff fields exceed its budget."""
@@ -414,10 +529,11 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(64, issue["message"]["maxLength"])
         self.assertEqual(64, issue["severity"]["maxLength"])
         self.assertEqual(64, handoff["summary"]["maxLength"])
-        self.assertEqual(256, handoff["review_preview_path"]["maxLength"])
+        preview_string = handoff["review_preview_path"]["anyOf"][1]["allOf"][1]
+        self.assertEqual(256, preview_string["maxLength"])
         self.assertEqual(
             "^[A-Za-z0-9][A-Za-z0-9._/-]*$",
-            handoff["review_preview_path"]["pattern"],
+            preview_string["pattern"],
         )
 
         high_codepoint = "\U0010ffff" * 63

@@ -5,10 +5,15 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from scripts.toolkit.visual_media_context import validate_compact_visual_media_handoff
+from scripts.toolkit.visual_media_context import compact_visual_media_result
 
 
-def build_review_pack(root: Path, handoff: Mapping[str, Any]) -> dict[str, Any]:
+def build_review_pack(
+    root: Path,
+    handoff: Mapping[str, Any],
+    *,
+    visual_media_context: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Return compact review metadata without accessing the preview path.
 
     ``handoff`` has already passed visual-media validation.  ``root`` is kept
@@ -16,7 +21,11 @@ def build_review_pack(root: Path, handoff: Mapping[str, Any]) -> dict[str, Any]:
     relay must not resolve, open, probe, or otherwise dereference visual media.
     """
     del root
-    compact = validate_compact_visual_media_handoff(handoff)
+    if visual_media_context is None:
+        raise ValueError(
+            "build_review_pack requires a validated visual_media_context"
+        )
+    compact = compact_visual_media_result(visual_media_context, handoff)
     return {
         **compact,
         "decision_status": "waiting_user",

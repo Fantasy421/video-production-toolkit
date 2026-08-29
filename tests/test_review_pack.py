@@ -35,9 +35,24 @@ class ReviewPackTests(unittest.TestCase):
         handoff.update(overrides)
         return handoff
 
+    def visual_context(self, **overrides):
+        context = {
+            "scope_identity": {
+                "kind": "review-batch",
+                "id": ["media-S03-v4"],
+            },
+            "allowed_artifact_ids": [],
+            "historical_access": "character-only",
+            "continuity_exception": None,
+            "max_review_previews": 1,
+            "context_budget_bytes": 32_768,
+        }
+        context.update(overrides)
+        return context
+
     def test_review_pack_relays_preview_path_without_dereferencing_it(self):
         """Catches a relay reopening the user-only preview path."""
-        preview_path = "previews/S03-v4-low.mp4"
+        preview_path = "previews/media-S03-v4/low.mp4"
         handoff = self.visual_handoff(review_preview_path=preview_path)
 
         with TemporaryDirectory() as folder:
@@ -69,7 +84,9 @@ class ReviewPackTests(unittest.TestCase):
                 patch.object(Path, "stat", autospec=True, side_effect=guard("stat")),
             ):
                 self.assertEqual('{"safe": true}', json_path.read_text(encoding="utf-8"))
-                pack = build_review_pack(root, handoff)
+                pack = build_review_pack(
+                    root, handoff, visual_media_context=self.visual_context()
+                )
 
         self.assertEqual(preview_path, pack["review_preview_path"])
 
@@ -80,7 +97,9 @@ class ReviewPackTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "preview"):
-            build_review_pack(self.root, handoff)
+            build_review_pack(
+                self.root, handoff, visual_media_context=self.visual_context()
+            )
 
     def test_review_pack_rejects_unvalidated_or_malformed_handoffs(self):
         """Catches a relay dropping, truncating, or coercing invalid handoff data."""
@@ -99,7 +118,9 @@ class ReviewPackTests(unittest.TestCase):
 
         for handoff, name in cases:
             with self.subTest(name=name), self.assertRaises(ValueError):
-                build_review_pack(self.root, handoff)
+                build_review_pack(
+                    self.root, handoff, visual_media_context=self.visual_context()
+                )
 
     def test_review_pack_preserves_all_validated_structural_media_scalars(self):
         """Catches the relay dropping validated media identity metadata."""
@@ -118,6 +139,7 @@ class ReviewPackTests(unittest.TestCase):
                     "checksum": "a1b2c3d4",
                 }
             ),
+            visual_media_context=self.visual_context(),
         )
 
         self.assertEqual(
@@ -137,13 +159,32 @@ class ReviewPackTests(unittest.TestCase):
 
     def test_review_pack_keeps_subjective_acceptance_with_the_user(self):
         """Catches an automated review relay declaring a visual decision final."""
-        pack = build_review_pack(self.root, self.visual_handoff())
+        pack = build_review_pack(
+            self.root,
+            self.visual_handoff(),
+            visual_media_context=self.visual_context(),
+        )
 
         self.assertEqual("waiting_user", pack["decision_status"])
         self.assertEqual("user", pack["subjective_acceptance_authority"])
         self.assertEqual(
             ["approve", "reject", "request_revision"], pack["allowed_user_decisions"]
         )
+
+    def test_review_pack_rejects_an_unbound_handoff(self):
+        """Catches a path-only relay bypassing claimed visual-media scope."""
+        with self.assertRaisesRegex(ValueError, "visual_media_context|validated"):
+            build_review_pack(self.root, self.visual_handoff())
+
+        with self.assertRaisesRegex(ValueError, "undeclared path|bound"):
+            build_review_pack(
+                self.root,
+                self.visual_handoff(
+                    artifact_ids=["other-v1"],
+                    paths=["media/media-S03-v4.mp4"],
+                ),
+                visual_media_context=self.visual_context(),
+            )
 
 
 

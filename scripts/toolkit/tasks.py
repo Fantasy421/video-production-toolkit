@@ -21,6 +21,7 @@ from scripts.toolkit.image_context import (
 from scripts.toolkit.project_state import _state_lock
 from scripts.toolkit.runtime_paths import project_path, project_root, storage_directory
 from scripts.toolkit.visual_media_context import (
+    VISUAL_MEDIA_OPERATIONS,
     classify_visual_media_artifact,
     classify_visual_media_task,
     compact_visual_media_result,
@@ -29,6 +30,7 @@ from scripts.toolkit.visual_media_context import (
     validate_result_envelope,
     validate_visual_media_context,
     validate_visual_media_result_envelope,
+    validate_visual_media_operation_outputs,
 )
 from scripts.toolkit.voice import validate_project_authoritative_voice_bundle
 
@@ -366,6 +368,13 @@ def _authorize_declared_visual_media_inputs(
     ):
         raise ValueError("visual media task requires an isolated child agent")
     return classification
+
+
+def authorize_declared_visual_media_task(
+    envelope: dict[str, Any], artifacts: dict[str, dict[str, Any]]
+) -> str:
+    """Public shared scope/isolation authorization for readiness and lifecycle."""
+    return _authorize_declared_visual_media_inputs(envelope, artifacts)
 
 
 def _artifact_inputs_are_current(
@@ -756,6 +765,11 @@ def validate_current_task_envelope(envelope: dict[str, Any]) -> None:
     _validate_current_envelope(envelope)
 
 
+def validate_persisted_task_envelope(envelope: dict[str, Any]) -> None:
+    """Validate immutable current or explicitly supported legacy task authority."""
+    _validate_persisted_envelope(envelope)
+
+
 def _validate_persisted_envelope(envelope: dict[str, Any]) -> None:
     """Validate current records or project already-persisted legacy image records."""
     _validate_envelope_shape(envelope)
@@ -780,9 +794,27 @@ def _validate_persisted_envelope(envelope: dict[str, Any]) -> None:
 
 
 def _validate_current_visual_operation_subset(envelope: dict[str, Any]) -> None:
+    constraints = envelope["constraints"]
+    operation = constraints.get("visual_media_operation")
+    if operation not in VISUAL_MEDIA_OPERATIONS:
+        raise ValueError("task requires a recognized visual_media_operation")
+    if operation == "none":
+        if "visual_media_context" in constraints:
+            raise ValueError("visual_media_operation none must not include context")
+        if (
+            "execution_context" in constraints
+            and constraints["execution_context"] != "isolated-child-agent"
+        ):
+            raise ValueError("execution_context is not recognized")
+    else:
+        if "visual_media_context" not in constraints:
+            raise ValueError("visual media operation requires visual_media_context")
+        validate_visual_media_context(constraints["visual_media_context"])
+        if constraints.get("execution_context") != "isolated-child-agent":
+            raise ValueError("visual media task requires an isolated child agent")
     if (
         envelope["capability"] == "structure.validate"
-        and envelope["constraints"].get("visual_media_operation")
+        and operation
         not in {"none", "image-inspect"}
     ):
         raise ValueError(
@@ -883,6 +915,9 @@ def _validate_conditional_visual_media_result(
     context = validate_visual_media_context(constraints.get("visual_media_context"))
     validate_visual_media_result_envelope(context, result)
     compact = compact_visual_media_result(context, visual_handoff)
+    validate_visual_media_operation_outputs(
+        constraints.get("visual_media_operation"), produced_artifacts, compact
+    )
     if compact["artifact_ids"] != result["artifacts"]:
         raise ValueError("visual_media_handoff artifact_ids must match result artifacts")
     if compact["paths"] != registered_paths:

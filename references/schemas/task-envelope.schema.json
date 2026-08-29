@@ -53,6 +53,7 @@
           ]
         },
         "visual_media_context": {"$ref": "visual-media-task-context.schema.json"},
+        "execution_context": {"const": "isolated-child-agent"},
         "visual_operation": {
           "enum": ["image-generation", "non-image"],
           "deprecated": true,
@@ -104,7 +105,12 @@
             },
             "required": ["visual_media_operation"]
           },
-          "then": {"required": ["visual_media_context"]}
+          "then": {
+            "required": ["visual_media_context", "execution_context"],
+            "properties": {
+              "execution_context": {"const": "isolated-child-agent"}
+            }
+          }
         },
         {
           "if": {"required": ["visual_media_context"]},

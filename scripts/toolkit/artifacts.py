@@ -1,15 +1,27 @@
 """Durable immutable artifacts and user approvals for toolkit projects."""
 
 import json
+import math
 import os
 import tempfile
 import time
 import fcntl
+from collections.abc import Mapping
 from pathlib import Path
+from pathlib import PurePosixPath
+import re
 from typing import Any, Optional
 from uuid import uuid4
 
 from .runtime_paths import project_path, project_root, storage_directory
+from .visual_media_context import (
+    CHECKSUM_RE,
+    MEDIA_KINDS,
+    MIME_TYPE_RE,
+    SAFE_ID_RE,
+    VISUAL_RESULT_BUDGET_BYTES,
+    validate_coordinator_safe_json,
+)
 
 
 ARTIFACT_REQUIRED_KEYS = (
@@ -30,6 +42,27 @@ APPROVAL_REQUIRED_KEYS = (
     "notes",
 )
 LEGACY_APPROVAL_KEYS = set(APPROVAL_REQUIRED_KEYS) - {"decision"}
+COORDINATOR_SAFE_ARTIFACT_FIELDS = (
+    "artifact_id",
+    "type",
+    "version",
+    "status",
+    "parents",
+    "path",
+    "output_contract",
+    "media_kind",
+    "mime_type",
+    "format",
+    "width",
+    "height",
+    "duration_ms",
+    "fps",
+    "file_size",
+    "size_bytes",
+    "checksum",
+    "readiness",
+    "historical",
+)
 
 
 def create_artifact(root: Path, artifact: dict[str, Any]) -> Path:
@@ -58,6 +91,25 @@ def create_artifact(root: Path, artifact: dict[str, Any]) -> Path:
     finally:
         _release_artifact_lock(lock)
     return destination
+
+
+def validate_artifact_record(artifact: Mapping[str, Any]) -> None:
+    """Validate one full immutable Artifact record at every trust boundary."""
+    if not isinstance(artifact, dict):
+        artifact = dict(artifact) if isinstance(artifact, Mapping) else artifact
+    _validate_artifact(artifact)
+
+
+def coordinator_safe_artifact_projection(
+    artifact: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return only compact structural Artifact metadata for the coordinator."""
+    validate_artifact_record(artifact)
+    return {
+        field: artifact[field]
+        for field in COORDINATOR_SAFE_ARTIFACT_FIELDS
+        if field in artifact
+    }
 
 
 def approve_artifact(
@@ -310,6 +362,7 @@ def _require_within(root: Path, destination: Path) -> None:
 def _validate_artifact(artifact: dict[str, Any]) -> None:
     if not isinstance(artifact, dict):
         raise ValueError("artifact must be an object")
+    validate_coordinator_safe_json(artifact, budget=VISUAL_RESULT_BUDGET_BYTES)
     missing = [key for key in ARTIFACT_REQUIRED_KEYS if key not in artifact]
     if missing:
         raise ValueError(f"artifact is missing required keys: {', '.join(missing)}")
@@ -317,11 +370,15 @@ def _validate_artifact(artifact: dict[str, Any]) -> None:
         value = artifact[key]
         if not isinstance(value, str) or not value:
             raise ValueError(f"artifact {key} must be a non-empty string")
-    if not _is_safe_component(artifact["artifact_id"]) or not _is_safe_component(artifact["type"]):
-        raise ValueError("artifact_id and type must be safe single path components")
+    if not _bounded_safe_id(artifact["artifact_id"]) or not _bounded_safe_id(
+        artifact["type"]
+    ):
+        raise ValueError("artifact_id and type must be bounded safe IDs")
+    if not _project_contained_path(artifact["path"]):
+        raise ValueError("artifact path must be one project-contained path")
     if isinstance(artifact["version"], bool) or not isinstance(artifact["version"], int) or artifact["version"] < 1:
         raise ValueError("artifact version must be a positive integer")
-    if artifact["status"] not in ARTIFACT_STATUSES:
+    if not isinstance(artifact["status"], str) or artifact["status"] not in ARTIFACT_STATUSES:
         raise ValueError("artifact status is not recognized")
     if not isinstance(artifact["parents"], list) or not all(
         isinstance(parent, str) and parent for parent in artifact["parents"]
@@ -329,6 +386,58 @@ def _validate_artifact(artifact: dict[str, Any]) -> None:
         raise ValueError("artifact parents must be a list of non-empty IDs")
     if len(set(artifact["parents"])) != len(artifact["parents"]):
         raise ValueError("artifact parents must not contain duplicates")
+    if any(not _bounded_safe_id(parent) for parent in artifact["parents"]):
+        raise ValueError("artifact parents must contain bounded safe IDs")
+    if "output_contract" in artifact:
+        value = artifact["output_contract"]
+        if not isinstance(value, str) or not value or len(value) > 128:
+            raise ValueError("artifact output_contract must be bounded text")
+    if "media_kind" in artifact and artifact["media_kind"] not in MEDIA_KINDS:
+        raise ValueError("artifact media_kind is not recognized")
+    if "mime_type" in artifact:
+        mime_type = artifact["mime_type"]
+        if (
+            not isinstance(mime_type, str)
+            or len(mime_type) > 128
+            or MIME_TYPE_RE.fullmatch(mime_type) is None
+        ):
+            raise ValueError("artifact mime_type must be canonical")
+    if "historical" in artifact and not isinstance(artifact["historical"], bool):
+        raise ValueError("artifact historical must be boolean")
+    for key in ("format", "readiness"):
+        if key in artifact:
+            value = artifact[key]
+            if not isinstance(value, str) or not value or len(value) > 64:
+                raise ValueError(f"artifact {key} must be bounded text")
+    if "checksum" in artifact and (
+        not isinstance(artifact["checksum"], str)
+        or CHECKSUM_RE.fullmatch(artifact["checksum"]) is None
+    ):
+        raise ValueError("artifact checksum must be a bounded hexadecimal digest")
+    for key, minimum, maximum in (
+        ("width", 1, 16_384),
+        ("height", 1, 16_384),
+        ("duration_ms", 0, 36_000_000),
+        ("file_size", 0, 1_099_511_627_776),
+        ("size_bytes", 0, 1_099_511_627_776),
+    ):
+        if key in artifact:
+            value = artifact[key]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not minimum <= value <= maximum
+            ):
+                raise ValueError(f"artifact {key} is outside its structural bound")
+    if "fps" in artifact:
+        fps = artifact["fps"]
+        if (
+            isinstance(fps, bool)
+            or not isinstance(fps, (int, float))
+            or not math.isfinite(fps)
+            or not 0 < fps <= 240
+        ):
+            raise ValueError("artifact fps is outside its structural bound")
 
 
 def _normalize_approval(approval: Any) -> dict[str, Any]:
@@ -365,3 +474,24 @@ def _require_safe_component(value: Any, label: str) -> None:
 
 def _is_safe_component(value: str) -> bool:
     return value not in {".", ".."} and "/" not in value and "\\" not in value
+
+
+def _bounded_safe_id(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) <= 128
+        and SAFE_ID_RE.fullmatch(value) is not None
+    )
+
+
+def _project_contained_path(value: Any) -> bool:
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > 512
+        or value.startswith("/")
+        or "\\" in value
+        or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", value)
+    ):
+        return False
+    return all(part not in {"", ".", ".."} for part in PurePosixPath(value).parts)

@@ -4,17 +4,43 @@
   "type": "object",
   "required": ["artifact_id", "type", "version", "status", "parents", "path"],
   "properties": {
-    "artifact_id": {"type": "string", "minLength": 1},
-    "type": {"type": "string", "minLength": 1},
+    "artifact_id": {"$ref": "#/$defs/safeId"},
+    "type": {"$ref": "#/$defs/safeId"},
     "version": {"type": "integer", "minimum": 1},
     "status": {"enum": ["draft", "approved", "stale", "superseded", "invalid"]},
-    "parents": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "parents": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
     "path": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^(?!/)(?![A-Za-z]:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"
+      "maxLength": 512,
+      "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"
     },
-    "output_contract": {"type": "string", "minLength": 1}
+    "output_contract": {"type": "string", "minLength": 1, "maxLength": 128},
+    "media_kind": {"enum": ["audio", "data", "document", "image", "video"]},
+    "mime_type": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
+    },
+    "format": {"type": "string", "minLength": 1, "maxLength": 64},
+    "historical": {"type": "boolean"},
+    "checksum": {"type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[A-Fa-f0-9]{8,128}$"},
+    "width": {"type": "integer", "minimum": 1, "maximum": 16384},
+    "height": {"type": "integer", "minimum": 1, "maximum": 16384},
+    "duration_ms": {"type": "integer", "minimum": 0, "maximum": 36000000},
+    "fps": {"type": "number", "exclusiveMinimum": 0, "maximum": 240},
+    "file_size": {"type": "integer", "minimum": 0, "maximum": 1099511627776},
+    "size_bytes": {"type": "integer", "minimum": 0, "maximum": 1099511627776},
+    "readiness": {"type": "string", "minLength": 1, "maxLength": 64}
   },
-  "additionalProperties": true
+  "additionalProperties": true,
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"
+    }
+  }
 }

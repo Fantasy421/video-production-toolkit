@@ -46,6 +46,7 @@ SHIPPED_INVALIDATION = json.loads(
 )
 FIXTURE = ROOT / "tests" / "fixtures" / "knowledge-video-minimal"
 LEGACY = Path.home() / ".codex" / "skills" / "knowledge-video-visual-director"
+ROUTING_SCENE_SCOPE_ID = "routing-scene-contract-v1"
 
 
 def advance_project(project, target_phase):
@@ -283,6 +284,52 @@ def candidate(task_id, capability, inputs, gate, target_id, **constraints):
     else:
         constraints.setdefault("visual_media_operation", visual_operation)
         constraints.setdefault("execution_context", "isolated-child-agent")
+        if "visual_media_context" not in constraints:
+            scope_id = next(
+                (
+                    artifact_id
+                    for artifact_id in inputs
+                    if "contract" in artifact_id.casefold()
+                ),
+                ROUTING_SCENE_SCOPE_ID,
+            )
+            if scope_id not in inputs:
+                inputs.append(scope_id)
+            continuity_id = next(
+                (
+                    artifact_id
+                    for artifact_id in inputs
+                    if artifact_id != scope_id
+                    and any(
+                        marker in artifact_id.casefold()
+                        for marker in (
+                            "storyboard",
+                            "scene-",
+                            "preview",
+                            "image",
+                            "video",
+                            "screen",
+                        )
+                    )
+                ),
+                None,
+            )
+            constraints["visual_media_context"] = {
+                "scope_identity": {"kind": "scene-contract", "id": scope_id},
+                "allowed_artifact_ids": [],
+                "historical_access": "character-only",
+                "continuity_exception": (
+                    {
+                        "artifact_id": continuity_id,
+                        "user_requested": True,
+                        "reason": "Use this exact current visual production input.",
+                    }
+                    if continuity_id is not None
+                    else None
+                ),
+                "max_review_previews": 1,
+                "context_budget_bytes": 32_768,
+            }
     if capability in {
         "storyboard.plan",
         "scene.produce",
@@ -482,6 +529,30 @@ class SmokeFixtureMetadataTests(unittest.TestCase):
                         [],
                     )
 
+    def test_orchestrator_construction_applies_shared_visual_artifact_authority(self):
+        """Catches readiness validating envelope shape without its Artifact scope."""
+        task = smoke_candidate(
+            "launder-current-visual",
+            "project.manage",
+            ["screen-v1"],
+            None,
+            "project-v1",
+        )
+        screenshot = artifact(
+            "screen-v1",
+            "browser-screenshot",
+            path="media/screen-v1.png",
+            media_kind="image",
+            historical=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "visual media.*none"):
+            calculate_ready_tasks(
+                {"phase": "initialized", "candidate_tasks": [task]},
+                [screenshot],
+                [],
+            )
+
 
 class CoordinatorTests(unittest.TestCase):
     def setUp(self):
@@ -495,6 +566,18 @@ class CoordinatorTests(unittest.TestCase):
         self._routing_folder.cleanup()
 
     def ready_tasks(self, state, artifacts, approvals):
+        artifacts = list(artifacts)
+        if any(
+            ROUTING_SCENE_SCOPE_ID in task.get("inputs", [])
+            for task in state.get("candidate_tasks", [])
+            if isinstance(task, dict)
+        ) and not any(
+            item.get("artifact_id") == ROUTING_SCENE_SCOPE_ID
+            for item in artifacts
+        ):
+            artifacts.append(
+                artifact(ROUTING_SCENE_SCOPE_ID, "scene-contract")
+            )
         return calculate_ready_tasks(
             state, artifacts, approvals, root=self.routing_root
         )
@@ -756,7 +839,12 @@ class CoordinatorTests(unittest.TestCase):
             "scope": "storyboard-and-cost",
             "decision": "approved",
         }
-        artifacts = [storyboard, *voice_bundle()]
+        contract = artifact(
+            "scene-contract-v1",
+            "scene-contract",
+            parents=["storyboard-v1"],
+        )
+        artifacts = [storyboard, contract, *voice_bundle()]
         cases = (
             ("captions.produce", "captions.produce"),
             ("representative-slice.produce", "representative-slice.produce"),
@@ -766,7 +854,7 @@ class CoordinatorTests(unittest.TestCase):
                 task = candidate(
                     f"{capability}-v1",
                     capability,
-                    ["storyboard-v1"],
+                    ["scene-contract-v1"],
                     "storyboard-and-cost",
                     "storyboard-v1",
                     production_scope="representative-slice",
@@ -842,7 +930,11 @@ class CoordinatorTests(unittest.TestCase):
         )
         for index, (capability, gate, target_type, extra) in enumerate(cases, 1):
             with self.subTest(gate=gate):
-                target_id = f"gate-target-{index}"
+                target_id = (
+                    f"storyboard-gate-{index}"
+                    if target_type == "storyboard"
+                    else f"gate-target-{index}"
+                )
                 task = candidate(
                     f"task-{index}",
                     capability,
@@ -898,7 +990,11 @@ class CoordinatorTests(unittest.TestCase):
                     ),
                 )
 
-                descendant_id = f"gate-input-{index}"
+                descendant_id = (
+                    f"storyboard-input-{index}"
+                    if target_type == "storyboard"
+                    else f"gate-input-{index}"
+                )
                 unrelated_task = candidate(
                     f"unrelated-task-{index}",
                     capability,
@@ -915,7 +1011,14 @@ class CoordinatorTests(unittest.TestCase):
                     [],
                     self.ready_tasks(
                         unrelated_state,
-                        [artifacts[0], artifact(descendant_id, "task-input"), *gate_voice],
+                        [
+                            artifacts[0],
+                            artifact(
+                                descendant_id,
+                                "storyboard" if target_type == "storyboard" else "task-input",
+                            ),
+                            *gate_voice,
+                        ],
                         [approval],
                     ),
                     "an artifact of the right type must not approve another lineage",
@@ -928,7 +1031,7 @@ class CoordinatorTests(unittest.TestCase):
                             artifacts[0],
                             artifact(
                                 descendant_id,
-                                "task-input",
+                                "storyboard" if target_type == "storyboard" else "task-input",
                                 parents=[target_id],
                             ),
                             *gate_voice,
@@ -1260,9 +1363,13 @@ class CoordinatorTests(unittest.TestCase):
                             "kind": "scene-contract",
                             "id": "contract-S02-v2",
                         },
-                        "allowed_artifact_ids": ["storyboard-v1"],
+                        "allowed_artifact_ids": [],
                         "historical_access": "character-only",
-                        "continuity_exception": None,
+                        "continuity_exception": {
+                            "artifact_id": "storyboard-v1",
+                            "user_requested": True,
+                            "reason": "Use this exact current storyboard input.",
+                        },
                         "max_review_previews": 0,
                         "context_budget_bytes": 32_768,
                     },
@@ -1424,9 +1531,13 @@ class CoordinatorTests(unittest.TestCase):
                             "kind": "scene-contract",
                             "id": "contract-S02-v1",
                         },
-                        "allowed_artifact_ids": ["storyboard-v1"],
-                        "historical_access": "character-only",
-                        "continuity_exception": None,
+                            "allowed_artifact_ids": [],
+                            "historical_access": "character-only",
+                            "continuity_exception": {
+                                "artifact_id": "storyboard-v1",
+                                "user_requested": True,
+                                "reason": "Use this exact current storyboard input.",
+                            },
                         "max_review_previews": 0,
                         "context_budget_bytes": 32_768,
                     },
@@ -1445,6 +1556,132 @@ class CoordinatorTests(unittest.TestCase):
             self.assertEqual(["scene.produce:S02"], resumed["ready_tasks"])
             self.assertEqual([], resumed["locked_task_ids"])
             self.assertFalse(lock_path.exists())
+
+    def test_resume_blocks_invalid_visual_tasks_in_a_safe_recovery_view(self):
+        """Catches malformed persisted authority crashing or routing production."""
+        with TemporaryDirectory() as folder:
+            project = Path(folder) / "project"
+            initialize_project(project, "kv-invalid-resume", "knowledge-video")
+            malformed = {
+                "task_id": "invalid-visual-v1",
+                "capability": "project.manage",
+                "inputs": [],
+                "adapter_preferences": ["chatcut"],
+                "output_contract": "scene-video-v1",
+                "constraints": {
+                    "visual_media_operation": "video-render",
+                    "execution_context": "isolated-child-agent",
+                },
+            }
+            (project / "tasks" / "invalid-visual-v1.json").write_text(
+                json.dumps(malformed), encoding="utf-8"
+            )
+
+            resumed = resume_project(project)
+
+            self.assertEqual("initialized", resumed["phase"])
+            self.assertEqual([], resumed["ready_tasks"])
+            self.assertEqual([], resumed["candidate_tasks"])
+            self.assertEqual(
+                "visual-media-recovery-blocked",
+                resumed["migration_requirement"]["code"],
+            )
+            self.assertIn(
+                "visual-media-context-invalid",
+                {issue["code"] for issue in resumed["recovery_issues"]},
+            )
+
+    def test_resume_reads_valid_legacy_authority_without_minting_it(self):
+        """Catches current construction validation making legacy recovery unreadable."""
+        with TemporaryDirectory() as folder:
+            project = Path(folder) / "project"
+            initialize_project(project, "kv-legacy-task", "knowledge-video")
+            create_artifact(project, artifact("contract-S01-v1", "scene-contract"))
+            legacy = {
+                "task_id": "legacy-inspect-S01",
+                "capability": "structure.validate",
+                "inputs": ["contract-S01-v1"],
+                "adapter_preferences": ["chatcut"],
+                "output_contract": "image-report-v1",
+                "constraints": {
+                    "image_operation": "image-inspect",
+                    "image_context": {
+                        "scope_identity": {
+                            "kind": "scene-contract",
+                            "id": "contract-S01-v1",
+                        },
+                        "allowed_image_artifact_ids": [],
+                        "allowed_character_pack_ids": [],
+                        "forbidden_scene_image_access": True,
+                        "max_review_previews": 1,
+                        "context_budget": 4096,
+                    },
+                },
+            }
+            (project / "tasks" / "legacy-inspect-S01.json").write_text(
+                json.dumps(legacy), encoding="utf-8"
+            )
+
+            resumed = resume_project(project)
+
+            self.assertEqual([legacy], resumed["candidate_tasks"])
+            self.assertEqual([], resumed["ready_tasks"])
+
+    def test_resume_returns_only_coordinator_safe_artifact_projection(self):
+        """Catches safe-but-arbitrary Artifact extras expanding coordinator context."""
+        with TemporaryDirectory() as folder:
+            project = Path(folder) / "project"
+            initialize_project(project, "kv-projection", "knowledge-video")
+            create_artifact(
+                project,
+                artifact(
+                    "license-v1",
+                    "license-document",
+                    path="artifacts/licenses/source.json",
+                    checksum="0123456789abcdef",
+                    license={
+                        "owner": "Example Studio",
+                        "territories": ["global"],
+                    },
+                ),
+            )
+
+            resumed = resume_project(project)
+            projected = resumed["artifacts"][0]
+
+            self.assertEqual("license-v1", projected["artifact_id"])
+            self.assertEqual("0123456789abcdef", projected["checksum"])
+            self.assertNotIn("license", projected)
+
+    def test_resume_blocks_a_tampered_unsafe_artifact_without_exposing_it(self):
+        """Catches recovery trusting an Artifact payload added after publication."""
+        with TemporaryDirectory() as folder:
+            project = Path(folder) / "project"
+            initialize_project(project, "kv-tampered-artifact", "knowledge-video")
+            path = create_artifact(
+                project,
+                artifact(
+                    "tampered-v1",
+                    "report",
+                    path="artifacts/reports/tampered-v1.json",
+                ),
+            )
+            record = json.loads(path.read_text(encoding="utf-8"))
+            record["metadata"] = {"thumbnail": "inline-payload"}
+            path.write_text(json.dumps(record), encoding="utf-8")
+
+            resumed = resume_project(project)
+
+            self.assertEqual([], resumed["artifacts"])
+            self.assertEqual([], resumed["ready_tasks"])
+            self.assertEqual(
+                "visual-media-recovery-blocked",
+                resumed["migration_requirement"]["code"],
+            )
+            self.assertIn(
+                "invalid-artifact-metadata",
+                {issue["code"] for issue in resumed["recovery_issues"]},
+            )
 
     def test_resume_rejects_a_symlinked_task_result_directory(self):
         """Catches completed-task discovery following storage outside the project."""

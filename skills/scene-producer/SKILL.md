@@ -32,7 +32,8 @@ Required output: Return a task-result envelope with compact asset IDs, contract
 checks, warnings, and any required user decision request.
 For visual-media work, return only compact `visual_media_handoff` metadata:
 Artifact IDs, project-contained paths, structural metadata, stable issue codes,
-a short summary, decision status, and no more than the declared review previews.
+a short summary, decision status, and the optional singular
+`review_preview_path` declared by the task contract.
 It must not return image or video payloads, bytes, base64/data URLs, or prompt
 histories.
 

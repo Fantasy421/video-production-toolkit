@@ -9,6 +9,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from jsonschema import Draft202012Validator
+
 from scripts.toolkit import artifacts
 from scripts.toolkit.artifacts import approve_artifact, create_artifact, read_approval
 
@@ -111,6 +113,75 @@ class ArtifactTests(unittest.TestCase):
                     (self.root / "artifacts" / "style-pack" / f"{artifact_id}.json").exists()
                 )
 
+    def test_artifact_boundary_recursively_rejects_payload_history_urls_and_oversize(self):
+        """Catches immutable Artifact metadata becoming a coordinator side channel."""
+        base = {
+            "artifact_id": "safe-report-v1",
+            "type": "report",
+            "version": 1,
+            "status": "approved",
+            "parents": [],
+            "path": "artifacts/reports/safe-report-v1.json",
+        }
+        cases = (
+            ({"metadata": {"prompt_transcript": ["secret"]}}, "prompt"),
+            ({"metadata": {"source": "s3://bucket/hidden.png"}}, "URL|scheme"),
+            (
+                {
+                    "metadata": {
+                        "opaque": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYX"
+                        "GBkaGxwdHh8gISIjJCUmJygpKissLS4v"
+                    }
+                },
+                "Base64|binary",
+            ),
+            ({"metadata": {"raw": b"bytes"}}, "payload|binary"),
+            ({"metadata": {"notes": "x" * 33_000}}, "budget"),
+        )
+        for extra, message in cases:
+            with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, message):
+                create_artifact(self.root, {**base, **extra})
+
+    def test_artifact_preserves_safe_business_metadata_but_projects_coordinator_fields(self):
+        """Catches safety hardening deleting business fields or resume leaking them."""
+        artifact = {
+            "artifact_id": "license-v1",
+            "type": "license-document",
+            "version": 1,
+            "status": "approved",
+            "parents": [],
+            "path": "artifacts/licenses/source.json",
+            "license": {
+                "owner": "Example Studio",
+                "territories": ["global"],
+                "expires": None,
+            },
+            "checksum": "0123456789abcdef",
+        }
+        path = create_artifact(self.root, artifact)
+        self.assertEqual(artifact, json.loads(path.read_text(encoding="utf-8")))
+
+        projection = artifacts.coordinator_safe_artifact_projection(artifact)
+
+        self.assertEqual("license-v1", projection["artifact_id"])
+        self.assertEqual("artifacts/licenses/source.json", projection["path"])
+        self.assertEqual("0123456789abcdef", projection["checksum"])
+        self.assertNotIn("license", projection)
+
+    def test_tampered_artifact_payload_is_rejected_on_read(self):
+        """Catches read/recovery paths trusting unsafe extras written out of band."""
+        artifact = {
+            **self.artifact,
+            "artifact_id": "tampered-v1",
+            "path": "previews/tampered-v1.html",
+        }
+        path = create_artifact(self.root, artifact)
+        tampered = json.loads(path.read_text(encoding="utf-8"))
+        tampered["metadata"] = {"thumbnail": "inline"}
+        path.write_text(json.dumps(tampered), encoding="utf-8")
+
+        self.assertIsNone(artifacts._read_valid_artifact(path))
+
     def test_artifact_schema_rejects_unsafe_project_paths(self):
         """Catches schema consumers accepting paths the runtime must reject."""
         schema = json.loads(
@@ -136,11 +207,68 @@ class ArtifactTests(unittest.TestCase):
             with self.subTest(valid=valid):
                 self.assertIsNotNone(re.search(pattern, valid))
 
+    def test_artifact_schema_and_runtime_share_id_mime_and_path_bounds(self):
+        """Catches Artifact validation drifting from its Draft 2020-12 schema."""
+        schema = json.loads(
+            (
+                Path(__file__).parents[1]
+                / "references/schemas/artifact.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        validator = Draft202012Validator(schema)
+        valid = {
+            "artifact_id": "license-v1",
+            "type": "license-document",
+            "version": 1,
+            "status": "approved",
+            "parents": [],
+            "path": "artifacts/licenses/source.json",
+            "mime_type": "text/plain",
+            "media_kind": "document",
+            "format": "txt",
+            "width": 1920,
+            "height": 1080,
+            "duration_ms": 0,
+            "fps": 24,
+            "file_size": 1024,
+            "size_bytes": 1024,
+            "checksum": "0123456789abcdef",
+            "readiness": "ready",
+            "license": {"owner": "Example Studio"},
+        }
+        cases = (
+            (valid, True),
+            ({**valid, "artifact_id": "a" * 129}, False),
+            ({**valid, "type": "t" * 129}, False),
+            ({**valid, "parents": ["p" * 129]}, False),
+            ({**valid, "mime_type": " image/png"}, False),
+            ({**valid, "media_kind": "visual"}, False),
+            ({**valid, "path": "s3://bucket/source.json"}, False),
+            ({**valid, "format": ""}, False),
+            ({**valid, "width": 0}, False),
+            ({**valid, "height": True}, False),
+            ({**valid, "duration_ms": 36_000_001}, False),
+            ({**valid, "fps": float("inf")}, False),
+            ({**valid, "file_size": -1}, False),
+            ({**valid, "size_bytes": 1_099_511_627_777}, False),
+            ({**valid, "checksum": "not-hex!!"}, False),
+            ({**valid, "readiness": "r" * 65}, False),
+        )
+        for record, expected in cases:
+            runtime_valid = True
+            try:
+                artifacts.validate_artifact_record(record)
+            except ValueError:
+                runtime_valid = False
+            with self.subTest(record=record):
+                self.assertEqual(expected, validator.is_valid(record))
+                self.assertEqual(expected, runtime_valid)
+
     def test_serialization_failure_leaves_no_artifact_and_retry_succeeds(self):
         """Catches a failed JSON write reserving an ID or publishing a partial file."""
-        invalid = {**self.artifact, "payload": object()}
+        invalid = {**self.artifact, "custom_metadata": object()}
 
-        with self.assertRaises(TypeError):
+        with self.assertRaisesRegex(ValueError, "JSON metadata"):
             create_artifact(self.root, invalid)
 
         self.assertFalse((self.root / "artifacts" / "style-pack" / "style-v1.json").exists())
@@ -273,7 +401,10 @@ class ArtifactTests(unittest.TestCase):
         """Catches approval publication beginning before its JSON is complete."""
         create_artifact(self.root, self.artifact)
 
-        with patch("scripts.toolkit.artifacts.json.dumps", side_effect=TypeError("bad JSON")):
+        with patch(
+            "scripts.toolkit.artifacts._serialize_json",
+            side_effect=TypeError("bad JSON"),
+        ):
             with self.assertRaises(TypeError):
                 approve_artifact(self.root, "style-v1", "whole-project", "approved")
 

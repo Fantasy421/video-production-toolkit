@@ -4,8 +4,6 @@ The functions in this module inspect dictionaries and path strings only.  They
 never dereference an Artifact path or invoke a media parser.
 """
 
-import base64
-import binascii
 import json
 import math
 import re
@@ -27,7 +25,11 @@ BASE64_TOKEN_RE = re.compile(
     r"([A-Za-z0-9+/]+(?:[ \t\r\n]+[A-Za-z0-9+/]+)*={0,2})"
     r"(?![A-Za-z0-9+/=])"
 )
-HTTP_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+REMOTE_URL_RE = re.compile(
+    r"(?<![A-Za-z0-9_.-])(?:https?|ftp|ftps|file|s3|gs|ipfs|ssh)://[^\s<>\"']+",
+    re.IGNORECASE,
+)
+SCHEME_RELATIVE_URL_RE = re.compile(r"(?<!:)//[^\s<>\"']+")
 DATA_URL_RE = re.compile(
     r"(?<![A-Za-z0-9_])data\s*:[^,\r\n]*,", re.IGNORECASE
 )
@@ -69,6 +71,10 @@ VISUAL_ARTIFACT_TYPES = frozenset(
         "b-roll",
         "b-roll-frame",
         "b-roll-image",
+        "app-capture",
+        "app-screenshot",
+        "browser-capture",
+        "browser-screenshot",
         "character-clothing-reference",
         "character-expression-reference",
         "character-image",
@@ -77,7 +83,10 @@ VISUAL_ARTIFACT_TYPES = frozenset(
         "character-turnaround",
         "contact-sheet",
         "frame",
+        "evidence-capture",
+        "evidence-screenshot",
         "image",
+        "keyframe",
         "motion-graphic-screenshot",
         "motion-graphics",
         "motion-graphics-preview",
@@ -92,10 +101,72 @@ VISUAL_ARTIFACT_TYPES = frozenset(
         "storyboard",
         "storyboard-frame",
         "storyboard-image",
+        "screenshot",
+        "thumbnail",
         "transparent-character-action",
         "video",
         "visual-preview",
     }
+)
+NON_VISUAL_ARTIFACT_TYPES = frozenset(
+    {
+        "approval",
+        "audio",
+        "captions",
+        "character-asset-batch",
+        "character-identity-metadata",
+        "character-pack",
+        "data",
+        "decision-pack",
+        "document",
+        "input",
+        "layout-pack",
+        "license-document",
+        "motion-contract",
+        "narration",
+        "project",
+        "report",
+        "review-pack",
+        "scene-contract",
+        "semantic-beats",
+        "style-pack",
+        "task-result",
+        "timeline",
+        "uploaded-audio",
+        "voice-profile",
+        "voice-source-decision",
+        "voice-timing",
+        "voiceover",
+    }
+)
+NON_VISUAL_CAPABILITIES = frozenset(
+    {
+        "project.manage",
+        "narration.plan",
+        "voice.prepare",
+        "storyboard.plan",
+        "structure.validate",
+        "captions.produce",
+        "representative-slice.produce",
+    }
+)
+VISUAL_NAME_TOKENS = frozenset(
+    {
+        "image",
+        "video",
+        "visual",
+        "frame",
+        "keyframe",
+        "preview",
+        "render",
+        "storyboard",
+        "screenshot",
+        "thumbnail",
+    }
+)
+AMBIGUOUS_MEDIA_TOKENS = frozenset({"binary", "blob", "capture", "media", "pixel"})
+RESERVED_PATH_AUTHORITY_IDS = frozenset(
+    {"artifact", "artifacts", "media", "preview", "previews"}
 )
 INDEPENDENT_CHARACTER_ASSET_TYPES = frozenset(
     {
@@ -105,6 +176,7 @@ INDEPENDENT_CHARACTER_ASSET_TYPES = frozenset(
         "character-pose-reference",
         "character-turnaround",
         "transparent-character-action",
+        "character-identity-metadata",
     }
 )
 VISUAL_PROMOTED_ASSET_KINDS = frozenset(
@@ -176,8 +248,13 @@ MEDIA_SUFFIX_KINDS = {
 KNOWN_MIME_SUFFIXES = {
     "image/apng": frozenset({".apng"}),
     "image/avif": frozenset({".avif"}),
+    "image/bmp": frozenset({".bmp"}),
     "image/gif": frozenset({".gif"}),
+    "image/heic": frozenset({".heic"}),
+    "image/heif": frozenset({".heif"}),
+    "image/vnd.microsoft.icon": frozenset({".ico"}),
     "image/jpeg": frozenset({".jpeg", ".jpg"}),
+    "image/jxl": frozenset({".jxl"}),
     "image/png": frozenset({".png"}),
     "image/svg+xml": frozenset({".svg"}),
     "image/tiff": frozenset({".tif", ".tiff"}),
@@ -186,6 +263,7 @@ KNOWN_MIME_SUFFIXES = {
     "video/mpeg": frozenset({".mpeg", ".mpg"}),
     "video/quicktime": frozenset({".mov"}),
     "video/webm": frozenset({".webm"}),
+    "video/x-msvideo": frozenset({".avi"}),
     "video/x-matroska": frozenset({".mkv"}),
 }
 MEDIA_KINDS = frozenset({"audio", "data", "document", "image", "video"})
@@ -232,12 +310,20 @@ ISSUE_FIELDS = frozenset({"code", "artifact_id", "message", "severity"})
 PROMPT_HISTORY_KEYS = frozenset(
     {
         "generation_history",
+        "generation_log",
+        "generation_transcript",
+        "chat_history",
+        "conversation_history",
         "iteration_history",
         "prompt_history",
+        "prompt_transcript",
         "prompt_iteration_history",
         "prompt_iteration_transcript",
         "prompt_iterations",
         "prompts",
+        "request_messages",
+        "system_prompt",
+        "negative_prompt",
     }
 )
 PAYLOAD_KEYS = frozenset(
@@ -427,22 +513,16 @@ def classify_visual_media_artifact(artifact: Mapping[str, Any]) -> str:
     path = artifact.get("path")
     suffix = PurePosixPath(path).suffix.lower() if isinstance(path, str) else ""
 
-    if "path" in artifact:
-        if not _project_path(path):
-            raise ValueError("Artifact path must be project-contained")
-        artifact_id = artifact.get("artifact_id")
-        if not _safe_id(artifact_id) or not _path_is_bound_to_artifact(
-            path, artifact_id
-        ):
-            raise ValueError("Artifact path must be bound to its exact Artifact ID")
+    if "path" in artifact and not _project_path(path):
+        raise ValueError("Artifact path must be project-contained")
 
+    if "media_kind" in artifact and media_kind is None:
+        raise ValueError("visual media Artifact metadata is ambiguous")
     if media_kind is not None and media_kind not in MEDIA_KINDS:
         raise ValueError("media_kind is not recognized")
     mime_kind = _mime_kind(mime_type)
     suffix_kind = MEDIA_SUFFIX_KINDS.get(suffix)
-    type_is_visual = artifact_type in VISUAL_ARTIFACT_TYPES or _promoted_is_visual(
-        artifact
-    )
+    type_is_visual = _artifact_type_is_visual(artifact)
 
     declared_kinds = {
         kind for kind in (media_kind, mime_kind, suffix_kind) if kind is not None
@@ -474,14 +554,30 @@ def classify_visual_media_artifact(artifact: Mapping[str, Any]) -> str:
         raise ValueError("mime_type conflicts with media suffix")
 
     if media_kind in {"image", "video"}:
-        return media_kind
-    if mime_kind in {"image", "video"}:
-        return mime_kind
-    if suffix_kind in {"image", "video"}:
-        return suffix_kind
-    if type_is_visual:
-        return "visual"
-    return "non-visual"
+        classification = media_kind
+    elif mime_kind in {"image", "video"}:
+        classification = mime_kind
+    elif suffix_kind in {"image", "video"}:
+        classification = suffix_kind
+    elif type_is_visual:
+        classification = "visual"
+    elif (
+        artifact_type in NON_VISUAL_ARTIFACT_TYPES
+        or media_kind in {"audio", "data", "document"}
+        or mime_kind in {"audio", "data", "document"}
+        or suffix_kind in {"audio", "data", "document"}
+    ):
+        classification = "non-visual"
+    else:
+        raise ValueError("visual media Artifact metadata is ambiguous and cannot classify")
+
+    if classification != "non-visual" and "path" in artifact:
+        artifact_id = artifact.get("artifact_id")
+        if not _safe_id(artifact_id) or not _path_is_bound_to_artifact(
+            path, artifact_id
+        ):
+            raise ValueError("visual Artifact path must be bound to its exact Artifact ID")
+    return classification
 
 
 def classify_visual_media_task(
@@ -499,16 +595,19 @@ def classify_visual_media_task(
     if operation is not None and operation not in VISUAL_MEDIA_OPERATIONS:
         raise ValueError("visual_media_operation is not recognized")
     is_visual = operation in ACTIVE_VISUAL_MEDIA_OPERATIONS
-    is_visual = is_visual or constraints.get("image_operation") in {
+    legacy_visual = constraints.get("image_operation") in {
         "generate",
         "image-inspect",
     }
-    is_visual = is_visual or envelope.get("capability") in VISUAL_MEDIA_CAPABILITIES
+    is_visual = is_visual or legacy_visual
+    capability = envelope.get("capability")
+    if capability is not None or not legacy_visual:
+        capability_classification = _classify_capability(capability)
+        is_visual = is_visual or capability_classification == "visual"
     output_contract = envelope.get("output_contract")
-    if isinstance(output_contract, str) and _contains_visual_output_marker(
-        output_contract
-    ):
-        is_visual = True
+    if output_contract is not None or not legacy_visual:
+        output_classification = _classify_output_contract(output_contract)
+        is_visual = is_visual or output_classification == "visual"
 
     inputs = envelope.get("inputs", [])
     if isinstance(inputs, list):
@@ -578,6 +677,7 @@ def validate_declared_visual_media_inputs(
     context = validate_visual_media_context(constraints["visual_media_context"])
     if classification != "visual":
         raise ValueError("declared visual media operation did not classify as visual")
+    _validate_operation_output_contract(operation, envelope.get("output_contract"))
 
     input_set = set(inputs)
     scope = context["scope_identity"]
@@ -630,6 +730,19 @@ def validate_declared_visual_media_inputs(
     continuity_id = continuity["artifact_id"] if continuity is not None else None
     if not allowed <= input_set:
         raise PermissionError("allowed visual Artifact IDs must be declared task inputs")
+    for artifact_id in allowed:
+        artifact = artifacts[artifact_id]
+        if artifact.get("historical") is True and not _is_approved_character_asset(
+            artifact
+        ):
+            raise PermissionError(
+                "historical visual access is limited to approved character assets"
+            )
+        if not _is_approved_character_asset(artifacts[artifact_id]):
+            raise PermissionError(
+                "ordinary allowed Artifact IDs are limited to independently approved "
+                "character assets; scene media requires one continuity exception"
+            )
     authorized_visual_ids = set(allowed)
     if continuity_id is not None:
         if continuity_id not in input_set:
@@ -655,18 +768,6 @@ def validate_declared_visual_media_inputs(
         raise PermissionError(
             "continuity exception must name one exact current visual Artifact"
         )
-    for artifact_id in allowed - visual_input_ids:
-        artifact = artifacts[artifact_id]
-        if not (
-            artifact.get("type") == "character-identity-metadata"
-            and artifact.get("historical") is True
-            and artifact.get("status") == "approved"
-        ):
-            raise PermissionError(
-                "non-visual allowed Artifacts must be approved historical "
-                "character identity metadata"
-            )
-
     for artifact_id in visual_input_ids:
         artifact = artifacts[artifact_id]
         if "historical" not in artifact or not isinstance(
@@ -682,6 +783,32 @@ def validate_declared_visual_media_inputs(
             )
         if artifact_id == continuity_id and historical:
             raise PermissionError("continuity exception must name one current Artifact")
+
+
+def validate_visual_media_operation_outputs(
+    operation: str,
+    produced_artifacts: Iterable[Mapping[str, Any]],
+    handoff: Optional[Mapping[str, Any]] = None,
+) -> None:
+    """Require image/video operations to return only compatible visual kinds."""
+    expected = _operation_output_kind(operation)
+    if expected is None:
+        return
+    for artifact in produced_artifacts:
+        kind = classify_visual_media_artifact(artifact)
+        if kind == "non-visual":
+            continue
+        if kind == "visual" or kind != expected:
+            raise ValueError(
+                f"visual media operation {operation} cannot return {kind} output"
+            )
+    if handoff is not None:
+        media = handoff.get("media") if isinstance(handoff, Mapping) else None
+        handoff_kind = media.get("kind") if isinstance(media, Mapping) else None
+        if handoff_kind is not None and handoff_kind != expected:
+            raise ValueError(
+                f"visual media operation {operation} cannot declare {handoff_kind} handoff"
+            )
 
 
 def compact_visual_media_result(
@@ -800,8 +927,19 @@ def validate_result_envelope(result: Mapping[str, Any]) -> None:
     _validate_scrubbed_json(result, budget=VISUAL_RESULT_BUDGET_BYTES)
 
 
-def _validate_scrubbed_json(value: Any, *, budget: int) -> None:
-    preview_count = _scrub_value(value)
+def validate_coordinator_safe_json(
+    value: Mapping[str, Any], *, budget: int = VISUAL_RESULT_BUDGET_BYTES
+) -> None:
+    """Apply the universal coordinator boundary to any persisted JSON record."""
+    if not isinstance(value, Mapping):
+        raise ValueError("coordinator-safe metadata must be an object")
+    _validate_scrubbed_json(value, budget=budget, allow_empty_text=True)
+
+
+def _validate_scrubbed_json(
+    value: Any, *, budget: int, allow_empty_text: bool = False
+) -> None:
+    preview_count = _scrub_value(value, allow_empty_text=allow_empty_text)
     if preview_count > 1:
         raise ValueError("visual media result must not contain more than one preview path")
     serialized = _serialize_json(value, "task result")
@@ -809,7 +947,9 @@ def _validate_scrubbed_json(value: Any, *, budget: int) -> None:
         raise ValueError("task result exceeds the fixed result budget")
 
 
-def _scrub_value(value: Any, *, key: str = "") -> int:
+def _scrub_value(
+    value: Any, *, key: str = "", allow_empty_text: bool = False
+) -> int:
     normalized_key = key.lower().replace("-", "_")
     if normalized_key in PROMPT_HISTORY_KEYS or (
         "prompt" in normalized_key
@@ -817,7 +957,7 @@ def _scrub_value(value: Any, *, key: str = "") -> int:
     ):
         raise ValueError("visual media result must not contain prompt history")
     payload_key_tokens = set(filter(None, normalized_key.split("_")))
-    has_payload_semantics = (
+    has_payload_semantics = normalized_key != "size_bytes" and (
         normalized_key in PAYLOAD_KEYS
         or bool(payload_key_tokens & PAYLOAD_KEY_TOKENS)
         or any(
@@ -842,7 +982,10 @@ def _scrub_value(value: Any, *, key: str = "") -> int:
         elif isinstance(value, str):
             preview_count = 1
         elif isinstance(value, (list, tuple)):
-            preview_count = len(value)
+            # Child values are counted during recursion so a legacy singular
+            # preview list is not counted once as a container and again as a
+            # string value.
+            preview_count = 0
         else:
             raise ValueError("visual media preview path must be singular")
 
@@ -859,7 +1002,7 @@ def _scrub_value(value: Any, *, key: str = "") -> int:
     if isinstance(value, str):
         compact = value.strip()
         lowered = compact.lower()
-        if not compact:
+        if not compact and not allow_empty_text:
             raise ValueError("visual media result text must be non-empty compact prose")
         if lowered.startswith("binary:") or DATA_URL_RE.search(value):
             raise ValueError(
@@ -869,74 +1012,61 @@ def _scrub_value(value: Any, *, key: str = "") -> int:
             raise ValueError("visual media result must not contain HTML media embedding")
         if any(
             marker in lowered
-            for marker in ("prompt history", "prompt_history", "prompt iteration")
+            for marker in (
+                "prompt history",
+                "prompt_history",
+                "prompt iteration",
+                "prompt transcript",
+                "generation transcript",
+                "generation history",
+                "conversation history",
+                "chat history",
+                "system prompt",
+                "negative prompt",
+            )
         ):
             raise ValueError("visual media result must not contain prompt history")
-        url = HTTP_URL_RE.search(value)
-        if url and (
-            normalized_key.endswith(("url", "uri"))
-            or PurePosixPath(url.group(0).split("?", 1)[0]).suffix.lower()
-            in IMAGE_SUFFIXES | VIDEO_SUFFIXES
-        ):
+        if REMOTE_URL_RE.search(value) or SCHEME_RELATIVE_URL_RE.search(value):
             raise ValueError(
-                "visual media result must not contain a remote media URL or image payload"
+                "visual media result must not contain a remote URL or scheme"
             )
-        if _contains_media_base64(value):
+        if _contains_binary_like_base64(value, normalized_key):
             raise ValueError(
-                "visual media result must not contain a Base64 image payload or other media payload"
+                "visual media result must not contain a structurally binary-like Base64 payload"
             )
     elif isinstance(value, Mapping):
         for child_key, child_value in value.items():
             if not isinstance(child_key, str):
                 raise ValueError("visual media result keys must be strings")
-            preview_count += _scrub_value(child_value, key=child_key)
+            preview_count += _scrub_value(
+                child_value, key=child_key, allow_empty_text=allow_empty_text
+            )
     elif isinstance(value, (list, tuple)):
         for child in value:
-            preview_count += _scrub_value(child)
+            preview_count += _scrub_value(
+                child, key=key, allow_empty_text=allow_empty_text
+            )
     return preview_count
 
 
-def _contains_media_base64(value: str) -> bool:
+def _contains_binary_like_base64(value: str, normalized_key: str) -> bool:
+    if "path" in normalized_key:
+        return False
     for match in BASE64_TOKEN_RE.finditer(value):
         payload_text = "".join(re.split(r"\s+", match.group(1).strip()))
         if len(payload_text) < 64 or len(payload_text) % 4:
             continue
-        try:
-            decoded = base64.b64decode(payload_text, validate=True)
-        except (binascii.Error, ValueError):
+        if re.fullmatch(r"[A-Fa-f0-9]+", payload_text):
             continue
-        if _has_media_magic(decoded):
-            return True
+        if len(set(payload_text.rstrip("="))) < 8 and not set(payload_text) & {"+", "/"}:
+            continue
+        if any(
+            token in normalized_key
+            for token in ("artifact_id", "checksum", "digest", "hash", "issue_code")
+        ):
+            continue
+        return True
     return False
-
-
-def _has_media_magic(value: bytes) -> bool:
-    if value.startswith(
-        (
-            b"\x89PNG\r\n\x1a\n",
-            b"\xff\xd8\xff",
-            b"GIF87a",
-            b"GIF89a",
-            b"BM",
-            b"II*\x00",
-            b"MM\x00*",
-            b"\x00\x00\x01\x00",
-            b"fLaC",
-            b"OggS",
-            b"ID3",
-        )
-    ):
-        return True
-    if len(value) >= 12 and value.startswith(b"RIFF") and value[8:12] in {
-        b"WEBP",
-        b"AVI ",
-        b"WAVE",
-    }:
-        return True
-    if len(value) >= 12 and value[4:8] == b"ftyp":
-        return True
-    stripped = value.lstrip().lower()
-    return stripped.startswith((b"<svg", b"<?xml")) and b"<svg" in stripped[:512]
 
 
 def _validate_media_metadata(value: Any) -> dict[str, Any]:
@@ -1052,6 +1182,105 @@ def _promoted_is_visual(artifact: Mapping[str, Any]) -> bool:
     )
 
 
+def _artifact_type_is_visual(artifact: Mapping[str, Any]) -> bool:
+    artifact_type = artifact.get("type")
+    if not isinstance(artifact_type, str) or not artifact_type:
+        raise ValueError("visual media Artifact type is ambiguous")
+    if artifact_type in VISUAL_ARTIFACT_TYPES or _promoted_is_visual(artifact):
+        return True
+    normalized = artifact_type.lower().replace("_", "-")
+    tokens = set(filter(None, re.split(r"[^a-z0-9]+", normalized)))
+    if tokens & VISUAL_NAME_TOKENS:
+        return True
+    if "capture" in tokens and tokens & {"app", "application", "browser", "evidence"}:
+        return True
+    # ``media`` is a stable generic Artifact type whose canonical kind, MIME,
+    # or suffix resolves its classification in the caller. Other ambiguous
+    # binary/pixel labels remain fail-closed.
+    if tokens == {"media"}:
+        return False
+    if tokens & AMBIGUOUS_MEDIA_TOKENS:
+        raise ValueError("visual media Artifact type is ambiguous and cannot classify")
+    return False
+
+
+def _classify_capability(value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError("visual media capability is ambiguous")
+    if value in VISUAL_MEDIA_CAPABILITIES:
+        return "visual"
+    if value in NON_VISUAL_CAPABILITIES:
+        return "non-visual"
+    normalized = value.lower().replace("_", "-")
+    tokens = set(filter(None, re.split(r"[^a-z0-9]+", normalized)))
+    if tokens & VISUAL_NAME_TOKENS or (
+        "capture" in tokens
+        and tokens & {"app", "application", "browser", "evidence"}
+    ):
+        return "visual"
+    raise ValueError("visual media capability is ambiguous and cannot classify")
+
+
+def _classify_output_contract(value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError("visual media output contract is ambiguous")
+    if _contains_visual_output_marker(value):
+        return "visual"
+    normalized = value.lower().replace("_", "-")
+    tokens = set(filter(None, re.split(r"[^a-z0-9]+", normalized)))
+    if "capture" in tokens and tokens & {"app", "application", "browser", "evidence"}:
+        return "visual"
+    if tokens & AMBIGUOUS_MEDIA_TOKENS:
+        raise ValueError("visual media output contract is ambiguous and cannot classify")
+    return "non-visual"
+
+
+def _operation_output_kind(operation: Any) -> Optional[str]:
+    if operation in {"image-generate", "image-edit", "image-inspect"}:
+        return "image"
+    if operation in {
+        "video-generate",
+        "video-edit",
+        "video-render",
+        "video-inspect",
+    }:
+        return "video"
+    if operation in {"frame-extract", "contact-sheet"}:
+        return "image"
+    return None
+
+
+def _declared_output_kind(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        raise ValueError("visual media output contract is ambiguous")
+    normalized = value.lower().replace("_", "-")
+    tokens = set(filter(None, re.split(r"[^a-z0-9]+", normalized)))
+    image_markers = tokens & {
+        "image",
+        "screenshot",
+        "thumbnail",
+        "keyframe",
+    }
+    video_markers = tokens & {"video"}
+    if image_markers and video_markers:
+        raise ValueError("visual media output contract has an ambiguous output kind")
+    if image_markers:
+        return "image"
+    if video_markers:
+        return "video"
+    return None
+
+
+def _validate_operation_output_contract(operation: str, output_contract: Any) -> None:
+    expected = _operation_output_kind(operation)
+    declared = _declared_output_kind(output_contract)
+    if expected is not None and declared is not None and declared != expected:
+        raise ValueError(
+            f"visual media operation {operation} is not compatible with "
+            f"{declared} output kind"
+        )
+
+
 def _is_approved_character_asset(artifact: Mapping[str, Any]) -> bool:
     if artifact.get("status") != "approved":
         return False
@@ -1071,15 +1300,7 @@ def _is_approved_character_asset(artifact: Mapping[str, Any]) -> bool:
 def _contains_visual_output_marker(value: str) -> bool:
     normalized = value.lower().replace("_", "-")
     tokens = set(filter(None, re.split(r"[^a-z0-9]+", normalized)))
-    if tokens & {
-        "image",
-        "video",
-        "visual",
-        "frame",
-        "preview",
-        "render",
-        "storyboard",
-    }:
+    if tokens & VISUAL_NAME_TOKENS:
         return True
     return any(marker in normalized for marker in {"contact-sheet", "motion-preview"})
 
@@ -1152,6 +1373,8 @@ def _valid_handoff_path(value: Any) -> bool:
 
 
 def _path_is_bound_to_artifact(path: str, artifact_id: str) -> bool:
+    if artifact_id.casefold() in RESERVED_PATH_AUTHORITY_IDS:
+        return False
     parsed = PurePosixPath(path)
     return artifact_id in parsed.parts or parsed.stem == artifact_id
 

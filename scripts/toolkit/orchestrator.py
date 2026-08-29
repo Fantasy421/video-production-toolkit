@@ -7,6 +7,7 @@ from typing import Any, Optional, Union
 from scripts.toolkit.artifacts import (
     _artifact_paths_by_id,
     _read_valid_artifact,
+    coordinator_safe_artifact_projection,
     read_approval,
 )
 from scripts.toolkit.invalidation import (
@@ -23,7 +24,9 @@ from scripts.toolkit.runtime_paths import project_path, project_root
 from scripts.toolkit.tasks import (
     _read_envelope,
     active_claim_task_ids,
+    authorize_declared_visual_media_task,
     validate_current_task_envelope,
+    validate_persisted_task_envelope,
     voice_timing_input_is_current,
 )
 
@@ -94,6 +97,26 @@ def calculate_ready_tasks(
     live task locks are checked before deterministic task-ID ordering selects a
     single action slice.
     """
+    ready, _ = _calculate_ready_tasks(
+        state,
+        artifacts,
+        approvals,
+        root=root,
+        validator=validate_current_task_envelope,
+        recover=False,
+    )
+    return ready
+
+
+def _calculate_ready_tasks(
+    state: Mapping[str, Any],
+    artifacts: Union[Iterable[Mapping[str, Any]], Mapping[str, Mapping[str, Any]]],
+    approvals: Iterable[Mapping[str, Any]],
+    *,
+    root: Optional[Path],
+    validator: Any,
+    recover: bool,
+) -> tuple[list[str], list[dict[str, str]]]:
     if not isinstance(state, Mapping):
         raise ValueError("state must be a mapping")
     phase = state.get("phase")
@@ -108,11 +131,21 @@ def calculate_ready_tasks(
     normalized_approvals = _normalize_approvals(approvals)
 
     ready: list[dict[str, Any]] = []
+    recovery_issues: list[dict[str, str]] = []
     seen_task_ids: set[str] = set()
     for candidate in candidates:
         if not isinstance(candidate, dict):
+            if recover:
+                recovery_issues.append({"code": "visual-media-context-invalid"})
+                continue
             raise ValueError("candidate task must be an object")
-        validate_current_task_envelope(candidate)
+        try:
+            validator(candidate)
+        except (PermissionError, TypeError, ValueError) as error:
+            if not recover:
+                raise
+            recovery_issues.append(_visual_recovery_issue(candidate, error))
+            continue
         task_id = candidate["task_id"]
         if task_id in seen_task_ids:
             raise ValueError(f"candidate task ID is duplicated: {task_id}")
@@ -130,12 +163,19 @@ def calculate_ready_tasks(
             candidate, gate, by_id, normalized_approvals
         ):
             continue
+        try:
+            authorize_declared_visual_media_task(candidate, by_id)
+        except (PermissionError, TypeError, ValueError) as error:
+            if not recover:
+                raise
+            recovery_issues.append(_visual_recovery_issue(candidate, error))
+            continue
         ready.append(candidate)
 
     if not ready:
-        return []
+        return [], recovery_issues
     selected = min(ready, key=lambda item: item["task_id"])
-    return [_action_name(selected)]
+    return [_action_name(selected)], recovery_issues
 
 
 def _capability_is_legal_in_phase(candidate: Mapping[str, Any], phase: str) -> bool:
@@ -189,7 +229,7 @@ def resume_project(root: Path) -> dict[str, Any]:
         for item in artifacts
     ]
     state = project_recovery_view(root, effective_artifacts)
-    candidate_tasks = _load_candidate_tasks(root)
+    candidate_tasks, load_issues = _load_candidate_tasks(root)
     locked = active_claim_task_ids(root)
     completed = sorted(
         set(_task_ids(root, Path("tasks") / "results", ".json"))
@@ -202,17 +242,66 @@ def resume_project(root: Path) -> dict[str, Any]:
         "locked_task_ids": locked,
         "completed_task_ids": completed,
     }
-    ready = calculate_ready_tasks(
-        coordinator_state, effective_artifacts, approvals, root=root
+    ready, authority_issues = _calculate_ready_tasks(
+        coordinator_state,
+        effective_artifacts,
+        approvals,
+        root=root,
+        validator=validate_persisted_task_envelope,
+        recover=True,
     )
+    from scripts.toolkit.validation import validate_project
+
+    persisted = validate_project(root)
+    blocking_codes = {
+        "invalid-artifact-metadata",
+        "legacy-visual-task-blocked",
+        "visual-media-context-invalid",
+        "visual-media-input-forbidden",
+        "visual-media-isolation-required",
+        "visual-media-result-invalid",
+    }
+    persisted_issues = [
+        {
+            key: value
+            for key, value in issue.items()
+            if key in {"code", "task_id", "artifact_id", "path"}
+        }
+        for issue in persisted["errors"]
+        if issue.get("code") in blocking_codes
+    ]
+    recovery_issues = _deduplicate_recovery_issues(
+        [*load_issues, *authority_issues, *persisted_issues]
+    )
+    if recovery_issues:
+        recorded_phase = state["phase"]
+        safe_phase = (
+            "direction_ready"
+            if PHASES.index(recorded_phase) > PHASES.index("direction_ready")
+            else recorded_phase
+        )
+        state = {
+            **state,
+            "phase": safe_phase,
+            "migration_requirement": {
+                "code": "visual-media-recovery-blocked",
+                "recorded_phase": recorded_phase,
+            },
+        }
+        candidate_tasks = []
+        ready = []
     return {
         **state,
-        "artifacts": effective_artifacts,
+        "artifacts": [
+            coordinator_safe_artifact_projection(item)
+            for item in effective_artifacts
+        ],
         "approvals": approvals,
         "candidate_tasks": candidate_tasks,
         "locked_task_ids": locked,
         "completed_task_ids": completed,
         "ready_tasks": ready,
+        **({"recovery_issues": recovery_issues} if recovery_issues else {}),
     }
 
 
@@ -357,14 +446,63 @@ def _load_artifacts(root: Path) -> list[dict[str, Any]]:
     return artifacts
 
 
-def _load_candidate_tasks(root: Path) -> list[dict[str, Any]]:
+def _load_candidate_tasks(
+    root: Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     tasks = []
+    issues: list[dict[str, str]] = []
     tasks_root = project_path(root, "tasks")
     if not tasks_root.is_dir():
-        return tasks
+        return tasks, issues
     for path in sorted(tasks_root.glob("*.json")):
-        tasks.append(_read_envelope(root, path.stem))
-    return tasks
+        try:
+            tasks.append(_read_envelope(root, path.stem))
+        except (OSError, PermissionError, TypeError, ValueError):
+            issues.append(
+                {
+                    "code": "visual-media-context-invalid",
+                    "task_id": path.stem,
+                }
+            )
+    return tasks, issues
+
+
+def _visual_recovery_issue(
+    candidate: Mapping[str, Any], error: BaseException
+) -> dict[str, str]:
+    message = str(error).casefold()
+    if "isolated child" in message:
+        code = "visual-media-isolation-required"
+    elif isinstance(error, PermissionError):
+        code = "visual-media-input-forbidden"
+    elif "legacy" in message and "visual" in message:
+        code = "legacy-visual-task-blocked"
+    else:
+        code = "visual-media-context-invalid"
+    issue = {"code": code}
+    task_id = candidate.get("task_id")
+    if isinstance(task_id, str):
+        issue["task_id"] = task_id
+    return issue
+
+
+def _deduplicate_recovery_issues(
+    issues: Iterable[Mapping[str, Any]],
+) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    for issue in issues:
+        compact = {
+            key: value
+            for key, value in issue.items()
+            if key in {"code", "task_id", "artifact_id", "path"}
+            and isinstance(value, str)
+        }
+        identity = tuple(sorted(compact.items()))
+        if compact and identity not in seen:
+            seen.add(identity)
+            normalized.append(compact)
+    return sorted(normalized, key=lambda item: tuple(sorted(item.items())))
 
 
 def _load_approvals(root: Path) -> list[dict[str, Any]]:
