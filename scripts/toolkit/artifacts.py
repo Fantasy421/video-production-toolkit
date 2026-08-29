@@ -63,6 +63,93 @@ COORDINATOR_SAFE_ARTIFACT_FIELDS = (
     "readiness",
     "historical",
 )
+ARTIFACT_BUSINESS_METADATA_FIELDS = frozenset(
+    {
+        "approval_id",
+        "approved",
+        "character_ids",
+        "character_pack_id",
+        "consent_provenance",
+        "decision",
+        "decision_provenance",
+        "emotion",
+        "identity_provenance",
+        "language",
+        "license",
+        "media_format",
+        "media_path",
+        "mode",
+        "narration_id",
+        "notes",
+        "profile_id",
+        "profile_provenance",
+        "promotion",
+        "pronunciations",
+        "provenance",
+        "provider",
+        "scene_id",
+        "scope",
+        "segments",
+        "source_decision_id",
+        "speaking_rate",
+        "target_id",
+        "text",
+        "timing_kind",
+        "uploaded_audio_id",
+        "voice_id",
+        "voice_timing_id",
+        "voiceover_id",
+    }
+)
+ARTIFACT_ALLOWED_FIELDS = frozenset(COORDINATOR_SAFE_ARTIFACT_FIELDS) | ARTIFACT_BUSINESS_METADATA_FIELDS
+ARTIFACT_ID_METADATA_FIELDS = frozenset(
+    {
+        "approval_id",
+        "character_pack_id",
+        "narration_id",
+        "profile_id",
+        "scene_id",
+        "source_decision_id",
+        "target_id",
+        "uploaded_audio_id",
+        "voice_id",
+        "voice_timing_id",
+        "voiceover_id",
+    }
+)
+ARTIFACT_TEXT_METADATA_BOUNDS = {
+    "consent_provenance": 500,
+    "decision": 64,
+    "decision_provenance": 500,
+    "emotion": 128,
+    "identity_provenance": 500,
+    "language": 64,
+    "media_format": 64,
+    "mode": 64,
+    "notes": 2_000,
+    "profile_provenance": 500,
+    "provenance": 500,
+    "provider": 128,
+    "scope": 128,
+    "text": 8_192,
+    "timing_kind": 64,
+}
+PROMOTION_FIELDS = frozenset(
+    {
+        "action",
+        "alpha",
+        "applicability",
+        "asset_kind",
+        "orientation",
+        "ownership",
+        "provenance",
+        "scene",
+        "scope",
+        "source_or_license",
+        "subject",
+        "validation_evidence",
+    }
+)
 
 
 def create_artifact(root: Path, artifact: dict[str, Any]) -> Path:
@@ -363,6 +450,11 @@ def _validate_artifact(artifact: dict[str, Any]) -> None:
     if not isinstance(artifact, dict):
         raise ValueError("artifact must be an object")
     validate_coordinator_safe_json(artifact, budget=VISUAL_RESULT_BUDGET_BYTES)
+    unknown = set(artifact) - ARTIFACT_ALLOWED_FIELDS
+    if unknown:
+        raise ValueError(
+            "artifact has unknown metadata fields: " + ", ".join(sorted(unknown))
+        )
     missing = [key for key in ARTIFACT_REQUIRED_KEYS if key not in artifact]
     if missing:
         raise ValueError(f"artifact is missing required keys: {', '.join(missing)}")
@@ -384,6 +476,8 @@ def _validate_artifact(artifact: dict[str, Any]) -> None:
         isinstance(parent, str) and parent for parent in artifact["parents"]
     ):
         raise ValueError("artifact parents must be a list of non-empty IDs")
+    if len(artifact["parents"]) > 256:
+        raise ValueError("artifact parents must be a bounded list")
     if len(set(artifact["parents"])) != len(artifact["parents"]):
         raise ValueError("artifact parents must not contain duplicates")
     if any(not _bounded_safe_id(parent) for parent in artifact["parents"]):
@@ -438,6 +532,174 @@ def _validate_artifact(artifact: dict[str, Any]) -> None:
             or not 0 < fps <= 240
         ):
             raise ValueError("artifact fps is outside its structural bound")
+    _validate_artifact_business_metadata(artifact)
+
+
+def _validate_artifact_business_metadata(artifact: Mapping[str, Any]) -> None:
+    for field in ARTIFACT_ID_METADATA_FIELDS:
+        if field in artifact and not _bounded_safe_id(artifact[field]):
+            raise ValueError(f"artifact {field} must be a bounded safe ID")
+    for field, max_length in ARTIFACT_TEXT_METADATA_BOUNDS.items():
+        if field not in artifact:
+            continue
+        value = artifact[field]
+        allow_empty = field == "notes"
+        if (
+            not isinstance(value, str)
+            or (not allow_empty and not value.strip())
+            or len(value) > max_length
+        ):
+            raise ValueError(f"artifact {field} must be bounded text")
+    if "approved" in artifact and not isinstance(artifact["approved"], bool):
+        raise ValueError("artifact approved must be boolean")
+    if "speaking_rate" in artifact:
+        rate = artifact["speaking_rate"]
+        if (
+            isinstance(rate, bool)
+            or not isinstance(rate, (int, float))
+            or not math.isfinite(rate)
+            or not 0 < rate <= 4
+        ):
+            raise ValueError("artifact speaking_rate must be finite and bounded")
+    if "media_path" in artifact and not _project_contained_path(
+        artifact["media_path"]
+    ):
+        raise ValueError("artifact media_path must be project-contained")
+    if "character_ids" in artifact:
+        _validate_safe_id_list(artifact["character_ids"], "character_ids", 64)
+    if "pronunciations" in artifact:
+        _validate_text_list(artifact["pronunciations"], "pronunciations", 256, 500)
+    if "segments" in artifact:
+        _validate_segments(artifact["segments"])
+    if "license" in artifact:
+        _validate_license_metadata(artifact["license"])
+    if "promotion" in artifact:
+        _validate_promotion_metadata(artifact["promotion"])
+
+
+def _validate_safe_id_list(value: Any, label: str, max_items: int) -> None:
+    if (
+        not isinstance(value, list)
+        or len(value) > max_items
+        or not all(_bounded_safe_id(item) for item in value)
+        or len(set(value)) != len(value)
+    ):
+        raise ValueError(f"artifact {label} must be a bounded unique safe-ID list")
+
+
+def _validate_text_list(
+    value: Any, label: str, max_items: int, max_length: int, *, allow_empty: bool = False
+) -> None:
+    if not isinstance(value, list) or len(value) > max_items:
+        raise ValueError(f"artifact {label} must be a bounded text list")
+    for item in value:
+        if (
+            not isinstance(item, str)
+            or (not allow_empty and not item.strip())
+            or len(item) > max_length
+        ):
+            raise ValueError(f"artifact {label} must contain bounded text")
+    if len(set(value)) != len(value):
+        raise ValueError(f"artifact {label} must not contain duplicates")
+
+
+def _validate_segments(value: Any) -> None:
+    if not isinstance(value, list) or len(value) > 512:
+        raise ValueError("artifact segments must be a bounded list")
+    for segment in value:
+        if not isinstance(segment, Mapping) or set(segment) != {
+            "start_ms",
+            "end_ms",
+            "text",
+        }:
+            raise ValueError("artifact segments must contain closed timing records")
+        start = segment["start_ms"]
+        end = segment["end_ms"]
+        text = segment["text"]
+        if (
+            isinstance(start, bool)
+            or not isinstance(start, int)
+            or isinstance(end, bool)
+            or not isinstance(end, int)
+            or not 0 <= start < end <= 36_000_000
+            or not isinstance(text, str)
+            or not text.strip()
+            or len(text) > 1_000
+        ):
+            raise ValueError("artifact segment values are outside structural bounds")
+
+
+def _validate_license_metadata(value: Any) -> None:
+    if not isinstance(value, Mapping) or not set(value) <= {
+        "owner",
+        "territories",
+        "expires",
+    }:
+        raise ValueError("artifact license metadata must be closed")
+    owner = value.get("owner")
+    if not isinstance(owner, str) or not owner.strip() or len(owner) > 500:
+        raise ValueError("artifact license owner must be bounded text")
+    if "territories" in value:
+        _validate_text_list(value["territories"], "license territories", 64, 128)
+    expires = value.get("expires")
+    if expires is not None and (
+        not isinstance(expires, str) or not expires.strip() or len(expires) > 128
+    ):
+        raise ValueError("artifact license expiry must be null or bounded text")
+
+
+def _validate_promotion_metadata(value: Any) -> None:
+    if not isinstance(value, Mapping) or not set(value) <= PROMOTION_FIELDS:
+        raise ValueError("artifact promotion metadata must be closed")
+    for field in (
+        "action",
+        "alpha",
+        "asset_kind",
+        "orientation",
+        "ownership",
+        "scope",
+        "source_or_license",
+        "subject",
+    ):
+        if field in value:
+            item = value[field]
+            if not isinstance(item, str) or len(item) > 500:
+                raise ValueError(f"artifact promotion {field} must be bounded text")
+    if "scene" in value:
+        scene = value["scene"]
+        if not isinstance(scene, str) or len(scene) > 500:
+            raise ValueError("artifact promotion scene must be bounded text")
+    if "applicability" in value:
+        _validate_text_list(
+            value["applicability"],
+            "promotion applicability",
+            64,
+            500,
+            allow_empty=True,
+        )
+    if "validation_evidence" in value:
+        evidence = value["validation_evidence"]
+        if not isinstance(evidence, list) or len(evidence) > 64:
+            raise ValueError("artifact promotion validation_evidence must be bounded")
+        for item in evidence:
+            if isinstance(item, str):
+                if len(item) > 500:
+                    raise ValueError(
+                        "artifact promotion validation_evidence must be bounded"
+                    )
+            elif not isinstance(item, Mapping) or item:
+                raise ValueError(
+                    "artifact promotion validation_evidence must contain typed values"
+                )
+    if "provenance" in value:
+        provenance = value["provenance"]
+        if not isinstance(provenance, Mapping) or not set(provenance) <= {
+            "artifact_id",
+            "project_id",
+        }:
+            raise ValueError("artifact promotion provenance must be closed")
+        if any(not _bounded_safe_id(item) for item in provenance.values()):
+            raise ValueError("artifact promotion provenance must contain safe IDs")
 
 
 def _normalize_approval(approval: Any) -> dict[str, Any]:

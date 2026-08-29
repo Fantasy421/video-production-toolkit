@@ -142,6 +142,79 @@ class ArtifactTests(unittest.TestCase):
             with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, message):
                 create_artifact(self.root, {**base, **extra})
 
+    def test_artifact_extension_contract_rejects_reviewed_side_channel_probes(self):
+        """Catches unknown typed-looking extensions bypassing the Artifact boundary."""
+        base = {
+            "artifact_id": "safe-report-v1",
+            "type": "report",
+            "version": 1,
+            "status": "approved",
+            "parents": [],
+            "path": "artifacts/reports/safe-report-v1.json",
+        }
+        cases = (
+            ("checksum alias", {"checksum_backup": "A" * 64}),
+            ("unknown URI scheme", {"source_ref": "gopher:opaque-resource"}),
+            (
+                "Base64URL",
+                {
+                    "opaque": (
+                        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                        "abcdefghijklmnopqrstuvwxyz0123456789-_"
+                    )
+                },
+            ),
+            ("numeric samples", {"sample_values": [0, 1, 2, 3]}),
+            ("prompt alias", {"prompt_records": ["secret instruction"]}),
+        )
+
+        with patch(
+            "base64.b64decode",
+            side_effect=AssertionError("Artifact validation must never decode Base64"),
+        ):
+            for name, extra in cases:
+                with self.subTest(name=name), self.assertRaises(ValueError):
+                    artifacts.validate_artifact_record({**base, **extra})
+
+    def test_artifact_schema_closes_and_types_business_metadata_extensions(self):
+        """Catches schema consumers reopening arbitrary nested Artifact extensions."""
+        schema = json.loads(
+            (
+                Path(__file__).parents[1]
+                / "references/schemas/artifact.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        validator = Draft202012Validator(schema)
+        self.assertFalse(schema["additionalProperties"])
+
+        safe_license = {
+            "artifact_id": "license-v1",
+            "type": "license-document",
+            "version": 1,
+            "status": "approved",
+            "parents": [],
+            "path": "artifacts/licenses/license-v1.json",
+            "license": {
+                "owner": "Example Studio",
+                "territories": ["global"],
+                "expires": None,
+            },
+        }
+        self.assertTrue(validator.is_valid(safe_license))
+        artifacts.validate_artifact_record(safe_license)
+
+        for extra in (
+            {"checksum_backup": "A" * 64},
+            {"metadata": {"notes": "arbitrary nested extension"}},
+            {"sample_values": [0, 1, 2, 3]},
+            {"license": {"owner": "Example Studio", "payload": "hidden"}},
+        ):
+            record = {**safe_license, **extra}
+            with self.subTest(extra=extra):
+                self.assertFalse(validator.is_valid(record))
+                with self.assertRaises(ValueError):
+                    artifacts.validate_artifact_record(record)
+
     def test_artifact_preserves_safe_business_metadata_but_projects_coordinator_fields(self):
         """Catches safety hardening deleting business fields or resume leaking them."""
         artifact = {

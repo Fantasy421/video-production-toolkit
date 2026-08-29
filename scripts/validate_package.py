@@ -29,6 +29,23 @@ VISUAL_MEDIA_SCOPE_KINDS = [
     "character-asset-batch",
     "review-batch",
 ]
+CURRENT_VISUAL_AUTHORITY_EXCLUSION = {
+    "if": {
+        "anyOf": [
+            {"required": ["visual_media_operation"]},
+            {"required": ["visual_media_context"]},
+        ]
+    },
+    "then": {
+        "not": {
+            "anyOf": [
+                {"required": ["visual_operation"]},
+                {"required": ["image_operation"]},
+                {"required": ["image_context"]},
+            ]
+        }
+    },
+}
 VISUAL_MEDIA_CONDITIONALS = [
     {
         "if": {
@@ -54,6 +71,17 @@ VISUAL_MEDIA_CONDITIONALS = [
     {
         "if": {"required": ["visual_media_context"]},
         "then": {"required": ["visual_media_operation"]},
+    },
+    CURRENT_VISUAL_AUTHORITY_EXCLUSION,
+]
+VISUAL_MEDIA_MIME_CONDITIONALS = [
+    {
+        "if": {"properties": {"kind": {"const": "image"}}, "required": ["kind"]},
+        "then": {"properties": {"mime_type": {"pattern": "^image/"}}},
+    },
+    {
+        "if": {"properties": {"kind": {"const": "video"}}, "required": ["kind"]},
+        "then": {"properties": {"mime_type": {"pattern": "^video/"}}},
     },
 ]
 LEGACY_VISUAL_OPERATION = {
@@ -168,6 +196,7 @@ REQUIRED_FILES = (
     "registries/layouts/talking-head-left-explainer-right/v1/manifest.json",
     "scripts/build_review_pack.py",
     "scripts/install_personal_plugin.py",
+    "scripts/migration_audit.py",
     "scripts/retire_legacy_skill.py",
     "scripts/validate_package.py",
     "scripts/verify_installation.py",
@@ -193,6 +222,7 @@ REQUIRED_FILES = (
     "skills/visual-system-designer/SKILL.md",
     "skills/voiceover-producer/SKILL.md",
     "tests/test_end_to_end.py",
+    "tests/test_artifacts.py",
     "tests/test_image_context.py",
     "tests/test_package.py",
     "tests/test_review_pack.py",
@@ -252,10 +282,15 @@ def validate_package(root: Path) -> list[str]:
     envelope = _read_json_object(
         root, "references/schemas/task-envelope.schema.json", errors
     )
+    result = _read_json_object(
+        root, "references/schemas/task-result.schema.json", errors
+    )
     if visual is not None:
         _validate_visual_media_schema(visual, errors)
     if envelope is not None:
         _validate_task_envelope_schema(envelope, errors)
+    if result is not None:
+        _validate_task_result_schema(result, errors)
 
     source = _read_json_object(
         root, "references/schemas/voice-source-decision.schema.json", errors
@@ -382,8 +417,18 @@ def _validate_artifact_schema(
         "status",
         "parents",
         "path",
-    } or schema.get("additionalProperties") is not True:
+    }:
         errors.append("invalid:artifact-shape")
+    closed_defs = ("licenseMetadata", "promotionMetadata", "timingSegment")
+    if (
+        schema.get("additionalProperties") is not False
+        or any(
+            _mapping(definitions.get(name)).get("additionalProperties") is not False
+            for name in closed_defs
+        )
+        or not {"license", "promotion", "segments"}.issubset(properties)
+    ):
+        errors.append("invalid:artifact-extension-contract")
     path = _mapping(properties.get("path"))
     if (
         path.get("maxLength") != 512
@@ -556,6 +601,22 @@ def _validate_task_envelope_schema(
     )
     if structure_authority != STRUCTURE_VISUAL_AUTHORITY:
         errors.append("invalid:structure-visual-authority")
+
+
+def _validate_task_result_schema(
+    schema: Mapping[str, Any], errors: list[str]
+) -> None:
+    properties = _mapping(schema.get("properties"))
+    handoff = _mapping(properties.get("visual_media_handoff"))
+    handoff_properties = _mapping(handoff.get("properties"))
+    media = _mapping(handoff_properties.get("media"))
+    if (
+        media.get("allOf") != VISUAL_MEDIA_MIME_CONDITIONALS
+        or _mapping(_mapping(media.get("properties")).get("kind")).get("enum")
+        != ["image", "video", "visual"]
+        or media.get("additionalProperties") is not False
+    ):
+        errors.append("invalid:visual-media-mime-contract")
 
 
 def _contains_key(value: Any, key: str) -> bool:

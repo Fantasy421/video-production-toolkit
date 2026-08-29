@@ -1986,6 +1986,136 @@ class TaskTests(unittest.TestCase):
                 },
             )
 
+    def test_successful_visual_producer_requires_a_visual_output_and_typed_kind(self):
+        """Catches completion succeeding with only a report or an untyped handoff."""
+        self.create_artifact(
+            "render-report-v1",
+            "report",
+            1,
+            output_contract="motion-preview-v1",
+        )
+        report_only = self.visual_envelope(
+            task_id="producer-report-only", operation="video-render"
+        )
+        create_task(self.root, report_only)
+        report_claim = claim_task(self.root, report_only["task_id"], "worker-a")
+        with self.assertRaisesRegex(ValueError, "at least one|visual output"):
+            complete_task(
+                self.root,
+                self.result_for(
+                    report_claim,
+                    task_id=report_only["task_id"],
+                    artifacts=["render-report-v1"],
+                    visual_media_handoff={
+                        "artifact_ids": ["render-report-v1"],
+                        "paths": ["media/render-report-v1.json"],
+                        "media": {"kind": "video"},
+                        "checks": [],
+                        "issues": [],
+                        "summary": "Render report only.",
+                        "review_preview_path": None,
+                    },
+                ),
+            )
+
+        untyped = self.visual_envelope(
+            task_id="producer-untyped-kind", operation="video-render"
+        )
+        create_task(self.root, untyped)
+        untyped_claim = claim_task(self.root, untyped["task_id"], "worker-a")
+        with self.assertRaisesRegex(ValueError, "media.kind|handoff"):
+            complete_task(
+                self.root,
+                self.result_for(
+                    untyped_claim,
+                    task_id=untyped["task_id"],
+                    visual_media_handoff={
+                        "artifact_ids": ["motion-preview-S03-v2"],
+                        "paths": ["media/motion-preview-S03-v2.mp4"],
+                        "media": {},
+                        "checks": [],
+                        "issues": [],
+                        "summary": "Render completed.",
+                        "review_preview_path": None,
+                    },
+                ),
+            )
+
+    def test_completion_rejects_output_artifact_with_unknown_extension_side_channel(self):
+        """Catches completion trusting a typed-looking field added out of band."""
+        path = (
+            self.root
+            / "artifacts"
+            / "visual-preview"
+            / "motion-preview-S03-v2.json"
+        )
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["checksum_backup"] = "A" * 64
+        path.write_text(json.dumps(record), encoding="utf-8")
+        create_task(self.root, self.envelope)
+        claim = claim_task(self.root, self.envelope["task_id"], "worker-a")
+
+        with self.assertRaisesRegex(ValueError, "artifact|output"):
+            complete_task(self.root, self.result_for(claim))
+
+    def test_current_inspection_completion_is_report_only(self):
+        """Catches inspection minting visual output instead of compact report metadata."""
+        self.create_artifact(
+            "inspection-report-v1",
+            "report",
+            1,
+            output_contract="motion-preview-v1",
+        )
+        report_task = self.visual_envelope(
+            task_id="image-inspect-report-only", operation="image-inspect"
+        )
+        create_task(self.root, report_task)
+        report_claim = claim_task(self.root, report_task["task_id"], "worker-a")
+        self.assertEqual(
+            "completed",
+            complete_task(
+                self.root,
+                self.result_for(
+                    report_claim,
+                    task_id=report_task["task_id"],
+                    artifacts=["inspection-report-v1"],
+                    visual_media_handoff={
+                        "artifact_ids": ["inspection-report-v1"],
+                        "paths": ["media/inspection-report-v1.json"],
+                        "media": {},
+                        "checks": [],
+                        "issues": [],
+                        "summary": "Inspection report ready.",
+                        "review_preview_path": None,
+                    },
+                ),
+            ),
+        )
+
+        visual_task = self.visual_envelope(
+            task_id="image-inspect-visual-output", operation="image-inspect"
+        )
+        create_task(self.root, visual_task)
+        visual_claim = claim_task(self.root, visual_task["task_id"], "worker-a")
+        with self.assertRaisesRegex(ValueError, "report-only"):
+            complete_task(
+                self.root,
+                self.result_for(
+                    visual_claim,
+                    task_id=visual_task["task_id"],
+                    artifacts=["image-preview-S03-v2"],
+                    visual_media_handoff={
+                        "artifact_ids": ["image-preview-S03-v2"],
+                        "paths": ["media/image-preview-S03-v2.png"],
+                        "media": {"kind": "image"},
+                        "checks": [],
+                        "issues": [],
+                        "summary": "Unexpected visual output.",
+                        "review_preview_path": None,
+                    },
+                ),
+            )
+
         generation_context = {
             "scope_identity": {
                 "kind": "scene-contract",

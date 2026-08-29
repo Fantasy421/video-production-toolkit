@@ -916,7 +916,10 @@ def _validate_conditional_visual_media_result(
     validate_visual_media_result_envelope(context, result)
     compact = compact_visual_media_result(context, visual_handoff)
     validate_visual_media_operation_outputs(
-        constraints.get("visual_media_operation"), produced_artifacts, compact
+        constraints.get("visual_media_operation"),
+        produced_artifacts,
+        compact,
+        status=result["status"],
     )
     if compact["artifact_ids"] != result["artifacts"]:
         raise ValueError("visual_media_handoff artifact_ids must match result artifacts")

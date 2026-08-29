@@ -55,6 +55,16 @@
             "readiness": {"type": "string", "minLength": 1, "maxLength": 64},
             "checksum": {"type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[A-Fa-f0-9]{8,128}$"}
           },
+          "allOf": [
+            {
+              "if": {"properties": {"kind": {"const": "image"}}, "required": ["kind"]},
+              "then": {"properties": {"mime_type": {"pattern": "^image/"}}}
+            },
+            {
+              "if": {"properties": {"kind": {"const": "video"}}, "required": ["kind"]},
+              "then": {"properties": {"mime_type": {"pattern": "^video/"}}}
+            }
+          ],
           "additionalProperties": false
         },
         "checks": {

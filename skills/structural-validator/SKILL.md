@@ -35,7 +35,8 @@ objective checks, compact warnings, and blockers or user decision requests.
 For visual-media inspection, return only compact `visual_media_handoff`
 metadata: Artifact IDs, project-contained paths, structural metadata, stable
 issue codes, a short summary, decision status, and at most the declared review
-previews. It must not return image or video payloads, bytes, base64/data URLs,
+previews. Inspection is report-only and must not register a new image or video
+Artifact. It must not return image or video payloads, bytes, base64/data URLs,
 or prompt histories. Aesthetic acceptance remains a user decision.
 
 Stopping conditions: do not mutate the timeline, repair source media, or clear

@@ -446,6 +446,110 @@ class PackageTests(unittest.TestCase):
         self.assertTrue(self.task_result_validator().is_valid(result))
         self.assertEqual(handoff, validate_compact_visual_media_handoff(handoff))
 
+    def test_draft202012_and_runtime_reject_mixed_authority_for_every_visual_capability(self):
+        """Catches non-scene visual routes bypassing current/legacy exclusivity."""
+        validator = self.task_envelope_validator()
+        context = {
+            "scope_identity": {"kind": "scene-contract", "id": "scene-S01"},
+            "allowed_artifact_ids": [],
+            "historical_access": "character-only",
+            "continuity_exception": None,
+            "max_review_previews": 0,
+            "context_budget_bytes": 1024,
+        }
+        operations = {
+            "visual.preview": "image-generate",
+            "scene.produce": "image-generate",
+            "motion.preview": "video-generate",
+            "motion.produce": "video-render",
+            "timeline.assemble": "video-edit",
+            "review.package": "video-inspect",
+            "structure.validate": "image-inspect",
+        }
+        for capability, operation in operations.items():
+            current = {
+                "task_id": capability.replace(".", "-") + "-v1",
+                "capability": capability,
+                "inputs": [],
+                "adapter_preferences": ["chatcut"],
+                "output_contract": "visual-report-v1",
+                "constraints": {
+                    "visual_media_operation": operation,
+                    "visual_media_context": context,
+                    "execution_context": "isolated-child-agent",
+                },
+            }
+            mixed = {
+                **current,
+                "constraints": {
+                    **current["constraints"],
+                    "image_operation": "structure-only",
+                },
+            }
+            with self.subTest(capability=capability, current=True):
+                self.assertTrue(validator.is_valid(current))
+                validate_current_task_envelope(current)
+            with self.subTest(capability=capability, current=False):
+                self.assertFalse(validator.is_valid(mixed))
+                with self.assertRaises(ValueError):
+                    validate_current_task_envelope(mixed)
+
+        persisted_legacy = {
+            "task_id": "legacy-scene-v1",
+            "capability": "scene.produce",
+            "inputs": [],
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "scene-image-v1",
+            "constraints": {
+                "visual_operation": "non-image",
+                "image_operation": "structure-only",
+            },
+        }
+        self.assertTrue(validator.is_valid(persisted_legacy))
+        _validate_persisted_envelope(persisted_legacy)
+        with self.assertRaisesRegex(ValueError, "read-only"):
+            validate_current_task_envelope(persisted_legacy)
+
+    def test_draft202012_and_runtime_match_handoff_mime_kind_decisions(self):
+        """Catches the result schema accepting MIME/kind pairs runtime rejects."""
+        validator = self.task_result_validator()
+        base_handoff = {
+            "artifact_ids": ["media-v1"],
+            "paths": ["media/media-v1.bin"],
+            "checks": [],
+            "issues": [],
+            "summary": "Structural result ready.",
+            "review_preview_path": None,
+        }
+        cases = (
+            ({"kind": "image", "mime_type": "image/png"}, True),
+            ({"kind": "video", "mime_type": "video/mp4"}, True),
+            ({"kind": "visual", "mime_type": "image/png"}, True),
+            ({"kind": "image", "mime_type": "video/mp4"}, False),
+            ({"kind": "video", "mime_type": "image/png"}, False),
+        )
+        for media, expected in cases:
+            handoff = {**base_handoff, "media": media}
+            result = {
+                "task_id": "mime-parity-v1",
+                "status": "succeeded",
+                "inputs": [],
+                "artifacts": ["media-v1"],
+                "checks": [],
+                "warnings": [],
+                "worker_id": "worker-v1",
+                "claim_token": "claim-v1",
+                "visual_media_handoff": handoff,
+            }
+            runtime_valid = True
+            try:
+                validate_compact_visual_media_handoff(handoff)
+            except ValueError:
+                runtime_valid = False
+            with self.subTest(media=media):
+                self.assertEqual(expected, validator.is_valid(result))
+                self.assertEqual(expected, runtime_valid)
+
     def test_visual_media_handoff_has_a_bounded_compact_result_shape(self):
         """Catches a visual-media result whose variable handoff fields exceed its budget."""
         schema = json.loads(
@@ -586,6 +690,8 @@ class PackageTests(unittest.TestCase):
         self.assertIn(
             ".codex-plugin/plugin.json", package_validation.REQUIRED_FILES
         )
+        self.assertIn("tests/test_artifacts.py", package_validation.REQUIRED_FILES)
+        self.assertIn("scripts/migration_audit.py", package_validation.REQUIRED_FILES)
 
     def test_each_required_file_is_content_fingerprinted(self):
         """Catches any required release file being present but changed or deleted."""
@@ -660,6 +766,82 @@ class PackageTests(unittest.TestCase):
             with self.subTest(name=name), TemporaryDirectory() as folder:
                 package = self.copy_package(folder)
                 path = package / "references/schemas/task-envelope.schema.json"
+                schema = json.loads(path.read_text(encoding="utf-8"))
+                mutate(schema)
+                path.write_text(json.dumps(schema), encoding="utf-8")
+                self.refresh_release_fingerprint(package)
+
+                errors = validate_package(package)
+
+                self.assertNotIn("invalid:release-fingerprint", errors)
+                self.assertIn(expected, errors)
+
+    def test_side_channel_contract_mutations_fail_after_fingerprint_refresh(self):
+        """Catches a refreshed hash blessing reopened Artifact or MIME authority."""
+        authority_exclusion = {
+            "if": {
+                "anyOf": [
+                    {"required": ["visual_media_operation"]},
+                    {"required": ["visual_media_context"]},
+                ]
+            },
+            "then": {
+                "not": {
+                    "anyOf": [
+                        {"required": ["visual_operation"]},
+                        {"required": ["image_operation"]},
+                        {"required": ["image_context"]},
+                    ]
+                }
+            },
+        }
+        envelope = json.loads(
+            (ROOT / "references/schemas/task-envelope.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertIn(
+            authority_exclusion,
+            envelope["properties"]["constraints"]["allOf"],
+        )
+        result_schema = json.loads(
+            (ROOT / "references/schemas/task-result.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        media_schema = result_schema["properties"]["visual_media_handoff"][
+            "properties"
+        ]["media"]
+        self.assertIn("allOf", media_schema)
+
+        cases = (
+            (
+                "artifact-open",
+                "references/schemas/artifact.schema.json",
+                lambda schema: schema.update({"additionalProperties": True}),
+                "invalid:artifact-extension-contract",
+            ),
+            (
+                "mixed-authority",
+                "references/schemas/task-envelope.schema.json",
+                lambda schema: schema["properties"]["constraints"]["allOf"].remove(
+                    authority_exclusion
+                ),
+                "invalid:visual-media-conditionals",
+            ),
+            (
+                "mime-kind",
+                "references/schemas/task-result.schema.json",
+                lambda schema: schema["properties"]["visual_media_handoff"][
+                    "properties"
+                ]["media"].pop("allOf"),
+                "invalid:visual-media-mime-contract",
+            ),
+        )
+        for name, relative, mutate, expected in cases:
+            with self.subTest(name=name), TemporaryDirectory() as folder:
+                package = self.copy_package(folder)
+                path = package / relative
                 schema = json.loads(path.read_text(encoding="utf-8"))
                 mutate(schema)
                 path.write_text(json.dumps(schema), encoding="utf-8")

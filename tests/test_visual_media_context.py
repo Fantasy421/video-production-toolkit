@@ -11,6 +11,7 @@ from scripts.toolkit.visual_media_context import (
     validate_declared_visual_media_inputs,
     validate_result_envelope,
     validate_visual_media_context,
+    validate_visual_media_operation_outputs,
     validate_visual_media_result_envelope,
 )
 
@@ -1020,6 +1021,114 @@ class VisualMediaContextTests(unittest.TestCase):
                 validate_result_envelope({key: canonical_binary_like})
 
         validate_result_envelope({"artifact_id": canonical_binary_like})
+
+    def test_universal_scrub_rejects_scheme_encoding_and_alias_bypasses(self):
+        """Catches reviewed URI, Base64URL, repeated-token, and alias bypasses."""
+        cases = (
+            {"source_ref": "gopher:opaque-resource"},
+            {"source_ref": "mailto:owner@example.invalid"},
+            {"source_ref": "urn:example:asset"},
+            {
+                "opaque": (
+                    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                    "abcdefghijklmnopqrstuvwxyz0123456789-_"
+                )
+            },
+            {"opaque": "A" * 64},
+            {"checksum_backup": "A" * 64},
+            {"sample_values": [0, 1, 2, 3]},
+            {"pixel_cache": [[0, 1], [2, 3]]},
+            {"frame_backup": [0, 1, 2]},
+            {"prompt_records": ["secret instruction"]},
+            {"assistant_messages": ["secret response"]},
+            {"generation_trace": ["internal iteration"]},
+        )
+        with patch(
+            "base64.b64decode",
+            side_effect=AssertionError("scrubber must never decode Base64"),
+        ):
+            for result in cases:
+                with self.subTest(result=result), self.assertRaises(ValueError):
+                    validate_result_envelope(result)
+
+        validate_result_envelope(
+            {
+                "artifact_ids": ["asset-SUQz-v1"],
+                "checks": ["adapter-selected:chatcut"],
+                "checksum": "0123456789abcdef",
+            }
+        )
+
+    def test_handoff_mime_type_matches_its_declared_media_kind(self):
+        """Catches schema-compatible MIME metadata contradicting runtime media kind."""
+        for kind, mime_type in (("image", "image/png"), ("video", "video/mp4")):
+            handoff = self.handoff(media={"kind": kind, "mime_type": mime_type})
+            with self.subTest(kind=kind, accepted=True):
+                self.assertEqual(handoff, validate_compact_visual_media_handoff(handoff))
+
+            mismatched = self.handoff(
+                media={
+                    "kind": kind,
+                    "mime_type": "video/mp4" if kind == "image" else "image/png",
+                }
+            )
+            with self.subTest(kind=kind, accepted=False), self.assertRaisesRegex(
+                ValueError, "mime_type|kind"
+            ):
+                validate_compact_visual_media_handoff(mismatched)
+
+    def test_output_operations_require_visual_artifact_and_exact_handoff_kind(self):
+        """Catches successful producers returning only reports or an untyped handoff."""
+        report = {
+            "artifact_id": "report-v1",
+            "type": "report",
+            "path": "artifacts/report-v1.json",
+        }
+        image = {
+            "artifact_id": "image-v1",
+            "type": "image",
+            "media_kind": "image",
+            "path": "media/image-v1.png",
+        }
+        with self.assertRaisesRegex(ValueError, "at least one|visual output"):
+            validate_visual_media_operation_outputs(
+                "image-generate", [report], {"media": {"kind": "image"}}, status="succeeded"
+            )
+        with self.assertRaisesRegex(ValueError, "media.kind|handoff"):
+            validate_visual_media_operation_outputs(
+                "image-generate", [image], {"media": {}}, status="succeeded"
+            )
+
+        validate_visual_media_operation_outputs(
+            "image-generate",
+            [image],
+            {"media": {"kind": "image"}},
+            status="succeeded",
+        )
+
+    def test_inspect_operations_are_report_only(self):
+        """Catches inspection silently minting new visual output artifacts."""
+        report = {
+            "artifact_id": "report-v1",
+            "type": "report",
+            "path": "artifacts/report-v1.json",
+        }
+        image = {
+            "artifact_id": "image-v1",
+            "type": "image",
+            "media_kind": "image",
+            "path": "media/image-v1.png",
+        }
+        validate_visual_media_operation_outputs(
+            "image-inspect", [report], {"media": {}}, status="succeeded"
+        )
+        with self.assertRaisesRegex(ValueError, "report-only"):
+            validate_visual_media_operation_outputs(
+                "image-inspect",
+                [image],
+                {"media": {"kind": "image"}},
+                status="succeeded",
+            )
 
     def test_operation_and_output_contract_kinds_are_compatible(self):
         """Catches image/video operations declaring an output of the opposite kind."""

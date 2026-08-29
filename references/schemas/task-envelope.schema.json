@@ -118,6 +118,23 @@
         },
         {
           "if": {
+            "anyOf": [
+              {"required": ["visual_media_operation"]},
+              {"required": ["visual_media_context"]}
+            ]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {"required": ["visual_operation"]},
+                {"required": ["image_operation"]},
+                {"required": ["image_context"]}
+              ]
+            }
+          }
+        },
+        {
+          "if": {
             "properties": {"visual_operation": {"const": "image-generation"}},
             "required": ["visual_operation"]
           },

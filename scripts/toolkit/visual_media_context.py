@@ -21,15 +21,18 @@ MIME_TYPE_RE = re.compile(
 )
 CHECKSUM_RE = re.compile(r"[A-Fa-f0-9]{8,128}")
 BASE64_TOKEN_RE = re.compile(
-    r"(?<![A-Za-z0-9+/=])"
-    r"([A-Za-z0-9+/]+(?:[ \t\r\n]+[A-Za-z0-9+/]+)*={0,2})"
-    r"(?![A-Za-z0-9+/=])"
+    r"(?<![A-Za-z0-9+/_=-])"
+    r"([A-Za-z0-9+/_-]+(?:[\r\n]+[A-Za-z0-9+/_-]+)*={0,2})"
+    r"(?![A-Za-z0-9+/_=-])"
 )
 REMOTE_URL_RE = re.compile(
     r"(?<![A-Za-z0-9_.-])(?:https?|ftp|ftps|file|s3|gs|ipfs|ssh)://[^\s<>\"']+",
     re.IGNORECASE,
 )
 SCHEME_RELATIVE_URL_RE = re.compile(r"(?<!:)//[^\s<>\"']+")
+URI_SCHEME_RE = re.compile(
+    r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,63}:(?=[^\s])"
+)
 DATA_URL_RE = re.compile(
     r"(?<![A-Za-z0-9_])data\s*:[^,\r\n]*,", re.IGNORECASE
 )
@@ -371,6 +374,87 @@ PAYLOAD_KEY_TOKENS = frozenset(
         "payloads",
     }
 )
+HISTORY_KEY_TOKENS = frozenset({"history", "messages", "transcript", "turns"})
+HISTORY_CONTEXT_TOKENS = frozenset(
+    {
+        "assistant",
+        "chat",
+        "conversation",
+        "generation",
+        "instruction",
+        "iteration",
+        "negative",
+        "prompt",
+        "request",
+        "response",
+        "system",
+    }
+)
+HISTORY_CONTAINER_TOKENS = frozenset(
+    {"history", "log", "logs", "messages", "record", "records", "trace", "turn", "turns"}
+)
+NUMERIC_MEDIA_KEY_TOKENS = frozenset(
+    {"frame", "frames", "luma", "pixel", "pixels", "rgb", "rgba", "sample", "samples", "waveform"}
+)
+SAFE_ID_VALUE_KEYS = frozenset(
+    {
+        "approval_id",
+        "artifact_id",
+        "artifact_ids",
+        "artifacts",
+        "character_ids",
+        "character_pack_id",
+        "claim_token",
+        "code",
+        "contract_id",
+        "gate_target_id",
+        "id",
+        "inputs",
+        "issue_code",
+        "narration_id",
+        "output_artifact_ids",
+        "output_contract",
+        "parent_id",
+        "parents",
+        "profile_id",
+        "project_id",
+        "scene_id",
+        "source_decision_id",
+        "target_id",
+        "task_id",
+        "timeline_id",
+        "type",
+        "uploaded_audio_id",
+        "voice_id",
+        "voice_timing_id",
+        "voiceover_id",
+        "worker_id",
+    }
+)
+SAFE_NON_MEDIA_TOKEN_KEYS = SAFE_ID_VALUE_KEYS | frozenset(
+    {
+        "alpha",
+        "applicability",
+        "asset_kind",
+        "checks",
+        "consent_provenance",
+        "decision_provenance",
+        "identity_provenance",
+        "orientation",
+        "profile_provenance",
+        "provenance",
+        "severity",
+        "source_or_license",
+        "validation_evidence",
+        "warnings",
+    }
+)
+TYPED_CHECKSUM_KEYS = frozenset({"checksum", "digest", "hash", "sha256", "sha512"})
+TYPED_CHECKSUM_TEXT_RE = re.compile(
+    r"(?:md5|sha(?:1|224|256|384|512))[:=][A-Fa-f0-9]{8,128}"
+)
+VISUAL_INSPECT_OPERATIONS = frozenset({"image-inspect", "video-inspect"})
+VISUAL_OUTPUT_OPERATIONS = ACTIVE_VISUAL_MEDIA_OPERATIONS - VISUAL_INSPECT_OPERATIONS
 
 
 def validate_visual_media_context(context: Mapping[str, Any]) -> dict[str, Any]:
@@ -789,13 +873,23 @@ def validate_visual_media_operation_outputs(
     operation: str,
     produced_artifacts: Iterable[Mapping[str, Any]],
     handoff: Optional[Mapping[str, Any]] = None,
+    *,
+    status: str = "succeeded",
 ) -> None:
-    """Require image/video operations to return only compatible visual kinds."""
+    """Enforce producer outputs and report-only inspection without media access."""
     expected = _operation_output_kind(operation)
     if expected is None:
         return
-    for artifact in produced_artifacts:
+    produced = list(produced_artifacts)
+    produced_kinds = []
+    for artifact in produced:
         kind = classify_visual_media_artifact(artifact)
+        produced_kinds.append(kind)
+        if operation in VISUAL_INSPECT_OPERATIONS and kind != "non-visual":
+            raise ValueError(
+                f"visual media operation {operation} is report-only and cannot "
+                "return visual output"
+            )
         if kind == "non-visual":
             continue
         if kind == "visual" or kind != expected:
@@ -809,6 +903,25 @@ def validate_visual_media_operation_outputs(
             raise ValueError(
                 f"visual media operation {operation} cannot declare {handoff_kind} handoff"
             )
+    else:
+        handoff_kind = None
+    if (
+        status == "succeeded"
+        and operation in VISUAL_OUTPUT_OPERATIONS
+        and expected not in produced_kinds
+    ):
+        raise ValueError(
+            f"visual media operation {operation} must return at least one compatible "
+            "visual output"
+        )
+    if (
+        status == "succeeded"
+        and operation in VISUAL_OUTPUT_OPERATIONS
+        and handoff_kind != expected
+    ):
+        raise ValueError(
+            f"visual media operation {operation} requires compatible media.kind in its handoff"
+        )
 
 
 def compact_visual_media_result(
@@ -950,16 +1063,13 @@ def _validate_scrubbed_json(
 def _scrub_value(
     value: Any, *, key: str = "", allow_empty_text: bool = False
 ) -> int:
-    normalized_key = key.lower().replace("-", "_")
-    if normalized_key in PROMPT_HISTORY_KEYS or (
-        "prompt" in normalized_key
-        and ("history" in normalized_key or "iteration" in normalized_key)
-    ):
+    normalized_key = _normalized_key(key)
+    key_tokens = set(filter(None, normalized_key.split("_")))
+    if _has_history_semantics(normalized_key, key_tokens):
         raise ValueError("visual media result must not contain prompt history")
-    payload_key_tokens = set(filter(None, normalized_key.split("_")))
     has_payload_semantics = normalized_key != "size_bytes" and (
         normalized_key in PAYLOAD_KEYS
-        or bool(payload_key_tokens & PAYLOAD_KEY_TOKENS)
+        or bool(key_tokens & PAYLOAD_KEY_TOKENS)
         or any(
             marker in normalized_key
             for marker in ("base64", "image_bytes", "video_bytes", "pixel_array")
@@ -968,6 +1078,14 @@ def _scrub_value(
     if has_payload_semantics:
         raise ValueError(
             "visual media result must not contain an image payload or other media payload"
+        )
+    if (
+        isinstance(value, (list, tuple))
+        and key_tokens & NUMERIC_MEDIA_KEY_TOKENS
+        and _contains_numeric_leaf(value)
+    ):
+        raise ValueError(
+            "visual media result must not contain numeric sample, pixel, or frame arrays"
         )
     if isinstance(value, (bytes, bytearray, memoryview)):
         raise ValueError(
@@ -1026,13 +1144,24 @@ def _scrub_value(
             )
         ):
             raise ValueError("visual media result must not contain prompt history")
-        if REMOTE_URL_RE.search(value) or SCHEME_RELATIVE_URL_RE.search(value):
+        safe_non_media_token = _allows_safe_non_media_token(normalized_key, value)
+        typed_checksum = _is_typed_checksum(normalized_key, compact)
+        if (
+            REMOTE_URL_RE.search(value)
+            or SCHEME_RELATIVE_URL_RE.search(value)
+            or (
+                URI_SCHEME_RE.search(value)
+                and not safe_non_media_token
+                and not typed_checksum
+            )
+        ):
             raise ValueError(
                 "visual media result must not contain a remote URL or scheme"
             )
         if _contains_binary_like_base64(value, normalized_key):
             raise ValueError(
-                "visual media result must not contain a structurally binary-like Base64 payload"
+                "visual media result must not contain a structurally binary-like "
+                "Base64 payload; the result budget also forbids oversized values"
             )
     elif isinstance(value, Mapping):
         for child_key, child_value in value.items():
@@ -1052,21 +1181,80 @@ def _scrub_value(
 def _contains_binary_like_base64(value: str, normalized_key: str) -> bool:
     if "path" in normalized_key:
         return False
+    compact_value = value.strip()
+    if _allows_safe_id_value(normalized_key, compact_value) or _is_typed_checksum(
+        normalized_key, compact_value
+    ):
+        return False
     for match in BASE64_TOKEN_RE.finditer(value):
         payload_text = "".join(re.split(r"\s+", match.group(1).strip()))
-        if len(payload_text) < 64 or len(payload_text) % 4:
-            continue
-        if re.fullmatch(r"[A-Fa-f0-9]+", payload_text):
-            continue
-        if len(set(payload_text.rstrip("="))) < 8 and not set(payload_text) & {"+", "/"}:
-            continue
-        if any(
-            token in normalized_key
-            for token in ("artifact_id", "checksum", "digest", "hash", "issue_code")
-        ):
+        if len(payload_text) < 32 or not _is_canonical_base64_token(payload_text):
             continue
         return True
     return False
+
+
+def _normalized_key(key: str) -> str:
+    separated = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", key)
+    return re.sub(r"[^a-z0-9]+", "_", separated.casefold()).strip("_")
+
+
+def _has_history_semantics(normalized_key: str, key_tokens: set[str]) -> bool:
+    if normalized_key in PROMPT_HISTORY_KEYS:
+        return True
+    if key_tokens & HISTORY_KEY_TOKENS:
+        return True
+    if key_tokens & HISTORY_CONTEXT_TOKENS and key_tokens & HISTORY_CONTAINER_TOKENS:
+        return True
+    return normalized_key in {
+        "negative_prompt",
+        "prompt",
+        "prompts",
+        "request_messages",
+        "system_prompt",
+    }
+
+
+def _contains_numeric_leaf(value: Any) -> bool:
+    if isinstance(value, (list, tuple)):
+        return any(_contains_numeric_leaf(item) for item in value)
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _allows_safe_id_value(normalized_key: str, value: str) -> bool:
+    return (
+        normalized_key in SAFE_ID_VALUE_KEYS
+        and len(value) <= 128
+        and SAFE_ID_RE.fullmatch(value) is not None
+    )
+
+
+def _allows_safe_non_media_token(normalized_key: str, value: str) -> bool:
+    return (
+        normalized_key in SAFE_NON_MEDIA_TOKEN_KEYS
+        and len(value) <= 500
+        and SAFE_ID_RE.fullmatch(value) is not None
+    )
+
+
+def _is_typed_checksum(normalized_key: str, value: str) -> bool:
+    if normalized_key in TYPED_CHECKSUM_KEYS:
+        return CHECKSUM_RE.fullmatch(value) is not None
+    return TYPED_CHECKSUM_TEXT_RE.fullmatch(value) is not None
+
+
+def _is_canonical_base64_token(value: str) -> bool:
+    padding = len(value) - len(value.rstrip("="))
+    if padding > 2 or "=" in value[:-padding or None]:
+        return False
+    body = value.rstrip("=")
+    if not body or re.fullmatch(r"[A-Za-z0-9+/_-]+", body) is None:
+        return False
+    if set(body) & {"+", "/"} and set(body) & {"-", "_"}:
+        return False
+    if padding:
+        return len(value) % 4 == 0 and len(body) % 4 in {2, 3}
+    return len(body) % 4 in {0, 2, 3}
 
 
 def _validate_media_metadata(value: Any) -> dict[str, Any]:
@@ -1092,6 +1280,8 @@ def _validate_media_metadata(value: Any) -> dict[str, Any]:
             raise ValueError("media mime_type must be canonical")
         if not mime_type.startswith(("image/", "video/")):
             raise ValueError("media mime_type must be visual")
+        if kind in {"image", "video"} and not mime_type.startswith(f"{kind}/"):
+            raise ValueError("media mime_type must match media kind")
     if "checksum" in normalized:
         checksum = normalized["checksum"]
         if not isinstance(checksum, str) or CHECKSUM_RE.fullmatch(checksum) is None:

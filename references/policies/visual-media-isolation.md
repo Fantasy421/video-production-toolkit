@@ -45,6 +45,14 @@ undeclared paths from every result field. The preview path is a user-review
 boundary, not an authorization for primary-context access or automated visual
 acceptance; subjective acceptance remains the user's decision.
 
+Successful generate, edit, render, frame-extract, and contact-sheet operations
+must register at least one Artifact of the operation's exact image/video kind,
+and the handoff must declare the same non-empty `media.kind`. `image-inspect`
+and `video-inspect` are explicitly report-only: they may register bounded
+non-visual report metadata, but must not mint a new image or video Artifact.
+Their handoff may omit `media.kind`; when it declares a kind or MIME type, the
+values describe the inspected kind and must agree.
+
 `visual_media_operation: none` is the non-visual, structure-only mode: it
 requires the same output scrub, but does not create or require a visual child
 agent. `image_operation: structure-only` is persisted legacy runtime

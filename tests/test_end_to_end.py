@@ -1667,7 +1667,7 @@ class CoordinatorTests(unittest.TestCase):
                 ),
             )
             record = json.loads(path.read_text(encoding="utf-8"))
-            record["metadata"] = {"thumbnail": "inline-payload"}
+            record["checksum_backup"] = "A" * 64
             path.write_text(json.dumps(record), encoding="utf-8")
 
             resumed = resume_project(project)
