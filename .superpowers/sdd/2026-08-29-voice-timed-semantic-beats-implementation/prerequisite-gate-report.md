@@ -374,3 +374,66 @@ python3 scripts/validate_package.py
 git diff --check
 # no output (clean)
 ```
+
+## Fix round 6: interval-independent encoding normalization
+
+### Changes
+
+- Replaced the two overlapping Base64 match passes with one structural
+  candidate grammar. It accepts arbitrary whitespace boundaries, removes
+  whitespace once, and evaluates the normalized candidate without decoding.
+- Removed all decisions based on attacker-controlled fragment length. A
+  whitespace-free candidate uses the existing canonical Base64/Base64URL
+  check; independently padded canonical fragments use the same normalized
+  encoded-symbol threshold, including padding.
+- Added one fingerprinted metadata-only fixture table reused through Artifact
+  create/read, task completion, and persisted recovery. It covers intervals
+  1, 2, 3, 4, 5, 6, 7, 8, and 12; space, tab, and CRLF separators;
+  Base64URL; final padding; and every independently padded fragment count from
+  8 through 16. The same lifecycle tests preserve bounded typed safe IDs,
+  typed checksums, and unambiguous harmless prose.
+
+### RED evidence
+
+After the final table and control harness were in place, the reviewed
+fragment-length and unpadded-body threshold defects were temporarily restored.
+The lifecycle matrix then failed only on the intended structural regressions:
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts.ArtifactTests.test_artifact_rejects_structural_encodings_at_create_and_read tests.test_tasks.TaskTests.test_completion_rejects_structural_encodings_in_error_text tests.test_validation.PersistedVisualMediaValidationTests.test_recovery_rejects_structural_encodings_in_persisted_result_text -q
+# Ran 3 tests in 0.475s; FAILED (failures=48)
+```
+
+The failures covered Artifact `path` and `text` create/read, completion
+`error`, and persisted recovery for 5/6/7/8/12-character chunks, longer
+Base64URL chunks, final padding, and independently padded counts 8 through 15.
+The mutation was then removed.
+
+### GREEN evidence
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts.ArtifactTests.test_artifact_rejects_structural_encodings_at_create_and_read tests.test_tasks.TaskTests.test_completion_rejects_structural_encodings_in_error_text tests.test_validation.PersistedVisualMediaValidationTests.test_recovery_rejects_structural_encodings_in_persisted_result_text -q
+# Ran 3 tests in 0.396s; OK
+
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts tests.test_visual_media_context tests.test_tasks tests.test_validation -q
+# Ran 215 tests in 3.648s; OK
+
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts tests.test_visual_media_context tests.test_tasks tests.test_validation tests.test_end_to_end tests.test_package tests.test_voice tests.test_voice_tasks tests.test_image_context tests.test_coverage -q
+# Ran 387 tests in 7.758s; OK (skipped=4)
+
+python3 scripts/validate_package.py
+# package valid
+
+python3 -c '... compare declared and computed release fingerprints ...'
+# sha256:8313962419849e38496bd786255cbb9e201347b24fca934d59c0ca2293620b14
+# sha256:8313962419849e38496bd786255cbb9e201347b24fca934d59c0ca2293620b14
+# True
+
+git diff --check
+# no output (clean)
+```
+
+All round-six work used strings, dictionaries, JSON metadata, and filesystem
+metadata only. No media was opened, decoded, rendered, played, displayed,
+extracted, or perceptually inspected. No install, push, or Task 1 work was
+performed.

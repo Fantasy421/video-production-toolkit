@@ -14,6 +14,12 @@ from scripts.toolkit.artifacts import create_artifact
 from scripts.toolkit import tasks
 from scripts.toolkit.tasks import claim_task, complete_task, create_task, retry_decision
 from scripts.toolkit.visual_media_context import ACTIVE_VISUAL_MEDIA_OPERATIONS
+from tests.encoding_boundary_cases import (
+    HARMLESS_PROSE_CONTROL,
+    STRUCTURAL_ENCODING_CASES,
+    TYPED_CHECKSUM_TEXT_CONTROL,
+    TYPED_SAFE_ID_CONTROL,
+)
 
 
 class CurrentTaskEnvelopeMetadataTests(unittest.TestCase):
@@ -822,28 +828,11 @@ class TaskTests(unittest.TestCase):
 
     def test_completion_rejects_structural_encodings_in_error_text(self):
         """Catches task completion accepting fragmented or low-entropy payload text."""
-        task_id = "encoded-error-result"
-        envelope = self.non_visual_envelope(task_id=task_id)
-        create_task(self.root, envelope)
-        claim = claim_task(self.root, task_id, "worker-a")
-        encoded_values = (
-            "QUFB" * 16,
-            " ".join(["QUFB"] * 16),
-            " ".join(["Q"] * 32),
-            " ".join(["QU"] * 16),
-            " ".join(["QUF"] * 12),
-            "\t".join(["QUF"] * 12),
-            "\r\n".join(["QUF"] * 12),
-            " ".join(["-"] * 32),
-            " ".join(["Q-"] * 16),
-            " ".join(["QU-"] * 12),
-            " ".join(["QQ=="] * 16),
-            "\t".join(["QQ=="] * 16),
-            "\r\n".join(["QQ=="] * 16),
-            "QUFB-" * 12,
-            "A" * 64,
-        )
-        for value in encoded_values:
+        for index, (name, value) in enumerate(STRUCTURAL_ENCODING_CASES, 1):
+            task_id = f"encoded-error-result-{index}"
+            envelope = self.non_visual_envelope(task_id=task_id)
+            create_task(self.root, envelope)
+            claim = claim_task(self.root, task_id, "worker-a")
             result = {
                 "task_id": task_id,
                 "status": "blocked",
@@ -854,10 +843,25 @@ class TaskTests(unittest.TestCase):
                 **claim,
                 "error": value,
             }
-            with self.subTest(value=value), self.assertRaisesRegex(
+            with self.subTest(name=name), self.assertRaisesRegex(
                 ValueError, "Base64|binary"
             ):
                 complete_task(self.root, result)
+
+        safe_envelope = self.non_visual_envelope(task_id=TYPED_SAFE_ID_CONTROL)
+        create_task(self.root, safe_envelope)
+        safe_claim = claim_task(self.root, TYPED_SAFE_ID_CONTROL, "worker-a")
+        safe_result = {
+            "task_id": TYPED_SAFE_ID_CONTROL,
+            "status": "blocked",
+            "inputs": safe_envelope["inputs"],
+            "artifacts": [],
+            "checks": [TYPED_CHECKSUM_TEXT_CONTROL],
+            "warnings": [HARMLESS_PROSE_CONTROL],
+            **safe_claim,
+            "error": HARMLESS_PROSE_CONTROL,
+        }
+        self.assertEqual("resumable", complete_task(self.root, safe_result))
 
     def test_general_result_scrub_preserves_harmless_digest_metadata(self):
         """Catches the payload heuristic rejecting hashes or ordinary base64 prose."""
@@ -877,7 +881,9 @@ class TaskTests(unittest.TestCase):
             "inputs": envelope["inputs"],
             "artifacts": ["project-plan-v1"],
             "checks": ["sha512=" + "0123456789abcdef" * 8],
-            "warnings": ["The exporter may mention base64 without embedding payloads."],
+            "warnings": [
+                "The exporter may mention base64; no embedded payload is present."
+            ],
             **claim,
         }
 

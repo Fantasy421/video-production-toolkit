@@ -7,6 +7,12 @@ import unittest
 from unittest.mock import patch
 
 from scripts.toolkit.validation import validate_project
+from tests.encoding_boundary_cases import (
+    HARMLESS_PROSE_CONTROL,
+    STRUCTURAL_ENCODING_CASES,
+    TYPED_CHECKSUM_TEXT_CONTROL,
+    TYPED_SAFE_ID_CONTROL,
+)
 
 
 class PersistedVisualMediaValidationTests(unittest.TestCase):
@@ -449,25 +455,8 @@ class PersistedVisualMediaValidationTests(unittest.TestCase):
 
     def test_recovery_rejects_structural_encodings_in_persisted_result_text(self):
         """Catches recovery trusting fragmented or low-entropy encoded error text."""
-        encoded_values = (
-            "QUFB" * 16,
-            " ".join(["QUFB"] * 16),
-            " ".join(["Q"] * 32),
-            " ".join(["QU"] * 16),
-            " ".join(["QUF"] * 12),
-            "\t".join(["QUF"] * 12),
-            "\r\n".join(["QUF"] * 12),
-            " ".join(["-"] * 32),
-            " ".join(["Q-"] * 16),
-            " ".join(["QU-"] * 12),
-            " ".join(["QQ=="] * 16),
-            "\t".join(["QQ=="] * 16),
-            "\r\n".join(["QQ=="] * 16),
-            "QUFB-" * 12,
-            "A" * 64,
-        )
-        for index, value in enumerate(encoded_values, 1):
-            with self.subTest(index=index):
+        for index, (name, value) in enumerate(STRUCTURAL_ENCODING_CASES, 1):
+            with self.subTest(name=name):
                 task = self.nonvisual_task(f"encoded-result-{index}")
                 task_path = self.write_task(task)
                 result_path = self.write_result(
@@ -481,6 +470,31 @@ class PersistedVisualMediaValidationTests(unittest.TestCase):
                 self.assert_only_issue_for(
                     result, result_path, "visual-media-result-invalid"
                 )
+
+        safe_task = self.nonvisual_task(TYPED_SAFE_ID_CONTROL)
+        safe_task_path = self.write_task(safe_task)
+        safe_result_path = self.write_result(
+            safe_task["task_id"],
+            {
+                **self.plain_result(safe_task["task_id"], status="failed"),
+                "checks": [TYPED_CHECKSUM_TEXT_CONTROL],
+                "warnings": [HARMLESS_PROSE_CONTROL],
+                "error": HARMLESS_PROSE_CONTROL,
+            },
+            directory="status",
+        )
+        validation = self.assert_validation_preserves(
+            safe_task_path, safe_result_path
+        )
+        self.assertEqual(
+            [],
+            [
+                issue
+                for issue in validation["errors"]
+                if issue.get("path")
+                == safe_result_path.relative_to(self.root).as_posix()
+            ],
+        )
 
     def test_valid_nonvisual_task_and_result_remain_recoverable(self):
         """Catches the visual recovery boundary rejecting ordinary compact results."""

@@ -222,6 +222,7 @@ REQUIRED_FILES = (
     "skills/visual-system-designer/SKILL.md",
     "skills/voiceover-producer/SKILL.md",
     "tests/test_end_to_end.py",
+    "tests/encoding_boundary_cases.py",
     "tests/test_artifacts.py",
     "tests/test_image_context.py",
     "tests/test_package.py",

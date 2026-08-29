@@ -20,14 +20,9 @@ MIME_TYPE_RE = re.compile(
     r"[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*"
 )
 CHECKSUM_RE = re.compile(r"[A-Fa-f0-9]{8,128}")
-BASE64_TOKEN_RE = re.compile(
+BASE64_CANDIDATE_RE = re.compile(
     r"(?<![A-Za-z0-9+/_=-])"
-    r"([A-Za-z0-9+/_-]+(?:[ \t\r\n]+[A-Za-z0-9+/_-]+)*={0,2})"
-    r"(?![A-Za-z0-9+/_=-])"
-)
-BASE64_FRAGMENT_SEQUENCE_RE = re.compile(
-    r"(?<![A-Za-z0-9+/_=-])"
-    r"([A-Za-z0-9+/_-]+={0,2}(?:[ \t\r\n]+[A-Za-z0-9+/_-]+={0,2})+)"
+    r"([A-Za-z0-9+/_-]+={0,2}(?:\s+[A-Za-z0-9+/_-]+={0,2})*)"
     r"(?![A-Za-z0-9+/_=-])"
 )
 REMOTE_URL_RE = re.compile(
@@ -1183,30 +1178,22 @@ def _contains_binary_like_base64(value: str, normalized_key: str) -> bool:
         normalized_key, compact_value
     ):
         return False
-    for match in BASE64_TOKEN_RE.finditer(value):
-        candidate = match.group(1).strip()
-        chunks = re.split(r"\s+", candidate)
-        if len(chunks) > 1 and (
-            any("=" in chunk for chunk in chunks[:-1])
-            or any(len(chunk.rstrip("=")) > 4 for chunk in chunks)
-        ):
-            continue
-        payload_text = "".join(chunks)
-        if len(payload_text) < 32 or not _is_canonical_base64_token(payload_text):
-            continue
-        return True
-    for match in BASE64_FRAGMENT_SEQUENCE_RE.finditer(value):
+    for match in BASE64_CANDIDATE_RE.finditer(value):
         chunks = re.split(r"\s+", match.group(1).strip())
+        encoded_length = sum(map(len, chunks))
+        if encoded_length < 32:
+            continue
+        if not any("=" in chunk for chunk in chunks[:-1]):
+            if _is_canonical_base64_token("".join(chunks)):
+                return True
+            continue
         bodies = [chunk.rstrip("=") for chunk in chunks]
-        if sum(map(len, bodies)) < 32 or not all(
-            _is_canonical_base64_token(chunk) for chunk in chunks
-        ):
+        if not all(_is_canonical_base64_token(chunk) for chunk in chunks):
             continue
         symbols = set("".join(bodies))
         if symbols & {"+", "/"} and symbols & {"-", "_"}:
             continue
-        if any("=" in chunk for chunk in chunks[:-1]):
-            return True
+        return True
     return False
 
 

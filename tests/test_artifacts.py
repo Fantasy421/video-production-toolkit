@@ -13,6 +13,12 @@ from jsonschema import Draft202012Validator
 
 from scripts.toolkit import artifacts
 from scripts.toolkit.artifacts import approve_artifact, create_artifact, read_approval
+from tests.encoding_boundary_cases import (
+    HARMLESS_PROSE_CONTROL,
+    STRUCTURAL_ENCODING_CASES,
+    TYPED_CHECKSUM_CONTROL,
+    TYPED_SAFE_ID_CONTROL,
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -258,25 +264,8 @@ class ArtifactTests(unittest.TestCase):
 
     def test_artifact_rejects_structural_encodings_at_create_and_read(self):
         """Catches closed text and path carriers bypassing the shared payload scrub."""
-        encoded_values = (
-            ("single-token", "QUFB" * 16),
-            ("whitespace-chunked", " ".join(["QUFB"] * 16)),
-            ("space-one-char-chunks", " ".join(["Q"] * 32)),
-            ("space-two-char-chunks", " ".join(["QU"] * 16)),
-            ("space-three-char-chunks", " ".join(["QUF"] * 12)),
-            ("tab-three-char-chunks", "\t".join(["QUF"] * 12)),
-            ("crlf-three-char-chunks", "\r\n".join(["QUF"] * 12)),
-            ("base64url-one-char-chunks", " ".join(["-"] * 32)),
-            ("base64url-two-char-chunks", " ".join(["Q-"] * 16)),
-            ("base64url-three-char-chunks", " ".join(["QU-"] * 12)),
-            ("independently-padded-chunks", " ".join(["QQ=="] * 16)),
-            ("tab-padded-chunks", "\t".join(["QQ=="] * 16)),
-            ("crlf-padded-chunks", "\r\n".join(["QQ=="] * 16)),
-            ("base64url", "QUFB-" * 12),
-            ("low-entropy", "A" * 64),
-        )
         for carrier in ("path", "text"):
-            for name, value in encoded_values:
+            for name, value in STRUCTURAL_ENCODING_CASES:
                 with self.subTest(carrier=carrier, name=name):
                     record = {
                         **self.artifact,
@@ -299,6 +288,16 @@ class ArtifactTests(unittest.TestCase):
                     tampered[carrier] = value
                     stored.write_text(json.dumps(tampered), encoding="utf-8")
                     self.assertIsNone(artifacts._read_valid_artifact(stored))
+
+        safe_control = {
+            **self.artifact,
+            "artifact_id": TYPED_SAFE_ID_CONTROL,
+            "path": "metadata/encoding-boundary-safe-control.json",
+            "text": HARMLESS_PROSE_CONTROL,
+            "checksum": TYPED_CHECKSUM_CONTROL,
+        }
+        stored = create_artifact(self.root, safe_control)
+        self.assertEqual(safe_control, artifacts._read_valid_artifact(stored))
 
     def test_artifact_schema_rejects_unsafe_project_paths(self):
         """Catches schema consumers accepting paths the runtime must reject."""
