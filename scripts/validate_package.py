@@ -940,9 +940,11 @@ def _validate_voice_timing_schema(
     anchors = _mapping(properties.get("keyword_anchors"))
     anchor = _mapping(_mapping(schema.get("$defs")).get("anchor"))
     if (
-        not {"voiceover_id", "timing_kind", "duration_ms", "segments", "keyword_anchors"}.issubset(
+        not {"voiceover_id", "timing_kind", "duration_ms", "segments"}.issubset(
             _required_fields(schema)
         )
+        or "keyword_anchors" in _required_fields(schema)
+        or "keyword_anchors" not in properties
         or _mapping(properties.get("timing_kind")).get("const") != "real"
         or anchors.get("type") != "array"
         or anchors.get("minItems") != 0

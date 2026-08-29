@@ -268,6 +268,15 @@ class VoiceBundleTests(unittest.TestCase):
             },
             result,
         )
+
+    def test_legacy_voice_timing_bundle_remains_readable(self):
+        """Catches ordinary voice lineage reads rejecting a pre-anchor record."""
+        artifacts = self.bundle()
+        artifacts[3].pop("keyword_anchors")
+
+        result = validate_voice_bundle(artifacts, "narration-v2")
+
+        self.assertTrue(result["ok"], result)
         self.assertTrue(has_current_voice_lineage(self.bundle(), "narration-v2"))
 
     def test_authoritative_narration_walks_intermediate_artifact_types(self):
@@ -542,7 +551,6 @@ class VoiceSchemaTests(unittest.TestCase):
             "timing_kind",
             "duration_ms",
             "segments",
-            "keyword_anchors",
         ],
     }
 
@@ -570,6 +578,18 @@ class VoiceSchemaTests(unittest.TestCase):
                 self.assertTrue(set(schema["required"]).issubset(artifact))
                 self.assertTrue(set(artifact).issubset(schema["properties"]))
                 self.assertEqual(artifact["type"], schema["properties"]["type"]["const"])
+
+    def test_voice_timing_schema_admits_a_readable_pre_anchor_record(self):
+        """Catches the published schema rejecting persisted legacy timing."""
+        timing = VoiceBundleTests().bundle()[-1]
+        timing.pop("keyword_anchors")
+        schema = json.loads(
+            (ROOT / "references/schemas/voice-timing.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertTrue(Draft202012Validator(schema).is_valid(timing))
 
     def test_runtime_patterns_are_the_schema_patterns(self):
         for artifact_type in self.REQUIRED:

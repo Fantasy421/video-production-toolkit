@@ -187,6 +187,42 @@ class ArtifactTests(unittest.TestCase):
             artifacts.validate_artifact_record(timing)
 
     @staticmethod
+    def legacy_voice_timing():
+        return {
+            "artifact_id": "voice-timing-v0",
+            "type": "voice-timing",
+            "version": 1,
+            "status": "approved",
+            "parents": ["voiceover-v0"],
+            "path": "metadata/voice-timing-v0.json",
+            "voiceover_id": "voiceover-v0",
+            "timing_kind": "real",
+            "duration_ms": 1_000,
+            "segments": [{"start_ms": 0, "end_ms": 1_000, "text": "旧旁白"}],
+        }
+
+    def test_legacy_voice_timing_is_readable_but_not_authorable(self):
+        """Catches the new anchor requirement erasing a persisted old timing record."""
+        legacy = self.legacy_voice_timing()
+
+        artifacts.validate_artifact_record(legacy)
+        persisted = self.root / "artifacts" / "voice-timing" / "voice-timing-v0.json"
+        persisted.parent.mkdir(parents=True)
+        persisted.write_text(json.dumps(legacy), encoding="utf-8")
+
+        self.assertEqual(legacy, artifacts._read_valid_artifact(persisted))
+        with TemporaryDirectory() as folder, self.assertRaises(ValueError):
+            create_artifact(Path(folder), legacy)
+
+    def test_legacy_voice_timing_compatibility_rejects_new_timing_fields(self):
+        """Catches the read-only legacy branch becoming a general timing bypass."""
+        legacy = self.legacy_voice_timing()
+        legacy["beats"] = []
+
+        with self.assertRaises(ValueError):
+            artifacts.validate_artifact_record(legacy)
+
+    @staticmethod
     def legacy_semantic_beats_projection():
         return {
             "artifact_id": "semantic-beats-v0",

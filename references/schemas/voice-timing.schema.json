@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Video Production Toolkit Real Voice Timing Artifact",
   "type": "object",
-  "required": ["artifact_id", "type", "version", "status", "parents", "path", "voiceover_id", "timing_kind", "duration_ms", "segments", "keyword_anchors"],
+  "required": ["artifact_id", "type", "version", "status", "parents", "path", "voiceover_id", "timing_kind", "duration_ms", "segments"],
   "properties": {
     "artifact_id": {"$ref": "#/$defs/safeId"}, "type": {"const": "voice-timing"}, "version": {"type": "integer", "minimum": 1}, "status": {"enum": ["draft", "approved", "stale", "superseded", "invalid"]}, "parents": {"$ref": "#/$defs/parents"}, "path": {"$ref": "#/$defs/projectPath"}, "output_contract": {"type": "string", "minLength": 1, "maxLength": 128},
     "voiceover_id": {"$ref": "#/$defs/safeId"}, "timing_kind": {"const": "real"}, "duration_ms": {"type": "integer", "minimum": 1, "maximum": 36000000}, "segments": {"type": "array", "minItems": 1, "maxItems": 512, "items": {"$ref": "#/$defs/segment"}}, "keyword_anchors": {"type": "array", "minItems": 0, "maxItems": 512, "uniqueItems": true, "items": {"$ref": "#/$defs/anchor"}}

@@ -87,7 +87,7 @@ class PackageTests(unittest.TestCase):
         self.assertFalse(semantic["additionalProperties"])
         self.assertEqual("real", timed["properties"]["timing_kind"]["const"])
         self.assertIn("approved_anchor_commitment", timed["$defs"]["beat"]["required"])
-        self.assertIn("keyword_anchors", voice_timing["required"])
+        self.assertNotIn("keyword_anchors", voice_timing["required"])
         self.assertFalse(voice_timing["$defs"]["anchor"]["additionalProperties"])
         self.assertEqual(
             1,

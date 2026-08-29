@@ -105,21 +105,35 @@ class TimedSemanticBeatTests(unittest.TestCase):
                 "end_ms": 1_700,
             }
         ]
+        timing = self.real_timing()
+        timing["keyword_anchors"] = extra
         with self.assertRaisesRegex(ValueError, "approved"):
-            bind_semantic_beats(self.semantic(), self.real_timing(), extra)
+            bind_semantic_beats(self.semantic(), timing, extra)
 
         widened = self.keyword_anchors()
         widened[0]["word_start_ms"] = 1_150
-        with self.assertRaisesRegex(ValueError, "closed"):
-            bind_semantic_beats(self.semantic(), self.real_timing(), widened)
+        timing = self.real_timing()
+        timing["keyword_anchors"] = widened
+        with self.assertRaisesRegex(ValueError, "structurally valid"):
+            bind_semantic_beats(self.semantic(), timing, widened)
+
+    def test_binding_requires_anchors_on_the_authoritative_timing_artifact(self):
+        """Catches a new binding importing anchors into an old timing record."""
+        timing = self.real_timing()
+        timing.pop("keyword_anchors")
+
+        with self.assertRaisesRegex(ValueError, "authoritative keyword anchors"):
+            bind_semantic_beats(self.semantic(), timing, self.keyword_anchors())
 
     def test_binding_rejects_anchor_outside_its_spoken_segment(self):
         """Catches a keyword interval spanning sentence timing boundaries."""
         anchors = self.keyword_anchors()
         anchors[0].update(start_ms=750, end_ms=850)
+        timing = self.real_timing()
+        timing["keyword_anchors"] = anchors
 
         with self.assertRaisesRegex(ValueError, "spoken segment"):
-            bind_semantic_beats(self.semantic(), self.real_timing(), anchors)
+            bind_semantic_beats(self.semantic(), timing, anchors)
 
     def test_validation_rejects_mismatched_lineage_and_extra_timestamps(self):
         """Catches a timed record being reattached or expanded after binding."""

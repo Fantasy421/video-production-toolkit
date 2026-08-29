@@ -47,7 +47,11 @@ def bind_semantic_beats(
     omits segment text and all Stage-A creative fields.
     """
     semantic = validate_semantic_beats(semantic_beats)
-    timing, segments = _current_real_timing(voice_timing)
+    timing, segments = _current_real_timing(
+        voice_timing, require_keyword_anchors=True
+    )
+    if keyword_anchors != timing["keyword_anchors"]:
+        raise ValueError("keyword anchors must come from authoritative voice timing")
     anchors = _approved_anchors(keyword_anchors, semantic)
     beats: list[dict[str, Any]] = []
     for beat in semantic["beats"]:
@@ -84,7 +88,9 @@ def validate_timed_semantic_beats(
 ) -> dict[str, Any]:
     """Validate and defensively copy a compact timed-semantic-beat record."""
     semantic = validate_semantic_beats(semantic_beats)
-    timing, segments = _current_real_timing(voice_timing)
+    timing, segments = _current_real_timing(
+        voice_timing, require_keyword_anchors=True
+    )
     if not isinstance(record, Mapping) or set(record) != _RECORD_FIELDS:
         raise ValueError("timed semantic beats must be a closed record")
     normalized = dict(record)
@@ -117,7 +123,9 @@ def validate_timed_semantic_beats(
     }
 
 
-def _current_real_timing(voice_timing: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _current_real_timing(
+    voice_timing: Mapping[str, Any], *, require_keyword_anchors: bool = False
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if not isinstance(voice_timing, Mapping):
         raise ValueError("voice timing must be an artifact record")
     timing = dict(voice_timing)
@@ -131,6 +139,8 @@ def _current_real_timing(voice_timing: Mapping[str, Any]) -> tuple[dict[str, Any
         or timing.get("status") != "approved"
     ):
         raise ValueError("voice timing must be real and current")
+    if require_keyword_anchors and "keyword_anchors" not in timing:
+        raise ValueError("voice timing requires authoritative keyword anchors")
     segments = timing["segments"]
     if not isinstance(segments, list) or not segments:
         raise ValueError("voice timing requires spoken segments")

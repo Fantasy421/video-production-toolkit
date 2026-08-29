@@ -378,6 +378,17 @@ class PrepareVoiceTaskTests(unittest.TestCase):
                 self.assertEqual("waiting_external", result["status"])
                 self.assertEqual(["voice-artifacts-pending"], result["warnings"])
 
+    def test_completion_does_not_promote_a_legacy_timing_record_without_anchors(self):
+        """Catches a new voice task accepting a readable pre-anchor timing record."""
+        artifacts = self.published_bundle()
+        timing = next(item for item in artifacts if item["artifact_id"] == "voice-timing-v2")
+        timing.pop("keyword_anchors")
+
+        result = prepare_voice_task(self.root, self.envelope(), artifacts, ["chatcut:voice"])
+
+        self.assertEqual("waiting_external", result["status"])
+        self.assertEqual(["voice-artifacts-pending"], result["warnings"])
+
     def test_envelope_requires_a_declared_frozen_semantic_input(self):
         """Catches voice preparation inventing a mutable timing-linked beat record."""
         envelope = self.envelope()

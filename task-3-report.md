@@ -68,3 +68,17 @@ No dependency was installed.
   passed, 4 skipped.
 - Package validation:
   `validate_package(Path("."))` returned `[]`; `git diff --check` passed.
+
+## Fix Round 3
+
+- Restored read-only compatibility for persisted pre-anchor `voice-timing`
+  records: the artifact reader, voice bundle validation, and recovery view can
+  read the exact closed legacy field set without rewriting it.
+- New Artifact creation still rejects a timing record without
+  `keyword_anchors`. New timed binding and `voice.prepare` completion require
+  the anchors to be present on, and supplied from, the current real timing
+  Artifact, preserving authoritative recomputation.
+- The legacy path rejects timing-specific new fields and is never used as a
+  compatibility shortcut for new output.
+- RED evidence: a legacy pre-anchor record was rejected at Artifact read,
+  voice bundle, and recovery boundaries before this compatibility change.

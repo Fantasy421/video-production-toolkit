@@ -202,7 +202,7 @@ def validate_artifact_record(artifact: Mapping[str, Any]) -> None:
     """Validate one full immutable Artifact record at every trust boundary."""
     if not isinstance(artifact, dict):
         artifact = dict(artifact) if isinstance(artifact, Mapping) else artifact
-    _validate_artifact(artifact)
+    _validate_artifact(artifact, allow_legacy_voice_timing=True)
 
 
 def coordinator_safe_artifact_projection(
@@ -306,7 +306,7 @@ def _artifact_paths_by_id(artifacts_root: Path) -> dict[str, Path]:
 def _read_valid_artifact(path: Path) -> Optional[dict[str, Any]]:
     try:
         artifact = json.loads(path.read_text(encoding="utf-8"))
-        _validate_artifact(artifact)
+        _validate_artifact(artifact, allow_legacy_voice_timing=True)
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return None
     if path.name != f"{artifact['artifact_id']}.json":
@@ -464,7 +464,9 @@ def _require_within(root: Path, destination: Path) -> None:
         raise ValueError("artifact destination must remain inside its storage directory") from None
 
 
-def _validate_artifact(artifact: dict[str, Any]) -> None:
+def _validate_artifact(
+    artifact: dict[str, Any], *, allow_legacy_voice_timing: bool = False
+) -> None:
     if not isinstance(artifact, dict):
         raise ValueError("artifact must be an object")
     validate_coordinator_safe_json(artifact, budget=VISUAL_RESULT_BUDGET_BYTES)
@@ -551,7 +553,9 @@ def _validate_artifact(artifact: dict[str, Any]) -> None:
         ):
             raise ValueError("artifact fps is outside its structural bound")
     _validate_artifact_business_metadata(artifact)
-    _validate_timing_artifact_contract(artifact)
+    _validate_timing_artifact_contract(
+        artifact, allow_legacy_voice_timing=allow_legacy_voice_timing
+    )
 
 
 def _validate_artifact_business_metadata(artifact: Mapping[str, Any]) -> None:
@@ -605,7 +609,9 @@ def _validate_artifact_business_metadata(artifact: Mapping[str, Any]) -> None:
         _validate_promotion_metadata(artifact["promotion"])
 
 
-def _validate_timing_artifact_contract(artifact: Mapping[str, Any]) -> None:
+def _validate_timing_artifact_contract(
+    artifact: Mapping[str, Any], *, allow_legacy_voice_timing: bool = False
+) -> None:
     """Reject timing metadata that does not satisfy its closed artifact contract."""
     artifact_type = artifact["type"]
     timing_fields = {
@@ -613,7 +619,9 @@ def _validate_timing_artifact_contract(artifact: Mapping[str, Any]) -> None:
         "keyword_anchors",
     }
     if artifact_type == "voice-timing":
-        _validate_voice_timing_fields(artifact)
+        _validate_voice_timing_fields(
+            artifact, allow_legacy_voice_timing=allow_legacy_voice_timing
+        )
         return
     if artifact_type not in TIMING_ARTIFACT_TYPES:
         if timing_fields & set(artifact):
@@ -664,19 +672,24 @@ def _validate_exact_timing_fields(
         raise ValueError("timing artifact fields must match its closed contract")
 
 
-def _validate_voice_timing_fields(artifact: Mapping[str, Any]) -> None:
+def _validate_voice_timing_fields(
+    artifact: Mapping[str, Any], *, allow_legacy_voice_timing: bool
+) -> None:
     allowed = set(ARTIFACT_REQUIRED_KEYS) | {
         "output_contract", "voiceover_id", "timing_kind", "duration_ms",
         "segments", "keyword_anchors",
     }
-    required = {"voiceover_id", "timing_kind", "duration_ms", "segments", "keyword_anchors"}
+    required = {"voiceover_id", "timing_kind", "duration_ms", "segments"}
+    if not allow_legacy_voice_timing:
+        required.add("keyword_anchors")
     if not required.issubset(artifact) or not set(artifact).issubset(allowed):
         raise ValueError("voice timing fields must match its closed contract")
     _require_timing_id(artifact["voiceover_id"], "voiceover_id")
     if not isinstance(artifact["duration_ms"], int) or isinstance(artifact["duration_ms"], bool) or not 1 <= artifact["duration_ms"] <= 36_000_000:
         raise ValueError("voice timing duration must be bounded")
     _validate_segments(artifact["segments"])
-    _validate_keyword_anchors(artifact["keyword_anchors"])
+    if "keyword_anchors" in artifact:
+        _validate_keyword_anchors(artifact["keyword_anchors"])
 
 
 def _validate_legacy_semantic_beats_projection(artifact: Mapping[str, Any]) -> None:

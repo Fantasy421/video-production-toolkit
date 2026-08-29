@@ -54,6 +54,8 @@ Success and result:
   fields and a deterministic approved-anchor commitment without changing
   approved decisions. Completion must rebuild the entire timed-beat output
   from the frozen beats plus those authoritative anchors before accepting it.
+  Persisted pre-anchor voice-timing records remain readable for recovery only;
+  do not create, promote, or bind new timed output from them.
 - Return a task-result envelope containing only produced Artifact IDs,
   objective checks, compact warnings, and a decision request when waiting.
   Return `succeeded` only after all three output Artifacts are published and

@@ -140,6 +140,7 @@ class ProjectStateTests(unittest.TestCase):
                 + struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, sample_rate * 2, 2, 16)
                 + b"data" + struct.pack("<I", len(audio)) + audio
             )
+        return records
 
     def test_direction_advances_to_voice_before_storyboard(self):
         """Catches a new project jumping from direction directly to storyboarding."""
@@ -219,6 +220,16 @@ class ProjectStateTests(unittest.TestCase):
         self.assertEqual("direction_ready", view["phase"])
         self.assertEqual("voice-artifacts-required", view["migration_requirement"]["code"])
         self.assertEqual(self.original_events, self.event_log.read_bytes())
+
+    def test_legacy_voice_timing_project_recovery_remains_readable(self):
+        """Catches recovery demoting a valid persisted pre-anchor voice bundle."""
+        self.write_pre_voice_event_log(final_phase="production_ready")
+        records = self.seed_voice_bundle()
+        records[-1].pop("keyword_anchors")
+
+        view = project_recovery_view(self.root, artifacts=records)
+
+        self.assertEqual("production_ready", view["phase"])
 
     def test_legacy_direction_project_upgrades_by_appending_before_voice_ready(self):
         """Catches an old log producing a v2 snapshot without a replayable upgrade."""

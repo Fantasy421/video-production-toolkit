@@ -66,7 +66,7 @@ _VOICE_REQUIRED_FIELDS = {
         }
     ),
     VOICE_TIMING: frozenset(
-        {"voiceover_id", "timing_kind", "duration_ms", "segments", "keyword_anchors"}
+        {"voiceover_id", "timing_kind", "duration_ms", "segments"}
     ),
 }
 _VOICE_ALLOWED_FIELDS = {
@@ -77,6 +77,7 @@ _VOICE_ALLOWED_FIELDS = {
         if artifact_type == VOICEOVER
         else {"output_contract"}
     )
+    | ({"keyword_anchors"} if artifact_type == VOICE_TIMING else set())
     for artifact_type, required_fields in _VOICE_REQUIRED_FIELDS.items()
 }
 
@@ -525,7 +526,10 @@ def _within_shared_artifact_bounds(
             _bounded_text(record["timing_kind"], 64)
             and _within_duration_ceiling(record["duration_ms"])
             and _within_timing_segment_ceilings(record["segments"])
-            and _within_keyword_anchor_ceilings(record["keyword_anchors"])
+            and (
+                "keyword_anchors" not in record
+                or _within_keyword_anchor_ceilings(record["keyword_anchors"])
+            )
         )
     return False
 
@@ -837,7 +841,8 @@ def _validate_timing(
     if voiceover is not None and duration != voiceover.get("duration_ms"):
         _add_issue(issues, "voice-timing-duration-mismatch", timing)
     _validate_segments(timing.get("segments"), duration, timing, issues)
-    _validate_keyword_anchors(timing.get("keyword_anchors"), duration, timing, issues)
+    if "keyword_anchors" in timing:
+        _validate_keyword_anchors(timing["keyword_anchors"], duration, timing, issues)
 
 
 def _validate_segments(
