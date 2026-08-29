@@ -453,12 +453,8 @@ def _validate_artifact_schema(
             for name in closed_defs
         )
         or not {"license", "promotion", "segments"}.issubset(properties)
-        or properties.get("beats")
-        != {"type": "array", "maxItems": 512, "items": {"type": "object"}}
-        or properties.get("scenes")
-        != {"type": "array", "maxItems": 512, "items": {"type": "object"}}
-        or properties.get("semantic_beats_id") != {"$ref": "#/$defs/safeId"}
-        or properties.get("timed_semantic_beats_id") != {"$ref": "#/$defs/safeId"}
+        or {"beats", "scenes", "semantic_beats_id", "timed_semantic_beats_id"}
+        & set(properties)
     ):
         errors.append("invalid:artifact-extension-contract")
     path = _mapping(properties.get("path"))

@@ -33,6 +33,12 @@ ARTIFACT_REQUIRED_KEYS = (
 )
 ARTIFACT_STATUSES = {"draft", "approved", "stale", "superseded", "invalid"}
 APPROVAL_DECISIONS = {"approved", "delegated", "skipped"}
+TIMING_ARTIFACT_TYPES = frozenset(
+    {"semantic-beats", "timed-semantic-beats", "scene-timing-contracts"}
+)
+TIMING_CARRIERS = frozenset(
+    {"a-roll", "b-roll", "scene", "demo", "motion-graphics", "evidence"}
+)
 APPROVAL_REQUIRED_KEYS = (
     "approval_id",
     "target_id",
@@ -538,6 +544,7 @@ def _validate_artifact(artifact: dict[str, Any]) -> None:
         ):
             raise ValueError("artifact fps is outside its structural bound")
     _validate_artifact_business_metadata(artifact)
+    _validate_timing_artifact_contract(artifact)
 
 
 def _validate_artifact_business_metadata(artifact: Mapping[str, Any]) -> None:
@@ -587,6 +594,157 @@ def _validate_artifact_business_metadata(artifact: Mapping[str, Any]) -> None:
         _validate_license_metadata(artifact["license"])
     if "promotion" in artifact:
         _validate_promotion_metadata(artifact["promotion"])
+
+
+def _validate_timing_artifact_contract(artifact: Mapping[str, Any]) -> None:
+    """Reject timing metadata that does not satisfy its closed artifact contract."""
+    artifact_type = artifact["type"]
+    timing_fields = {"beats", "scenes", "semantic_beats_id", "timed_semantic_beats_id"}
+    if artifact_type not in TIMING_ARTIFACT_TYPES:
+        if timing_fields & set(artifact):
+            raise ValueError("timing metadata belongs only to timing artifact types")
+        return
+    if artifact_type == "semantic-beats":
+        if "beats" not in artifact:
+            if "voice_timing_id" in artifact:
+                return
+            raise ValueError("semantic-beats requires approved beats")
+        _validate_exact_timing_fields(
+            artifact,
+            {"output_contract", "narration_id", "beats"},
+            {"narration_id", "beats"},
+        )
+        if artifact["status"] != "approved":
+            raise ValueError("semantic-beats must be approved")
+        _require_timing_id(artifact["narration_id"], "narration_id")
+        _validate_semantic_beats(artifact["beats"])
+        return
+    if artifact_type == "timed-semantic-beats":
+        _validate_exact_timing_fields(
+            artifact,
+            {"output_contract", "semantic_beats_id", "voice_timing_id", "timing_kind", "beats"},
+            {"semantic_beats_id", "voice_timing_id", "timing_kind", "beats"},
+        )
+        _require_timing_id(artifact["semantic_beats_id"], "semantic_beats_id")
+        _require_timing_id(artifact["voice_timing_id"], "voice_timing_id")
+        if artifact["timing_kind"] != "real":
+            raise ValueError("timed-semantic-beats requires real timing")
+        _validate_timed_semantic_beats(artifact["beats"])
+        return
+    _validate_exact_timing_fields(
+        artifact,
+        {"output_contract", "timed_semantic_beats_id", "scenes"},
+        {"timed_semantic_beats_id", "scenes"},
+    )
+    _require_timing_id(artifact["timed_semantic_beats_id"], "timed_semantic_beats_id")
+    _validate_scene_timing_contracts(artifact["scenes"])
+
+
+def _validate_exact_timing_fields(
+    artifact: Mapping[str, Any], optional: set[str], required: set[str]
+) -> None:
+    allowed = set(ARTIFACT_REQUIRED_KEYS) | optional
+    if not required.issubset(artifact) or not set(artifact).issubset(allowed):
+        raise ValueError("timing artifact fields must match its closed contract")
+
+
+def _require_timing_id(value: Any, label: str) -> None:
+    if not _bounded_safe_id(value):
+        raise ValueError(f"artifact {label} must be a bounded safe ID")
+
+
+def _require_timing_text(value: Any, label: str, maximum: int) -> None:
+    if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+        raise ValueError(f"timing {label} must be bounded non-empty text")
+
+
+def _require_timing_window(value: Any, label: str) -> None:
+    if (
+        not isinstance(value, list)
+        or len(value) != 2
+        or any(
+            isinstance(item, bool) or not isinstance(item, int)
+            or not 0 <= item <= 36_000_000
+            for item in value
+        )
+    ):
+        raise ValueError(f"timing {label} must be a bounded two-item window")
+
+
+def _validate_semantic_beats(beats: Any) -> None:
+    expected = {
+        "beat_id", "text_ref", "keyword", "intent", "priority",
+        "preferred_carrier", "approval_provenance",
+    }
+    _validate_timing_record_list(beats, "beats")
+    seen: set[str] = set()
+    for beat in beats:
+        if not isinstance(beat, Mapping) or set(beat) != expected:
+            raise ValueError("semantic beats must be closed records")
+        _require_timing_id(beat["beat_id"], "beat_id")
+        if beat["beat_id"] in seen:
+            raise ValueError("semantic beats must have unique beat IDs")
+        seen.add(beat["beat_id"])
+        _require_timing_text(beat["text_ref"], "text_ref", 256)
+        _require_timing_text(beat["keyword"], "keyword", 256)
+        _require_timing_text(beat["intent"], "intent", 128)
+        _require_timing_text(beat["approval_provenance"], "approval_provenance", 500)
+        if beat["priority"] not in {"primary", "secondary"}:
+            raise ValueError("semantic beat priority is not recognized")
+        if beat["preferred_carrier"] not in TIMING_CARRIERS:
+            raise ValueError("semantic beat carrier is not recognized")
+
+
+def _validate_timed_semantic_beats(beats: Any) -> None:
+    expected = {
+        "beat_id", "speech_start_ms", "speech_end_ms", "keyword_start_ms",
+        "keyword_end_ms", "emphasis_ms", "visual_window_ms",
+    }
+    _validate_timing_record_list(beats, "beats")
+    seen: set[str] = set()
+    for beat in beats:
+        if not isinstance(beat, Mapping) or set(beat) != expected:
+            raise ValueError("timed semantic beats must be closed records")
+        _require_timing_id(beat["beat_id"], "beat_id")
+        if beat["beat_id"] in seen:
+            raise ValueError("timed semantic beats must have unique beat IDs")
+        seen.add(beat["beat_id"])
+        for field in expected - {"beat_id", "visual_window_ms"}:
+            value = beat[field]
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 36_000_000:
+                raise ValueError(f"timed semantic beat {field} is outside bounds")
+        _require_timing_window(beat["visual_window_ms"], "visual_window_ms")
+
+
+def _validate_scene_timing_contracts(scenes: Any) -> None:
+    expected = {
+        "scene_id", "scene_window_ms", "beat_ids", "primary_carrier",
+        "support_layer", "visual_window_ms",
+    }
+    _validate_timing_record_list(scenes, "scenes")
+    seen: set[str] = set()
+    for scene in scenes:
+        if not isinstance(scene, Mapping) or set(scene) != expected:
+            raise ValueError("scene timing contracts must be closed records")
+        _require_timing_id(scene["scene_id"], "scene_id")
+        if scene["scene_id"] in seen:
+            raise ValueError("scene timing contracts must have unique scene IDs")
+        seen.add(scene["scene_id"])
+        _require_timing_window(scene["scene_window_ms"], "scene_window_ms")
+        _require_timing_window(scene["visual_window_ms"], "visual_window_ms")
+        _validate_safe_id_list(scene["beat_ids"], "beat_ids", 512)
+        if not scene["beat_ids"]:
+            raise ValueError("scene timing contracts require beat IDs")
+        if scene["primary_carrier"] not in TIMING_CARRIERS:
+            raise ValueError("scene timing carrier is not recognized")
+        support = scene["support_layer"]
+        if support is not None:
+            _require_timing_text(support, "support_layer", 128)
+
+
+def _validate_timing_record_list(value: Any, label: str) -> None:
+    if not isinstance(value, list) or not 1 <= len(value) <= 512:
+        raise ValueError(f"timing {label} must be a non-empty bounded list")
 
 
 def _validate_safe_id_list(value: Any, label: str, max_items: int) -> None:

@@ -40,6 +40,124 @@ class ArtifactTests(unittest.TestCase):
     def tearDown(self):
         self.folder.cleanup()
 
+    @staticmethod
+    def semantic_timing_artifact(artifact_type):
+        common = {
+            "artifact_id": f"{artifact_type}-v1",
+            "type": artifact_type,
+            "version": 1,
+            "status": "approved",
+            "parents": [],
+            "path": f"metadata/{artifact_type}-v1.json",
+        }
+        if artifact_type == "semantic-beats":
+            return {
+                **common,
+                "narration_id": "narration-v1",
+                "beats": [
+                    {
+                        "beat_id": "B01",
+                        "text_ref": "narration-v1:S01:L1",
+                        "keyword": "timing",
+                        "intent": "core-concept-emphasis",
+                        "priority": "primary",
+                        "preferred_carrier": "motion-graphics",
+                        "approval_provenance": "user:keyword-review-v1",
+                    }
+                ],
+            }
+        if artifact_type == "timed-semantic-beats":
+            return {
+                **common,
+                "semantic_beats_id": "semantic-beats-v1",
+                "voice_timing_id": "voice-timing-v1",
+                "timing_kind": "real",
+                "beats": [
+                    {
+                        "beat_id": "B01",
+                        "speech_start_ms": 1000,
+                        "speech_end_ms": 2000,
+                        "keyword_start_ms": 1200,
+                        "keyword_end_ms": 1600,
+                        "emphasis_ms": 1400,
+                        "visual_window_ms": [1080, 1900],
+                    }
+                ],
+            }
+        return {
+            **common,
+            "timed_semantic_beats_id": "timed-semantic-beats-v1",
+            "scenes": [
+                {
+                    "scene_id": "S01",
+                    "scene_window_ms": [1000, 2000],
+                    "beat_ids": ["B01"],
+                    "primary_carrier": "motion-graphics",
+                    "support_layer": "caption-emphasis",
+                    "visual_window_ms": [1080, 1900],
+                }
+            ],
+        }
+
+    def test_timing_artifacts_require_closed_dedicated_metadata_on_create(self):
+        """Catches generic artifact admission bypassing timing contract fields or nesting."""
+        cases = (
+            (
+                "semantic-missing-beats",
+                "semantic-beats",
+                lambda artifact: artifact.pop("beats"),
+            ),
+            (
+                "semantic-empty-beats",
+                "semantic-beats",
+                lambda artifact: artifact.update({"beats": []}),
+            ),
+            (
+                "semantic-unexpected-beat-key",
+                "semantic-beats",
+                lambda artifact: artifact["beats"][0].update({"unexpected": "metadata"}),
+            ),
+            (
+                "timed-missing-lineage",
+                "timed-semantic-beats",
+                lambda artifact: artifact.pop("semantic_beats_id"),
+            ),
+            (
+                "timed-empty-beats",
+                "timed-semantic-beats",
+                lambda artifact: artifact.update({"beats": []}),
+            ),
+            (
+                "timed-unexpected-beat-key",
+                "timed-semantic-beats",
+                lambda artifact: artifact["beats"][0].update({"unexpected": "metadata"}),
+            ),
+            (
+                "scene-missing-lineage",
+                "scene-timing-contracts",
+                lambda artifact: artifact.pop("timed_semantic_beats_id"),
+            ),
+            (
+                "scene-empty-contracts",
+                "scene-timing-contracts",
+                lambda artifact: artifact.update({"scenes": []}),
+            ),
+            (
+                "scene-unexpected-nested-key",
+                "scene-timing-contracts",
+                lambda artifact: artifact["scenes"][0].update({"unexpected": "metadata"}),
+            ),
+        )
+        for name, artifact_type, mutate in cases:
+            with self.subTest(name=name):
+                artifact = self.semantic_timing_artifact(artifact_type)
+                mutate(artifact)
+
+                with self.assertRaises(ValueError):
+                    artifacts.validate_artifact_record(artifact)
+                with TemporaryDirectory() as folder, self.assertRaises(ValueError):
+                    create_artifact(Path(folder), artifact)
+
     def test_existing_artifact_id_cannot_be_overwritten(self):
         """Catches a later artifact write replacing an immutable version."""
         create_artifact(self.root, self.artifact)

@@ -1151,7 +1151,7 @@ class ValidationTests(unittest.TestCase):
                 lambda record: record["beats"].append(
                     {**record["beats"][0], "intent": "supporting-detail"}
                 ),
-                "semantic-beat-duplicate-id",
+                "invalid-artifact-metadata",
             ),
             (
                 "changed-timed-duplicate",
@@ -1160,7 +1160,7 @@ class ValidationTests(unittest.TestCase):
                 lambda record: record["beats"].append(
                     {**record["beats"][0], "emphasis_ms": 1500}
                 ),
-                "timed-semantic-beat-duplicate-id",
+                "invalid-artifact-metadata",
             ),
             (
                 "reversed-speech-window",
@@ -1220,6 +1220,40 @@ class ValidationTests(unittest.TestCase):
                 result = validate_project(self.root)
 
                 self.assertIn(expected, {item["code"] for item in result["errors"]})
+
+    def test_timing_artifact_contracts_reject_invalid_metadata_before_graph_checks(self):
+        """Catches persisted timing records bypassing their closed dedicated schema."""
+        cases = (
+            (
+                "semantic-missing-beats",
+                "semantic-beats",
+                "semantic-beats-v1",
+                lambda record: record.pop("beats"),
+            ),
+            (
+                "timed-empty-beats",
+                "timed-semantic-beats",
+                "timed-semantic-beats-v1",
+                lambda record: record.update({"beats": []}),
+            ),
+            (
+                "scene-unexpected-nested-key",
+                "scene-timing-contracts",
+                "scene-timing-contracts-v1",
+                lambda record: record["scenes"][0].update({"unexpected": "metadata"}),
+            ),
+        )
+        for name, artifact_type, artifact_id, mutate in cases:
+            with self.subTest(name=name):
+                self.write_timed_semantic_graph()
+                path = self.timing_artifact_path(artifact_type, artifact_id)
+                record = json.loads(path.read_text(encoding="utf-8"))
+                mutate(record)
+                path.write_text(json.dumps(record), encoding="utf-8")
+
+                result = validate_project(self.root)
+
+                self.assertIn("invalid-artifact-metadata", {item["code"] for item in result["errors"]})
 
     def write_visual_placeholder(self, relative):
         path = self.root / relative
