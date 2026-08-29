@@ -6,16 +6,18 @@ description: Prepare user-uploaded narration or approved ChatCut TTS and publish
 # Voiceover Producer
 
 Purpose: turn one declared narration source into a project-contained voiceover,
-real voice-timing, and timing-linked semantic beats. This worker does not plan
+real voice-timing, and timed semantic beats. This worker does not plan
 or rewrite narration, choose a source, select a voice, or route later work.
 
 Owned capability: `voice.prepare`
 
 Allowed inputs: accept only one claimed task-envelope with capability
 `voice.prepare`. Its immutable inputs must contain the approved narration,
-current style decision, durable voice-source decision, and exactly the declared
-source dependency: an approved TTS voice profile for `tts`, or the declared
-uploaded audio Artifact for `uploaded-voice`.
+current style decision, the pre-existing approved `semantic-beats` Artifact,
+durable voice-source decision, and exactly the declared source dependency: an
+approved TTS voice profile for `tts`, or the declared uploaded audio Artifact
+for `uploaded-voice`. The declared `semantic_beats_id` is immutable and must
+refer to that input.
 
 Decision and stop conditions:
 
@@ -44,12 +46,14 @@ the declared duration, fail closed and do not publish voice readiness.
 Success and result:
 
 - Publish immutable, project-contained `voiceover`, real voice-timing, and
-  timing-linked semantic-beats Artifacts. The timing must name that exact
-  voiceover and pass the voice lineage and structural timing checks.
+  `timed-semantic-beats` Artifacts. Bind sentence/segment timing by default
+  and word-level anchors only for the frozen approved keyword set. The derived
+  Artifact must retain the exact `semantic_beats_id` and `voice_timing_id`,
+  adding only millisecond fields without changing approved decisions.
 - Return a task-result envelope containing only produced Artifact IDs,
   objective checks, compact warnings, and a decision request when waiting.
   Return `succeeded` only after all three output Artifacts are published and
-  structurally valid; do not fabricate media, duration, or estimated timing.
+  structurally valid; do not fabricate duration or estimated timing.
 
 Follow `../../references/schemas/task-envelope.schema.json`,
 `../../references/schemas/task-result.schema.json`,
@@ -57,4 +61,5 @@ Follow `../../references/schemas/task-envelope.schema.json`,
 `../../references/schemas/voice-profile.schema.json`,
 `../../references/schemas/voiceover.schema.json`,
 `../../references/schemas/voice-timing.schema.json`, and
+`../../references/schemas/timed-semantic-beats.schema.json`,
 `../../references/policies/decision-gates.md`.

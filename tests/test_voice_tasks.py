@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
-import struct
 import unittest
 
 from scripts.toolkit import tasks
@@ -24,7 +23,9 @@ class PrepareVoiceTaskTests(unittest.TestCase):
         return {
             "task_id": "voice-prepare-v2",
             "capability": "voice.prepare",
-            "inputs": ["narration-v2", "style-v2", "source-v2", "profile-v2"],
+            "inputs": [
+                "narration-v2", "style-v2", "semantic-beats-v2", "source-v2", "profile-v2"
+            ],
             "adapter_preferences": adapter_preferences or ["chatcut"],
             "output_contract": "voiceover-v1",
             "constraints": {
@@ -33,6 +34,7 @@ class PrepareVoiceTaskTests(unittest.TestCase):
                 "claim_token": "claim-v2",
                 "voice_source_id": "source-v2",
                 "voice_profile_id": "profile-v2",
+                "semantic_beats_id": "semantic-beats-v2",
                 "output_artifact_ids": ["voiceover-v2", "voice-timing-v2", "beats-v2"],
             },
         }
@@ -41,6 +43,23 @@ class PrepareVoiceTaskTests(unittest.TestCase):
         records = [
             self.artifact("narration-v2", "narration"),
             self.artifact("style-v2", "style-pack"),
+            self.artifact(
+                "semantic-beats-v2",
+                "semantic-beats",
+                parents=["narration-v2"],
+                narration_id="narration-v2",
+                beats=[
+                    {
+                        "beat_id": "B07",
+                        "text_ref": "narration-v2:S01:L1",
+                        "keyword": "旁白",
+                        "intent": "core-concept-emphasis",
+                        "priority": "primary",
+                        "preferred_carrier": "motion-graphics",
+                        "approval_provenance": "user:keyword-review-v2",
+                    }
+                ],
+            ),
             self.artifact(
                 "source-v2",
                 "voice-source-decision",
@@ -72,7 +91,6 @@ class PrepareVoiceTaskTests(unittest.TestCase):
                 )
             )
         if include_upload:
-            self.write_audio("media/upload-v2.wav")
             records.append(
                 self.artifact(
                     "upload-v2",
@@ -95,7 +113,7 @@ class PrepareVoiceTaskTests(unittest.TestCase):
             **metadata,
         }
 
-    def test_uploaded_mode_waits_for_a_safe_declared_audio_artifact(self):
+    def test_uploaded_mode_waits_for_a_declared_audio_artifact(self):
         """Catches accepting a source decision as though it were an uploaded recording."""
         envelope = self.envelope()
         result = prepare_voice_task(
@@ -113,7 +131,7 @@ class PrepareVoiceTaskTests(unittest.TestCase):
     def test_missing_source_choice_is_a_persistable_waiting_user_task(self):
         """Catches immutable task creation requiring an invented source input."""
         envelope = self.envelope()
-        envelope["inputs"] = ["narration-v2", "style-v2"]
+        envelope["inputs"] = ["narration-v2", "style-v2", "semantic-beats-v2"]
         envelope["constraints"].pop("voice_source_id")
         envelope["constraints"].pop("voice_profile_id")
 
@@ -130,10 +148,10 @@ class PrepareVoiceTaskTests(unittest.TestCase):
 
     def test_create_task_persists_voice_wait_without_optional_artifact_ids(self):
         """Catches durable dispatch inventing source, profile, or upload identities."""
-        for artifact in self.artifacts()[:2]:
+        for artifact in self.artifacts()[:3]:
             create_artifact(self.root, artifact)
         envelope = self.envelope()
-        envelope["inputs"] = ["narration-v2", "style-v2"]
+        envelope["inputs"] = ["narration-v2", "style-v2", "semantic-beats-v2"]
         for field in ("voice_source_id", "voice_profile_id", "uploaded_audio_id"):
             envelope["constraints"].pop(field, None)
 
@@ -173,7 +191,7 @@ class PrepareVoiceTaskTests(unittest.TestCase):
         self.assertEqual("waiting_user", result["status"])
         self.assertEqual(["voice-upload-required"], result["warnings"])
 
-    def test_uploaded_mode_submits_only_the_declared_safe_audio_for_timing(self):
+    def test_uploaded_mode_submits_only_the_declared_audio_for_timing(self):
         """Catches external timing work starting before its immutable upload input exists."""
         envelope = self.envelope()
         envelope["inputs"].append("upload-v2")
@@ -196,7 +214,6 @@ class PrepareVoiceTaskTests(unittest.TestCase):
         envelope["inputs"].extend(["upload-v2", "upload-v3"])
         envelope["constraints"]["uploaded_audio_id"] = "upload-v2"
         artifacts = self.artifacts(mode="uploaded-voice", include_upload=True)
-        self.write_audio("media/upload-v3.wav")
         artifacts.append(
             self.artifact(
                 "upload-v3",
@@ -270,45 +287,9 @@ class PrepareVoiceTaskTests(unittest.TestCase):
         self.assertEqual([], result["artifacts"])
         tasks._validate_result(result)
 
-    def test_succeeds_only_for_a_published_valid_voice_and_timing_bundle(self):
-        """Catches a preparatory external job being reported as produced narration."""
-        artifacts = self.artifacts()
-        artifacts.extend(
-            [
-                self.artifact(
-                    "voiceover-v2",
-                    "voiceover",
-                    parents=["narration-v2", "source-v2", "profile-v2"],
-                    narration_id="narration-v2",
-                    source_decision_id="source-v2",
-                    mode="tts",
-                    profile_id="profile-v2",
-                    media_path="media/voiceover-v2.wav",
-                    media_format="wav",
-                    duration_ms=1000,
-                    provenance="chatcut:voice",
-                    output_contract="voiceover-v1",
-                ),
-                self.artifact(
-                    "voice-timing-v2",
-                    "voice-timing",
-                    parents=["voiceover-v2"],
-                    voiceover_id="voiceover-v2",
-                    timing_kind="real",
-                    duration_ms=1000,
-                    segments=[{"start_ms": 0, "end_ms": 1000, "text": "旁白"}],
-                    output_contract="voiceover-v1",
-                ),
-                self.artifact(
-                    "beats-v2",
-                    "semantic-beats",
-                    parents=["voice-timing-v2"],
-                    voice_timing_id="voice-timing-v2",
-                    output_contract="voiceover-v1",
-                ),
-            ]
-        )
-        self.write_audio("media/voiceover-v2.wav")
+    def test_succeeds_only_for_a_published_valid_timed_semantic_bundle(self):
+        """Catches output completion retaining a legacy timing projection."""
+        artifacts = self.published_bundle()
 
         result = prepare_voice_task(self.root, self.envelope(), artifacts, ["chatcut:voice"])
 
@@ -316,55 +297,39 @@ class PrepareVoiceTaskTests(unittest.TestCase):
         self.assertEqual(["voiceover-v2", "voice-timing-v2", "beats-v2"], result["artifacts"])
         tasks._validate_result(result)
 
-    def test_published_bundle_requires_a_readable_project_contained_voiceover_file(self):
-        """Catches metadata-only, redirected, or missing media being reported as produced audio."""
-        for media_path, make_fixture in (
-            ("media/voiceover-v2.wav", False),
-            ("../voiceover-v2.wav", True),
-        ):
-            with self.subTest(media_path=media_path):
-                artifacts = self.published_bundle(media_path=media_path)
-                if make_fixture:
-                    self.write_audio("media/voiceover-v2.wav")
+    def test_completion_requires_the_declared_frozen_semantic_lineage(self):
+        """Catches a valid timed payload binding a different narration's approval."""
+        artifacts = self.published_bundle()
+        semantic = next(record for record in artifacts if record["artifact_id"] == "semantic-beats-v2")
+        semantic.update(narration_id="narration-v3", parents=["narration-v3"])
 
-                result = prepare_voice_task(
-                    self.root, self.envelope(), artifacts, ["chatcut:voice"]
-                )
+        result = prepare_voice_task(self.root, self.envelope(), artifacts, ["chatcut:voice"])
 
-                self.assertEqual("waiting_external", result["status"])
-                self.assertEqual(["voiceover-media-unavailable"], result["warnings"])
+        self.assertEqual("waiting_external", result["status"])
+        self.assertEqual(["voice-artifacts-pending"], result["warnings"])
+
+    def test_envelope_requires_a_declared_frozen_semantic_input(self):
+        """Catches voice preparation inventing a mutable timing-linked beat record."""
+        envelope = self.envelope()
+        envelope["inputs"].remove("semantic-beats-v2")
+        envelope["constraints"].pop("semantic_beats_id")
+
+        with self.assertRaisesRegex(ValueError, "semantic_beats_id"):
+            prepare_voice_task(self.root, envelope, self.artifacts(), ["chatcut:voice"])
 
     def test_tts_does_not_succeed_before_declared_chatcut_voice_is_available(self):
         """Catches published-looking audio bypassing the declared provider availability gate."""
         artifacts = self.published_bundle()
-        self.write_audio("media/voiceover-v2.wav")
 
         result = prepare_voice_task(self.root, self.envelope(), artifacts, [])
 
         self.assertEqual("waiting_external", result["status"])
         self.assertEqual(["chatcut-voice-unavailable"], result["warnings"])
 
-    def test_symlinked_voiceover_media_cannot_satisfy_success(self):
-        """Catches an artifact path following a project-local link to non-immutable audio."""
-        artifacts = self.published_bundle()
-        outside = self.root / "outside.wav"
-        outside.write_bytes(b"RIFF")
-        media = self.root / "media" / "voiceover-v2.wav"
-        media.parent.mkdir(exist_ok=True)
-        media.symlink_to(outside)
-
-        result = prepare_voice_task(
-            self.root, self.envelope(), artifacts, ["chatcut:voice"]
-        )
-
-        self.assertEqual("waiting_external", result["status"])
-        self.assertEqual(["voiceover-media-unavailable"], result["warnings"])
-
     def test_mismatched_declared_timing_duration_cannot_satisfy_success(self):
-        """Catches a real file overriding inconsistent immutable duration metadata."""
+        """Catches immutable timing metadata disagreeing with its voiceover."""
         artifacts = self.published_bundle()
         artifacts[-2]["duration_ms"] = 999
-        self.write_audio("media/voiceover-v2.wav")
 
         result = prepare_voice_task(
             self.root, self.envelope(), artifacts, ["chatcut:voice"]
@@ -432,8 +397,6 @@ class PrepareVoiceTaskTests(unittest.TestCase):
                 ),
             ]
         )
-        self.write_audio("media/voiceover-v3.wav")
-
         result = prepare_voice_task(self.root, self.envelope(), artifacts, ["chatcut:voice"])
 
         self.assertEqual("waiting_external", result["status"])
@@ -476,13 +439,11 @@ class PrepareVoiceTaskTests(unittest.TestCase):
                 ),
             ]
         )
-        artifacts[-5].update(
+        next(record for record in artifacts if record["artifact_id"] == "voiceover-v2").update(
             parents=["narration-v2", "source-v3", "profile-v3"],
             source_decision_id="source-v3",
             profile_id="profile-v3",
         )
-        self.write_audio("media/voiceover-v2.wav")
-
         result = prepare_voice_task(self.root, envelope, artifacts, ["chatcut:voice"])
 
         self.assertEqual("waiting_external", result["status"])
@@ -538,29 +499,28 @@ class PrepareVoiceTaskTests(unittest.TestCase):
                 ),
                 self.artifact(
                     "beats-v2",
-                    "semantic-beats",
-                    parents=["voice-timing-v2"],
+                    "timed-semantic-beats",
+                    parents=["semantic-beats-v2", "voice-timing-v2"],
+                    semantic_beats_id="semantic-beats-v2",
                     voice_timing_id="voice-timing-v2",
+                    timing_kind="real",
+                    beats=[
+                        {
+                            "beat_id": "B07",
+                            "speech_start_ms": 0,
+                            "speech_end_ms": 1000,
+                            "keyword_start_ms": 200,
+                            "keyword_end_ms": 500,
+                            "emphasis_ms": 350,
+                            "visual_window_ms": [80, 700],
+                        }
+                    ],
                     output_contract="voiceover-v1",
                 ),
             ]
         )
         return artifacts
 
-    def write_audio(self, relative_path):
-        path = self.root / relative_path
-        path.parent.mkdir(exist_ok=True)
-        sample_rate = 8_000
-        audio = b"\0\0" * sample_rate
-        path.write_bytes(
-            b"RIFF"
-            + struct.pack("<I", 36 + len(audio))
-            + b"WAVEfmt "
-            + struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, sample_rate * 2, 2, 16)
-            + b"data"
-            + struct.pack("<I", len(audio))
-            + audio
-        )
 
 
 if __name__ == "__main__":

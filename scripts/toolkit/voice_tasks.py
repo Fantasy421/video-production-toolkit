@@ -3,13 +3,13 @@
 from collections.abc import Iterable, Mapping
 import json
 from pathlib import Path
-from pathlib import PurePosixPath
 from typing import Any, Optional
 
 from .adapters import select_adapter
-from .runtime_paths import project_path, project_root
+from .semantic_beats import validate_semantic_beats
 from .tasks import _validate_result, validate_current_task_envelope
-from .voice import probe_audio_duration_ms, validate_project_voice_bundle
+from .timed_semantic_beats import validate_timed_semantic_beats
+from .voice import validate_voice_bundle
 
 
 _CHATCUT_ADAPTER = "chatcut"
@@ -30,7 +30,6 @@ def prepare_voice_task(
     success path reports artifacts already present in the supplied immutable
     project view.
     """
-    root = project_root(root)
     task = _task_envelope(envelope)
     records = _artifact_records(artifacts)
     skills = _installed_skills(installed_skills)
@@ -60,7 +59,6 @@ def prepare_voice_task(
     if mode == "uploaded-voice":
         upload_id = task["constraints"].get("uploaded_audio_id")
         upload = _declared_upload(
-            root,
             declared_records,
             upload_id,
             narration_id,
@@ -82,12 +80,12 @@ def prepare_voice_task(
                 error="external-provider-pending",
             )
         complete, warning = _completed_outputs(
-            root,
             declared_records,
             narration_id,
             source["artifact_id"],
             None,
             upload_id,
+            task["constraints"]["semantic_beats_id"],
             output_ids,
         )
         if complete is not None:
@@ -133,12 +131,12 @@ def prepare_voice_task(
             error="external-provider-pending",
         )
     complete, warning = _completed_outputs(
-        root,
         declared_records,
         narration_id,
         source["artifact_id"],
         profile_id,
         None,
+        task["constraints"]["semantic_beats_id"],
         output_ids,
     )
     if complete is not None:
@@ -199,6 +197,13 @@ def _task_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
         for field in ("voice_profile_id", "uploaded_audio_id")
     ):
         raise ValueError("voice task dependent inputs require voice_source_id")
+    semantic_beats_id = task["constraints"].get("semantic_beats_id")
+    if (
+        not isinstance(semantic_beats_id, str)
+        or not semantic_beats_id
+        or semantic_beats_id not in task["inputs"]
+    ):
+        raise ValueError("voice task requires a declared semantic_beats_id input")
     output_ids = task["constraints"].get("output_artifact_ids")
     if (
         not isinstance(output_ids, list)
@@ -328,7 +333,6 @@ def _approved_tts_profile(
 
 
 def _declared_upload(
-    root: Path,
     records: list[dict[str, Any]],
     uploaded_audio_id: Any,
     narration_id: Any,
@@ -345,35 +349,21 @@ def _declared_upload(
         or upload.get("parents") != [narration_id, source_id]
     ):
         return None
-    media_path = upload.get("media_path")
-    if not isinstance(media_path, str) or not media_path:
-        return None
-    try:
-        path = project_path(root, media_path)
-    except ValueError:
-        return None
-    media_format = PurePosixPath(media_path).suffix.lower().lstrip(".")
-    return (
-        upload
-        if path.is_file()
-        and not path.is_symlink()
-        and probe_audio_duration_ms(path, media_format) is not None
-        else None
-    )
+    return upload if isinstance(upload.get("media_path"), str) and upload["media_path"] else None
 
 
 def _completed_outputs(
-    root: Path,
     records: list[dict[str, Any]],
     narration_id: Any,
     source_id: str,
     profile_id: Optional[str],
     uploaded_audio_id: Optional[str],
+    semantic_beats_id: str,
     output_ids: list[str],
 ) -> tuple[Optional[list[str]], str]:
     if not isinstance(narration_id, str) or not narration_id:
         return None, "voice-artifacts-pending"
-    lineage_ids = [source_id, *output_ids]
+    lineage_ids = [source_id, semantic_beats_id, *output_ids]
     if profile_id is not None:
         lineage_ids.append(profile_id)
     if uploaded_audio_id is not None:
@@ -385,34 +375,64 @@ def _completed_outputs(
         *narration_records,
         *_declared_records(records, lineage_ids),
     ]
-    bundle = validate_project_voice_bundle(root, completion_records, narration_id)
+    bundle = validate_voice_bundle(completion_records, narration_id)
     if not bundle["ok"]:
-        media_codes = {
-            "unsafe-voiceover-media-path",
-            "voiceover-media-duration-unverifiable",
-            "voiceover-media-missing",
-            "voiceover-media-symlink",
-            "voiceover-media-unreadable",
-        }
-        codes = {issue["code"] for issue in bundle["issues"]}
-        return None, (
-            "voiceover-media-unavailable"
-            if codes & media_codes
-            else "voice-artifacts-pending"
-        )
+        return None, "voice-artifacts-pending"
     timing_id = bundle["voice_timing_id"]
-    beats = _record_by_id(completion_records, output_ids[2])
+    semantic = _record_by_id(completion_records, semantic_beats_id)
+    timed = _record_by_id(completion_records, output_ids[2])
+    timing = _record_by_id(completion_records, timing_id)
     if (
         bundle["voiceover_id"] != output_ids[0]
         or timing_id != output_ids[1]
-        or beats is None
-        or beats.get("type") != "semantic-beats"
-        or beats.get("status") != "approved"
-        or beats.get("voice_timing_id") != timing_id
-        or beats.get("parents") != [timing_id]
+        or not _valid_timed_semantic_output(
+            semantic, timed, timing, narration_id, semantic_beats_id, timing_id
+        )
     ):
         return None, "voice-artifacts-pending"
     return [output_ids[0], output_ids[1], output_ids[2]], ""
+
+
+def _valid_timed_semantic_output(
+    semantic: Optional[dict[str, Any]],
+    timed: Optional[dict[str, Any]],
+    timing: Optional[dict[str, Any]],
+    narration_id: str,
+    semantic_beats_id: str,
+    timing_id: str,
+) -> bool:
+    """Confirm that completion only adds real timing to frozen decisions."""
+    if (
+        semantic is None
+        or timed is None
+        or timing is None
+        or semantic.get("type") != "semantic-beats"
+        or semantic.get("status") != "approved"
+        or semantic.get("narration_id") != narration_id
+        or semantic.get("parents") != [narration_id]
+        or timed.get("type") != "timed-semantic-beats"
+        or timed.get("status") != "approved"
+        or timed.get("semantic_beats_id") != semantic_beats_id
+        or timed.get("voice_timing_id") != timing_id
+        or timed.get("parents") != [semantic_beats_id, timing_id]
+    ):
+        return False
+    try:
+        validate_semantic_beats(
+            {"narration_id": semantic["narration_id"], "beats": semantic["beats"]}
+        )
+        validate_timed_semantic_beats(
+            {
+                "voice_timing_id": timed["voice_timing_id"],
+                "timing_kind": timed["timing_kind"],
+                "beats": timed["beats"],
+            },
+            {"narration_id": semantic["narration_id"], "beats": semantic["beats"]},
+            timing,
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+    return True
 
 
 def _record_by_id(records: list[dict[str, Any]], artifact_id: str) -> Optional[dict[str, Any]]:

@@ -969,7 +969,9 @@ class PackageTests(unittest.TestCase):
             ".codex-plugin/plugin.json", package_validation.REQUIRED_FILES
         )
         self.assertIn("tests/test_artifacts.py", package_validation.REQUIRED_FILES)
+        self.assertIn("tests/test_timed_semantic_beats.py", package_validation.REQUIRED_FILES)
         self.assertIn("scripts/migration_audit.py", package_validation.REQUIRED_FILES)
+        self.assertIn("scripts/toolkit/timed_semantic_beats.py", package_validation.REQUIRED_FILES)
 
     def test_each_required_file_is_content_fingerprinted(self):
         """Catches any required release file being present but changed or deleted."""
@@ -1314,6 +1316,7 @@ class PackageTests(unittest.TestCase):
             "scripts/toolkit/orchestrator.py",
             "scripts/toolkit/project_state.py",
             "scripts/toolkit/tasks.py",
+            "scripts/toolkit/timed_semantic_beats.py",
             "scripts/toolkit/validation.py",
             "scripts/toolkit/voice.py",
             "scripts/toolkit/voice_tasks.py",
