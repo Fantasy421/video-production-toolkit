@@ -43,6 +43,7 @@ class TimedSemanticBeatTests(unittest.TestCase):
                 {"start_ms": 0, "end_ms": 800, "text": "开场说明"},
                 {"start_ms": 800, "end_ms": 2_100, "text": "解释上下文隔离"},
             ],
+            "keyword_anchors": TimedSemanticBeatTests.keyword_anchors(),
         }
 
     @staticmethod

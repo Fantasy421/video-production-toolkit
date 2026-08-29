@@ -1096,6 +1096,7 @@ def _run_resume_scenario(
             timing_kind="real",
             duration_ms=voice_timing_duration_ms,
             segments=_timing_segments(voice_timing_duration_ms),
+            keyword_anchors=[],
         )
         create_artifact(project, voice_timing_v2)
         declared_descendants = sorted(
@@ -1608,6 +1609,7 @@ def _voice_bundle(
             timing_kind="real",
             duration_ms=voice_timing_duration_ms,
             segments=_timing_segments(voice_timing_duration_ms),
+            keyword_anchors=[],
         ),
     ]
 

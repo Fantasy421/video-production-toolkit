@@ -82,10 +82,13 @@ class PackageTests(unittest.TestCase):
         timed = self.schema("timed-semantic-beats.schema.json")
         scenes = self.schema("scene-timing-contracts.schema.json")
         validation = self.schema("timing-validation.schema.json")
+        voice_timing = self.schema("voice-timing.schema.json")
 
         self.assertFalse(semantic["additionalProperties"])
         self.assertEqual("real", timed["properties"]["timing_kind"]["const"])
         self.assertIn("approved_anchor_commitment", timed["$defs"]["beat"]["required"])
+        self.assertIn("keyword_anchors", voice_timing["required"])
+        self.assertFalse(voice_timing["$defs"]["anchor"]["additionalProperties"])
         self.assertEqual(
             1,
             scenes["$defs"]["scene"]["properties"]["primary_carrier"][
@@ -221,6 +224,12 @@ class PackageTests(unittest.TestCase):
     def test_split_timing_schema_mutations_fail_after_fingerprint_refresh(self):
         """Catches a refreshed release blessing weaker timing boundaries."""
         cases = (
+            (
+                "voice-timing-anchor-contract",
+                "references/schemas/voice-timing.schema.json",
+                lambda schema: schema["$defs"]["anchor"].update({"additionalProperties": True}),
+                "invalid:voice-timing-contract",
+            ),
             (
                 "estimated-timing",
                 "references/schemas/timed-semantic-beats.schema.json",

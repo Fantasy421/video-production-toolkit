@@ -47,11 +47,13 @@ Success and result:
 
 - Publish immutable, project-contained `voiceover`, real voice-timing, and
   `timed-semantic-beats` Artifacts. Bind sentence/segment timing by default
-  and word-level anchors only for the frozen approved keyword set. The derived
-  Artifact must retain the exact `semantic_beats_id` and `voice_timing_id`,
-  adding only millisecond fields and a deterministic approved-anchor commitment
-  without changing approved decisions. Completion must recompute that commitment
-  from the frozen beat before accepting an output.
+  and word-level anchors only for the frozen approved keyword set. Store the
+  closed `keyword_anchors` evidence on the authoritative `voice-timing`
+  Artifact, never only on derived output. The derived Artifact must retain the
+  exact `semantic_beats_id` and `voice_timing_id`, adding only millisecond
+  fields and a deterministic approved-anchor commitment without changing
+  approved decisions. Completion must rebuild the entire timed-beat output
+  from the frozen beats plus those authoritative anchors before accepting it.
 - Return a task-result envelope containing only produced Artifact IDs,
   objective checks, compact warnings, and a decision request when waiting.
   Return `succeeded` only after all three output Artifacts are published and

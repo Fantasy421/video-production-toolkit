@@ -974,6 +974,7 @@ class ValidationTests(unittest.TestCase):
                 segments=[
                     {"start_ms": 0, "end_ms": 10_000, "text": f"timing {version}"}
                 ],
+                keyword_anchors=[],
             )
 
     def write_wav_header(self, relative, duration_ms):
@@ -2002,6 +2003,7 @@ class ValidationTests(unittest.TestCase):
             timing_kind="estimated",
             duration_ms=10_000,
             segments=[{"start_ms": 0, "end_ms": 10_000, "text": "estimate"}],
+            keyword_anchors=[],
         )
 
         result = validate_project(self.root)

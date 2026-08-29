@@ -9,7 +9,7 @@ from .adapters import select_adapter
 from .artifacts import validate_artifact_record
 from .semantic_beats import validate_semantic_beats
 from .tasks import _validate_result, validate_current_task_envelope
-from .timed_semantic_beats import validate_timed_semantic_beats
+from .timed_semantic_beats import bind_semantic_beats
 from .voice import validate_voice_bundle
 
 
@@ -412,6 +412,7 @@ def _valid_timed_semantic_output(
     try:
         validate_artifact_record(semantic)
         validate_artifact_record(timed)
+        validate_artifact_record(timing)
     except (KeyError, TypeError, ValueError):
         return False
     if (
@@ -430,18 +431,18 @@ def _valid_timed_semantic_output(
         validate_semantic_beats(
             {"narration_id": semantic["narration_id"], "beats": semantic["beats"]}
         )
-        validate_timed_semantic_beats(
-            {
-                "voice_timing_id": timed["voice_timing_id"],
-                "timing_kind": timed["timing_kind"],
-                "beats": timed["beats"],
-            },
+        expected = bind_semantic_beats(
             {"narration_id": semantic["narration_id"], "beats": semantic["beats"]},
             timing,
+            timing["keyword_anchors"],
         )
     except (KeyError, TypeError, ValueError):
         return False
-    return True
+    return {
+        "voice_timing_id": timed["voice_timing_id"],
+        "timing_kind": timed["timing_kind"],
+        "beats": timed["beats"],
+    } == expected
 
 
 def _record_by_id(records: list[dict[str, Any]], artifact_id: str) -> Optional[dict[str, Any]]:

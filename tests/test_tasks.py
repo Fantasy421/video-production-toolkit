@@ -204,6 +204,7 @@ class TaskTests(unittest.TestCase):
                 timing_kind="real",
                 duration_ms=12000,
                 segments=[{"start_ms": 0, "end_ms": 12000, "text": "narration"}],
+                keyword_anchors=[],
             ),
         ]
         self.create_artifact(
@@ -970,6 +971,7 @@ class TaskTests(unittest.TestCase):
             timing_kind="real",
             duration_ms=12000,
             segments=[{"start_ms": 0, "end_ms": 12000, "text": "current"}],
+            keyword_anchors=[],
         )
         envelope = {**self.envelope, "task_id": "preview-with-stale-timing"}
 
@@ -2341,6 +2343,7 @@ class TaskTests(unittest.TestCase):
             timing_kind="real",
             duration_ms=12000,
             segments=[{"start_ms": 0, "end_ms": 12000, "text": "revised"}],
+            keyword_anchors=[],
         )
 
         self.assertEqual("stale-result", complete_task(self.root, self.result_for(claim)))

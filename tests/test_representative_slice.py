@@ -91,6 +91,7 @@ class RepresentativeSliceTests(unittest.TestCase):
                         "text": "fixture narration",
                     }
                 ],
+                "keyword_anchors": [],
             },
         ]
 

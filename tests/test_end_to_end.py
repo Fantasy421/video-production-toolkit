@@ -413,6 +413,7 @@ def voice_bundle(*, timing_id="voice-timing-v1", timing_status="approved"):
                 {"start_ms": 0, "end_ms": 6000, "text": "first"},
                 {"start_ms": 6000, "end_ms": 12000, "text": "second"},
             ],
+            keyword_anchors=[],
         ),
     ]
 
@@ -692,6 +693,7 @@ class CoordinatorTests(unittest.TestCase):
             timing_kind="real",
             duration_ms=12000,
             segments=[{"start_ms": 0, "end_ms": 12000, "text": "old"}],
+            keyword_anchors=[],
         )
 
         self.assertEqual(

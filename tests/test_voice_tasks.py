@@ -5,6 +5,7 @@ import unittest
 
 from scripts.toolkit import tasks
 from scripts.toolkit.artifacts import create_artifact
+from scripts.toolkit.timed_semantic_beats import _anchor_commitment
 from scripts.toolkit.voice_tasks import prepare_voice_task
 
 
@@ -325,8 +326,8 @@ class PrepareVoiceTaskTests(unittest.TestCase):
                 self.assertEqual("waiting_external", result["status"])
                 self.assertEqual(["voice-artifacts-pending"], result["warnings"])
 
-    def test_completion_rejects_an_alternate_same_segment_keyword_interval(self):
-        """Catches persisted timing drifting away from its frozen approved anchor."""
+    def test_completion_recomputes_timed_beats_from_authoritative_word_anchors(self):
+        """Catches a worker replacing a range and its public hash together."""
         artifacts = self.published_bundle()
         timed = next(item for item in artifacts if item["artifact_id"] == "beats-v2")
         timed["beats"][0].update(
@@ -335,11 +336,47 @@ class PrepareVoiceTaskTests(unittest.TestCase):
             emphasis_ms=650,
             visual_window_ms=[480, 900],
         )
+        semantic = next(
+            item for item in artifacts if item["artifact_id"] == "semantic-beats-v2"
+        )
+        timed["beats"][0]["approved_anchor_commitment"] = _anchor_commitment(
+            {"narration_id": semantic["narration_id"], "beats": semantic["beats"]},
+            "B07",
+            600,
+            700,
+        )
 
         result = prepare_voice_task(self.root, self.envelope(), artifacts, ["chatcut:voice"])
 
         self.assertEqual("waiting_external", result["status"])
         self.assertEqual(["voice-artifacts-pending"], result["warnings"])
+
+    def test_completion_requires_authoritative_anchors_to_match_frozen_beats(self):
+        """Catches missing, extra, or renamed anchor evidence reaching success."""
+        cases = (
+            ("missing", lambda anchors: anchors.clear()),
+            (
+                "extra",
+                lambda anchors: anchors.append(
+                    {"beat_id": "B08", "keyword": "额外", "start_ms": 600, "end_ms": 700}
+                ),
+            ),
+            ("wrong-keyword", lambda anchors: anchors[0].update(keyword="改写")),
+        )
+        for name, mutate in cases:
+            with self.subTest(name=name):
+                artifacts = self.published_bundle()
+                timing = next(
+                    item for item in artifacts if item["artifact_id"] == "voice-timing-v2"
+                )
+                mutate(timing["keyword_anchors"])
+
+                result = prepare_voice_task(
+                    self.root, self.envelope(), artifacts, ["chatcut:voice"]
+                )
+
+                self.assertEqual("waiting_external", result["status"])
+                self.assertEqual(["voice-artifacts-pending"], result["warnings"])
 
     def test_envelope_requires_a_declared_frozen_semantic_input(self):
         """Catches voice preparation inventing a mutable timing-linked beat record."""
@@ -418,6 +455,14 @@ class PrepareVoiceTaskTests(unittest.TestCase):
                     timing_kind="real",
                     duration_ms=1000,
                     segments=[{"start_ms": 0, "end_ms": 1000, "text": "旁白"}],
+                    keyword_anchors=[
+                        {
+                            "beat_id": "B07",
+                            "keyword": "旁白",
+                            "start_ms": 200,
+                            "end_ms": 500,
+                        }
+                    ],
                     output_contract="voiceover-v1",
                 ),
                 self.artifact(
@@ -528,6 +573,14 @@ class PrepareVoiceTaskTests(unittest.TestCase):
                     timing_kind="real",
                     duration_ms=1000,
                     segments=[{"start_ms": 0, "end_ms": 1000, "text": "旁白"}],
+                    keyword_anchors=[
+                        {
+                            "beat_id": "B07",
+                            "keyword": "旁白",
+                            "start_ms": 200,
+                            "end_ms": 500,
+                        }
+                    ],
                     output_contract="voiceover-v1",
                 ),
                 self.artifact(

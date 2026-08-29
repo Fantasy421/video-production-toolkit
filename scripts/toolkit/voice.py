@@ -66,7 +66,7 @@ _VOICE_REQUIRED_FIELDS = {
         }
     ),
     VOICE_TIMING: frozenset(
-        {"voiceover_id", "timing_kind", "duration_ms", "segments"}
+        {"voiceover_id", "timing_kind", "duration_ms", "segments", "keyword_anchors"}
     ),
 }
 _VOICE_ALLOWED_FIELDS = {
@@ -525,6 +525,7 @@ def _within_shared_artifact_bounds(
             _bounded_text(record["timing_kind"], 64)
             and _within_duration_ceiling(record["duration_ms"])
             and _within_timing_segment_ceilings(record["segments"])
+            and _within_keyword_anchor_ceilings(record["keyword_anchors"])
         )
     return False
 
@@ -562,6 +563,34 @@ def _within_timing_segment_ceilings(value: Any) -> bool:
         text = segment.get("text")
         if isinstance(text, str) and len(text) > 1_000:
             return False
+    return True
+
+
+def _within_keyword_anchor_ceilings(value: Any) -> bool:
+    if not isinstance(value, list) or len(value) > 512:
+        return False
+    seen: set[str] = set()
+    for anchor in value:
+        if not isinstance(anchor, Mapping) or set(anchor) != {
+            "beat_id", "keyword", "start_ms", "end_ms"
+        }:
+            return False
+        beat_id = anchor["beat_id"]
+        keyword = anchor["keyword"]
+        start = anchor["start_ms"]
+        end = anchor["end_ms"]
+        if (
+            not _safe_id(beat_id)
+            or beat_id in seen
+            or not _bounded_text(keyword, 256)
+            or isinstance(start, bool)
+            or not isinstance(start, int)
+            or isinstance(end, bool)
+            or not isinstance(end, int)
+            or not 0 <= start < end <= 36_000_000
+        ):
+            return False
+        seen.add(beat_id)
     return True
 
 
@@ -808,6 +837,7 @@ def _validate_timing(
     if voiceover is not None and duration != voiceover.get("duration_ms"):
         _add_issue(issues, "voice-timing-duration-mismatch", timing)
     _validate_segments(timing.get("segments"), duration, timing, issues)
+    _validate_keyword_anchors(timing.get("keyword_anchors"), duration, timing, issues)
 
 
 def _validate_segments(
@@ -842,6 +872,19 @@ def _validate_segments(
             _add_issue(issues, "voice-timing-overlap", timing)
         previous_start = start
         previous_end = end
+
+
+def _validate_keyword_anchors(
+    anchors: Any,
+    duration_ms: int,
+    timing: Mapping[str, Any],
+    issues: list[dict[str, Any]],
+) -> None:
+    if not _within_keyword_anchor_ceilings(anchors):
+        _add_issue(issues, "invalid-voice-timing-anchor", timing)
+        return
+    if any(anchor["end_ms"] > duration_ms for anchor in anchors):
+        _add_issue(issues, "voice-timing-anchor-out-of-bounds", timing)
 
 
 def _valid_uploaded_audio(

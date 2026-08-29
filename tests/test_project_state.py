@@ -126,6 +126,7 @@ class ProjectStateTests(unittest.TestCase):
                 "path": "metadata/voice-timing-v1.json", "voiceover_id": "voiceover-v1",
                 "timing_kind": "real", "duration_ms": 1_000,
                 "segments": [{"start_ms": 0, "end_ms": 1_000, "text": "voice"}],
+                "keyword_anchors": [],
             },
         )
         for record in records:

@@ -47,6 +47,7 @@
     "provider": {"type": "string", "minLength": 1, "maxLength": 128},
     "scene_id": {"$ref": "#/$defs/safeId"},
     "scope": {"type": "string", "minLength": 1, "maxLength": 128},
+    "keyword_anchors": {"type": "array", "maxItems": 512, "uniqueItems": true, "items": {"$ref": "#/$defs/keywordAnchor"}},
     "segments": {"type": "array", "maxItems": 512, "items": {"$ref": "#/$defs/timingSegment"}},
     "source_decision_id": {"$ref": "#/$defs/safeId"},
     "speaking_rate": {"type": "number", "exclusiveMinimum": 0, "maximum": 4},
@@ -73,6 +74,17 @@
         "start_ms": {"type": "integer", "minimum": 0, "maximum": 35999999},
         "end_ms": {"type": "integer", "minimum": 1, "maximum": 36000000},
         "text": {"type": "string", "minLength": 1, "maxLength": 1000}
+      },
+      "additionalProperties": false
+    },
+    "keywordAnchor": {
+      "type": "object",
+      "required": ["beat_id", "keyword", "start_ms", "end_ms"],
+      "properties": {
+        "beat_id": {"$ref": "#/$defs/safeId"},
+        "keyword": {"type": "string", "minLength": 1, "maxLength": 256},
+        "start_ms": {"type": "integer", "minimum": 0, "maximum": 35999999},
+        "end_ms": {"type": "integer", "minimum": 1, "maximum": 36000000}
       },
       "additionalProperties": false
     },

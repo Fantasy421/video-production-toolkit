@@ -937,11 +937,20 @@ def _validate_voice_timing_schema(
     schema: Mapping[str, Any], errors: list[str]
 ) -> None:
     properties = _mapping(schema.get("properties"))
+    anchors = _mapping(properties.get("keyword_anchors"))
+    anchor = _mapping(_mapping(schema.get("$defs")).get("anchor"))
     if (
-        not {"voiceover_id", "timing_kind", "duration_ms", "segments"}.issubset(
+        not {"voiceover_id", "timing_kind", "duration_ms", "segments", "keyword_anchors"}.issubset(
             _required_fields(schema)
         )
         or _mapping(properties.get("timing_kind")).get("const") != "real"
+        or anchors.get("type") != "array"
+        or anchors.get("minItems") != 0
+        or anchors.get("maxItems") != 512
+        or anchors.get("uniqueItems") is not True
+        or anchors.get("items") != {"$ref": "#/$defs/anchor"}
+        or anchor.get("required") != ["beat_id", "keyword", "start_ms", "end_ms"]
+        or anchor.get("additionalProperties") is not False
     ):
         errors.append("invalid:voice-timing-contract")
 

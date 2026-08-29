@@ -47,3 +47,24 @@ No dependency was installed.
 - Regression verification:
   `UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest discover -s tests -q`
   — 517 tests passed, 4 skipped.
+
+## Fix Round 2
+
+- Added closed, bounded `keyword_anchors` evidence to the authoritative real
+  `voice-timing` Artifact and aligned its schema, generic Artifact validation,
+  voice-runtime validation, package policy, smoke fixtures, and fingerprint.
+- Completion now validates the full real timing Artifact, recomputes compact
+  timed beats from frozen Stage-A semantic beats plus the timing Artifact's
+  anchors, and requires exact equality with the persisted output. It performs
+  no audio or media inspection.
+- Regression coverage rejects a worker that replaces a same-segment interval
+  and recomputes its public hash, as well as missing, extra, renamed, malformed,
+  or structurally unbounded authoritative anchors.
+- RED evidence: the forged-range-and-recomputed-hash completion test returned
+  `succeeded` before this change.
+- GREEN verification:
+  `UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline
+  --with jsonschema python -m unittest discover -s tests -q` — 519 tests
+  passed, 4 skipped.
+- Package validation:
+  `validate_package(Path("."))` returned `[]`; `git diff --check` passed.

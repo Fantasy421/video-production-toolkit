@@ -159,6 +159,33 @@ class ArtifactTests(unittest.TestCase):
                 with TemporaryDirectory() as folder, self.assertRaises(ValueError):
                     create_artifact(Path(folder), artifact)
 
+    def test_voice_timing_keyword_anchors_are_closed_authoritative_evidence(self):
+        """Catches Artifact validation admitting worker-controlled anchor fields."""
+        timing = {
+            "artifact_id": "voice-timing-v1",
+            "type": "voice-timing",
+            "version": 1,
+            "status": "approved",
+            "parents": ["voiceover-v1"],
+            "path": "metadata/voice-timing-v1.json",
+            "voiceover_id": "voiceover-v1",
+            "timing_kind": "real",
+            "duration_ms": 1_000,
+            "segments": [{"start_ms": 0, "end_ms": 1_000, "text": "旁白"}],
+            "keyword_anchors": [
+                {
+                    "beat_id": "B01",
+                    "keyword": "旁白",
+                    "start_ms": 200,
+                    "end_ms": 500,
+                    "unexpected": True,
+                }
+            ],
+        }
+
+        with self.assertRaises(ValueError):
+            artifacts.validate_artifact_record(timing)
+
     @staticmethod
     def legacy_semantic_beats_projection():
         return {

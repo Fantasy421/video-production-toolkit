@@ -119,6 +119,7 @@ class VoiceBundleTests(unittest.TestCase):
                 "segments": [
                     {"start_ms": 0, "end_ms": duration_ms, "text": "旁白"}
                 ],
+                "keyword_anchors": [],
             },
         ]
 
@@ -412,6 +413,24 @@ class VoiceBundleTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("invalid-voice-timing-segment", self.codes(result))
 
+    def test_malformed_keyword_anchors_cannot_satisfy_a_closed_contract(self):
+        """Catches timing evidence admitting a forged or ambiguous anchor."""
+        artifacts = self.bundle()
+        artifacts[3]["keyword_anchors"] = [
+            {
+                "beat_id": "B07",
+                "keyword": "旁白",
+                "start_ms": 200,
+                "end_ms": 500,
+                "unexpected": True,
+            }
+        ]
+
+        result = validate_voice_bundle(artifacts, "narration-v2")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("malformed-voice-artifact", self.codes(result))
+
     def test_schema_optional_output_contract_is_checked_at_runtime(self):
         artifacts = self.bundle()
         artifacts[2]["output_contract"] = ""
@@ -523,6 +542,7 @@ class VoiceSchemaTests(unittest.TestCase):
             "timing_kind",
             "duration_ms",
             "segments",
+            "keyword_anchors",
         ],
     }
 

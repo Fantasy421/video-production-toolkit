@@ -80,6 +80,7 @@ ARTIFACT_BUSINESS_METADATA_FIELDS = frozenset(
         "decision_provenance",
         "emotion",
         "identity_provenance",
+        "keyword_anchors",
         "language",
         "license",
         "media_format",
@@ -589,6 +590,8 @@ def _validate_artifact_business_metadata(artifact: Mapping[str, Any]) -> None:
         _validate_text_list(artifact["pronunciations"], "pronunciations", 256, 500)
     if "segments" in artifact:
         _validate_segments(artifact["segments"])
+    if "keyword_anchors" in artifact:
+        _validate_keyword_anchors(artifact["keyword_anchors"])
     for field in ("beats", "scenes"):
         if field in artifact and (
             not isinstance(artifact[field], list)
@@ -605,7 +608,13 @@ def _validate_artifact_business_metadata(artifact: Mapping[str, Any]) -> None:
 def _validate_timing_artifact_contract(artifact: Mapping[str, Any]) -> None:
     """Reject timing metadata that does not satisfy its closed artifact contract."""
     artifact_type = artifact["type"]
-    timing_fields = {"beats", "scenes", "semantic_beats_id", "timed_semantic_beats_id"}
+    timing_fields = {
+        "beats", "scenes", "semantic_beats_id", "timed_semantic_beats_id",
+        "keyword_anchors",
+    }
+    if artifact_type == "voice-timing":
+        _validate_voice_timing_fields(artifact)
+        return
     if artifact_type not in TIMING_ARTIFACT_TYPES:
         if timing_fields & set(artifact):
             raise ValueError("timing metadata belongs only to timing artifact types")
@@ -653,6 +662,21 @@ def _validate_exact_timing_fields(
     allowed = set(ARTIFACT_REQUIRED_KEYS) | optional
     if not required.issubset(artifact) or not set(artifact).issubset(allowed):
         raise ValueError("timing artifact fields must match its closed contract")
+
+
+def _validate_voice_timing_fields(artifact: Mapping[str, Any]) -> None:
+    allowed = set(ARTIFACT_REQUIRED_KEYS) | {
+        "output_contract", "voiceover_id", "timing_kind", "duration_ms",
+        "segments", "keyword_anchors",
+    }
+    required = {"voiceover_id", "timing_kind", "duration_ms", "segments", "keyword_anchors"}
+    if not required.issubset(artifact) or not set(artifact).issubset(allowed):
+        raise ValueError("voice timing fields must match its closed contract")
+    _require_timing_id(artifact["voiceover_id"], "voiceover_id")
+    if not isinstance(artifact["duration_ms"], int) or isinstance(artifact["duration_ms"], bool) or not 1 <= artifact["duration_ms"] <= 36_000_000:
+        raise ValueError("voice timing duration must be bounded")
+    _validate_segments(artifact["segments"])
+    _validate_keyword_anchors(artifact["keyword_anchors"])
 
 
 def _validate_legacy_semantic_beats_projection(artifact: Mapping[str, Any]) -> None:
@@ -814,6 +838,35 @@ def _validate_segments(value: Any) -> None:
             or len(text) > 1_000
         ):
             raise ValueError("artifact segment values are outside structural bounds")
+
+
+def _validate_keyword_anchors(value: Any) -> None:
+    if not isinstance(value, list) or len(value) > 512:
+        raise ValueError("artifact keyword anchors must be a bounded list")
+    seen: set[str] = set()
+    for anchor in value:
+        if not isinstance(anchor, Mapping) or set(anchor) != {
+            "beat_id", "keyword", "start_ms", "end_ms"
+        }:
+            raise ValueError("artifact keyword anchors must contain closed records")
+        beat_id = anchor["beat_id"]
+        keyword = anchor["keyword"]
+        start = anchor["start_ms"]
+        end = anchor["end_ms"]
+        if (
+            not _bounded_safe_id(beat_id)
+            or beat_id in seen
+            or not isinstance(keyword, str)
+            or not keyword.strip()
+            or len(keyword) > 256
+            or isinstance(start, bool)
+            or not isinstance(start, int)
+            or isinstance(end, bool)
+            or not isinstance(end, int)
+            or not 0 <= start < end <= 36_000_000
+        ):
+            raise ValueError("artifact keyword anchor values are outside structural bounds")
+        seen.add(beat_id)
 
 
 def _validate_license_metadata(value: Any) -> None:
