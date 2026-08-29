@@ -61,6 +61,21 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("task-envelope.schema.json", text)
         self.assertIn("task-result.schema.json", text)
 
+    def test_narration_planner_freezes_user_approved_untimed_semantic_beats(self):
+        """Catches narration planning fabricating formal timing before voice evidence exists."""
+        text = (ROOT / "skills/narration-planner/SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+
+        for requirement in (
+            "extracts candidates",
+            "asks the user alongside script approval",
+            "freezes Stage A beats",
+            "never fabricates final milliseconds",
+            "never publishes formal storyboard timing",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, normalized)
+
     def test_voice_contract_documents_supported_formats_and_fail_closed_probing(self):
         """Catches adapters promising formats the readiness verifier cannot prove."""
         text = (ROOT / "skills/voiceover-producer/SKILL.md").read_text(
