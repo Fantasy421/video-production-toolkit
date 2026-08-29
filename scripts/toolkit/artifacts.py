@@ -167,6 +167,12 @@ def create_artifact(root: Path, artifact: dict[str, Any]) -> Path:
     """Persist one immutable artifact metadata record and return its path."""
     root = project_root(root)
     _validate_artifact(artifact)
+    if (
+        artifact["type"] == "semantic-beats"
+        and "voice_timing_id" in artifact
+        and "beats" not in artifact
+    ):
+        raise ValueError("legacy semantic-beats projection is read-only")
     project_path(root, artifact["path"])
     payload = _serialize_json(artifact)
     artifacts_root = storage_directory(root, "artifacts", create=True)

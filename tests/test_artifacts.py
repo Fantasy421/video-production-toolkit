@@ -170,6 +170,24 @@ class ArtifactTests(unittest.TestCase):
             "voice_timing_id": "voice-timing-v0",
         }
 
+    def test_valid_legacy_semantic_beats_projection_is_readable_but_not_authorable(self):
+        """Catches the compatibility projection reopening the new-artifact write path."""
+        legacy = self.legacy_semantic_beats_projection()
+        artifacts.validate_artifact_record(legacy)
+
+        persisted = (
+            self.root
+            / "artifacts"
+            / "semantic-beats"
+            / "semantic-beats-v0.json"
+        )
+        persisted.parent.mkdir(parents=True)
+        persisted.write_text(json.dumps(legacy), encoding="utf-8")
+
+        self.assertEqual(legacy, artifacts._read_valid_artifact(persisted))
+        with TemporaryDirectory() as folder, self.assertRaises(ValueError):
+            create_artifact(Path(folder), legacy)
+
     def test_legacy_semantic_beats_projection_rejects_new_timing_fields(self):
         """Catches legacy compatibility carrying new timing metadata or nested scenes."""
         legacy = self.legacy_semantic_beats_projection()

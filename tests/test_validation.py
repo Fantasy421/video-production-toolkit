@@ -1280,6 +1280,24 @@ class ValidationTests(unittest.TestCase):
 
                 self.assertIn("invalid-artifact-metadata", {item["code"] for item in result["errors"]})
 
+    def test_valid_legacy_semantic_beats_projection_remains_project_readable(self):
+        """Catches authoring hardening accidentally removing persisted compatibility."""
+        self.write_artifact(
+            "semantic-beats-v0",
+            "semantic-beats",
+            1,
+            "approved",
+            "metadata/semantic-beats-v0.json",
+            voice_timing_id="voice-timing-v0",
+        )
+
+        result = validate_project(self.root)
+
+        self.assertNotIn(
+            "invalid-artifact-metadata",
+            {item["code"] for item in result["errors"]},
+        )
+
     def write_visual_placeholder(self, relative):
         path = self.root / relative
         path.write_bytes(b"opaque visual fixture; structural validation must not read it")
