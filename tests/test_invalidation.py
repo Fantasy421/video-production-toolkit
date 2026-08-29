@@ -59,6 +59,100 @@ class InvalidationTests(unittest.TestCase):
             invalidate_descendants(artifacts, "voice-profile-v1", self.rules),
         )
 
+    def test_voice_upstream_revisions_stale_only_the_timing_bound_semantic_record(self):
+        """Catches a stale real-timing parent leaving its timed Beat binding approved."""
+        cases = (
+            ("narration", {"semantic-beats-v1", "timed-semantic-beats-v1"}),
+            ("voice-source-decision", {"timed-semantic-beats-v1"}),
+            ("voice-profile", {"timed-semantic-beats-v1"}),
+            ("audio", {"timed-semantic-beats-v1"}),
+            ("audio-asset", {"timed-semantic-beats-v1"}),
+            ("uploaded-audio", {"timed-semantic-beats-v1"}),
+            ("voiceover", {"timed-semantic-beats-v1"}),
+            ("voice-timing", {"timed-semantic-beats-v1"}),
+        )
+        for upstream_type, required in cases:
+            with self.subTest(upstream_type=upstream_type):
+                artifacts = self._timed_semantic_graph(upstream_type)
+
+                stale = invalidate_descendants(
+                    artifacts, "upstream-v1", self.rules
+                )
+
+                self.assertTrue(required <= stale)
+                if upstream_type == "narration":
+                    self.assertIn("semantic-beats-v1", stale)
+                else:
+                    self.assertNotIn("semantic-beats-v1", stale)
+
+    @staticmethod
+    def _timed_semantic_graph(upstream_type):
+        artifacts = [
+            {"artifact_id": "narration-v1", "type": "narration", "parents": []},
+            {
+                "artifact_id": "semantic-beats-v1",
+                "type": "semantic-beats",
+                "parents": ["narration-v1"],
+            },
+        ]
+        if upstream_type == "narration":
+            artifacts[0] = {
+                "artifact_id": "upstream-v1",
+                "type": "narration",
+                "parents": [],
+            }
+            artifacts[1]["parents"] = ["upstream-v1"]
+            voiceover_parent = "upstream-v1"
+        elif upstream_type == "voiceover":
+            artifacts.append(
+                {"artifact_id": "upstream-v1", "type": "voiceover", "parents": []}
+            )
+            voiceover_parent = "upstream-v1"
+        elif upstream_type == "voice-timing":
+            artifacts.append(
+                {
+                    "artifact_id": "upstream-v1",
+                    "type": "voice-timing",
+                    "parents": [],
+                }
+            )
+            voiceover_parent = None
+        else:
+            artifacts.extend(
+                [
+                    {
+                        "artifact_id": "upstream-v1",
+                        "type": upstream_type,
+                        "parents": [],
+                    },
+                    {
+                        "artifact_id": "voiceover-v1",
+                        "type": "voiceover",
+                        "parents": ["upstream-v1"],
+                    },
+                ]
+            )
+            voiceover_parent = "voiceover-v1"
+        if upstream_type != "voice-timing":
+            artifacts.append(
+                {
+                    "artifact_id": "voice-timing-v1",
+                    "type": "voice-timing",
+                    "parents": [voiceover_parent],
+                }
+            )
+            timing_parent = "voice-timing-v1"
+        else:
+            timing_parent = "upstream-v1"
+        artifacts.append(
+            {
+                "artifact_id": "timed-semantic-beats-v1",
+                "type": "timed-semantic-beats",
+                "parents": ["semantic-beats-v1", timing_parent],
+            }
+        )
+        return artifacts
+
     def test_style_change_does_not_invalidate_unchanged_voiceover(self):
         """Catches visual-only invalidation crossing into an independent voice branch."""
         artifacts = [
