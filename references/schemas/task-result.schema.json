@@ -10,8 +10,8 @@
     "artifacts": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
     "checks": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
     "warnings": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
-    "worker_id": {"type": "string", "minLength": 1},
-    "claim_token": {"type": "string", "minLength": 1},
+    "worker_id": {"$ref": "#/$defs/safeId"},
+    "claim_token": {"$ref": "#/$defs/safeId"},
     "error": {"type": "string", "minLength": 1},
     "user_decision_request": {"type": "string", "minLength": 1},
     "visual_media_handoff": {

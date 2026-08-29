@@ -11,6 +11,7 @@ import scripts.validate_package as package_validation
 from scripts.validate_package import validate_package
 from scripts.toolkit.tasks import (
     _validate_persisted_envelope,
+    _validate_result,
     validate_current_task_envelope,
 )
 from scripts.toolkit.visual_media_context import (
@@ -586,6 +587,38 @@ class PackageTests(unittest.TestCase):
                 "checks": ["adapter-selected:chatcut"],
             }
         )
+
+    def test_task_result_worker_and_claim_ids_match_safe_id_contract(self):
+        """Catches worker authority bypassing the bounded generic-ID boundary."""
+        base = {
+            "task_id": "task-v1",
+            "status": "waiting_user",
+            "inputs": [],
+            "artifacts": [],
+            "checks": [],
+            "warnings": [],
+            "worker_id": "worker-a",
+            "claim_token": "0123456789abcdef0123456789abcdef",
+        }
+        cases = (
+            ("worker_id", "worker-a", True),
+            ("claim_token", "0123456789abcdef0123456789abcdef", True),
+            ("worker_id", "gopher:worker", False),
+            ("claim_token", "claim:token", False),
+            ("worker_id", "worker/one", False),
+            ("claim_token", "x" * 129, False),
+        )
+        validator = self.task_result_validator()
+        for field, value, expected in cases:
+            result = {**base, field: value}
+            runtime_valid = True
+            try:
+                _validate_result(result)
+            except ValueError:
+                runtime_valid = False
+            with self.subTest(field=field, value=value):
+                self.assertEqual(expected, validator.is_valid(result))
+                self.assertEqual(expected, runtime_valid)
 
     def test_visual_media_handoff_has_a_bounded_compact_result_shape(self):
         """Catches a visual-media result whose variable handoff fields exceed its budget."""

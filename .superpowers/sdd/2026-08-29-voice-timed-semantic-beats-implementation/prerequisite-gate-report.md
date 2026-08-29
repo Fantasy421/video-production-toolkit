@@ -173,3 +173,48 @@ git diff --check
 
 All work remained JSON/dict/string/schema-only; no media content was decoded,
 opened, rendered, played, displayed, extracted, or inspected.
+
+## Fix round 3: task result worker authority IDs
+
+### Changes
+
+- Aligned `task-result.worker_id` and `claim_token` with the bounded,
+  colon-free generic-ID definition in both Draft 2020-12 schema and runtime.
+- Applied the same worker-ID validation before `claim_task` creates a claim, so
+  an unsafe worker cannot acquire work that its result is unable to complete.
+  Generated claim tokens remain 32-character UUID hexadecimal tokens and
+  existing `worker-a` identifiers remain valid.
+- Corrected the existing resume-smoke provenance fixtures to use their
+  documented field-specific `user:` namespace instead of an undeclared
+  `smoke:` URI-like prefix, exposed by the lifecycle coverage run.
+
+### RED evidence
+
+The focused schema/runtime cases were added before the implementation. They
+proved that colon-bearing, slash-bearing, and oversized values were accepted
+by the task-result schema, and that `claim_task` wrote a `gopher:` worker ID
+despite the result scrub rejecting scheme-shaped values.
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_package.PackageTests.test_task_result_worker_and_claim_ids_match_safe_id_contract tests.test_tasks.TaskTests.test_claim_rejects_unsafe_worker_id_before_writing_a_claim -v
+# Ran 2 tests; FAILED (5 failures)
+```
+
+### GREEN evidence
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_package.PackageTests.test_task_result_worker_and_claim_ids_match_safe_id_contract tests.test_tasks.TaskTests.test_claim_rejects_unsafe_worker_id_before_writing_a_claim -v
+# Ran 2 tests in 0.028s; OK
+
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_tasks tests.test_package tests.test_visual_media_context tests.test_end_to_end -v
+# Ran 210 tests in 6.597s; OK (skipped=4)
+
+python3 scripts/validate_package.py
+# package valid
+
+git diff --check
+# no output (clean)
+```
+
+All work remained JSON/dict/string/schema-only; no media content was decoded,
+opened, rendered, played, displayed, extracted, or inspected.

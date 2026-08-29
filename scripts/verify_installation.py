@@ -1527,7 +1527,7 @@ def _voice_bundle(
             narration_id="narration-v1",
             mode="tts",
             decision="approved",
-            decision_provenance="smoke:user-source-v1",
+            decision_provenance="user:smoke-source-v1",
         ),
         _artifact(
             "voice-profile-v1",
@@ -1543,8 +1543,8 @@ def _voice_bundle(
             emotion="calm",
             pronunciations=[],
             approved=True,
-            consent_provenance="smoke:user-consent-v1",
-            profile_provenance="smoke:user-profile-v1",
+            consent_provenance="user:smoke-consent-v1",
+            profile_provenance="user:smoke-profile-v1",
         ),
         _artifact(
             "voiceover-v1",

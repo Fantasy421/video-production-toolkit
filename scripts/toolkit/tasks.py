@@ -167,7 +167,7 @@ def claim_task(root: Path, task_id: str, worker_id: str) -> dict[str, str]:
     root = project_root(root)
     storage_directory(root, "tasks", create=True)
     _require_safe_id(task_id, "task_id")
-    _require_nonempty_string(worker_id, "worker_id")
+    _require_safe_id(worker_id, "worker_id")
     if not _task_path(root, task_id).is_file():
         raise ValueError(f"task does not exist: {task_id}")
     if _result_path(root, task_id).exists() or _stale_result_path(root, task_id).exists():
@@ -838,7 +838,7 @@ def _validate_result(result: dict[str, Any]) -> None:
     for key in ("inputs", "artifacts", "checks", "warnings"):
         _validate_string_list(result[key], key)
     for key in ("worker_id", "claim_token"):
-        _require_nonempty_string(result[key], key)
+        _require_safe_id(result[key], key)
     for key in ("error", "user_decision_request"):
         if key in result:
             _require_nonempty_string(result[key], key)

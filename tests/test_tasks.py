@@ -2201,6 +2201,15 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(1, sum(isinstance(claim, dict) for claim in claims))
         self.assertEqual(1, claims.count("locked"))
 
+    def test_claim_rejects_unsafe_worker_id_before_writing_a_claim(self):
+        """Catches a worker ID that can claim work but can never complete it safely."""
+        create_task(self.root, self.envelope)
+
+        with self.assertRaises(ValueError):
+            claim_task(self.root, "preview-S03-v2", "gopher:worker")
+
+        self.assertFalse((self.root / "tasks" / "locks" / "preview-S03-v2.lock").exists())
+
     def test_completion_requires_the_active_worker_and_claim_token(self):
         """Catches a non-owner completing a task and deleting the real worker's claim."""
         claim = self.dispatch_and_claim("worker-a")
