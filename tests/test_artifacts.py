@@ -155,6 +155,7 @@ class ArtifactTests(unittest.TestCase):
         cases = (
             ("checksum alias", {"checksum_backup": "A" * 64}),
             ("unknown URI scheme", {"source_ref": "gopher:opaque-resource"}),
+            ("allowlisted URI scheme", {"provenance": "gopher:opaque-resource"}),
             (
                 "Base64URL",
                 {
@@ -326,6 +327,63 @@ class ArtifactTests(unittest.TestCase):
             ({**valid, "size_bytes": 1_099_511_627_777}, False),
             ({**valid, "checksum": "not-hex!!"}, False),
             ({**valid, "readiness": "r" * 65}, False),
+        )
+        for record, expected in cases:
+            runtime_valid = True
+            try:
+                artifacts.validate_artifact_record(record)
+            except ValueError:
+                runtime_valid = False
+            with self.subTest(record=record):
+                self.assertEqual(expected, validator.is_valid(record))
+                self.assertEqual(expected, runtime_valid)
+
+    def test_artifact_schema_and_runtime_match_closed_promotion_metadata(self):
+        """Catches nested promotion and lexical path parity drift."""
+        schema = json.loads(
+            (
+                Path(__file__).parents[1]
+                / "references/schemas/artifact.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        validator = Draft202012Validator(schema)
+        base = {
+            "artifact_id": "promotion-v1",
+            "type": "promoted-asset",
+            "version": 1,
+            "status": "approved",
+            "parents": [],
+            "path": "artifacts/promotion-v1.json",
+        }
+        cases = (
+            (
+                {
+                    **base,
+                    "promotion": {
+                        "action": "",
+                        "applicability": [""],
+                        "validation_evidence": ["", {}],
+                    },
+                },
+                True,
+            ),
+            (
+                {**base, "promotion": {"validation_evidence": ["same", "same"]}},
+                False,
+            ),
+            (
+                {**base, "promotion": {"validation_evidence": [{}, {}]}},
+                False,
+            ),
+            (
+                {
+                    **base,
+                    "promotion": {"validation_evidence": [{"unexpected": "value"}]},
+                },
+                False,
+            ),
+            ({**base, "path": "."}, False),
+            ({**base, "path": "artifacts/./promotion-v1.json"}, False),
         )
         for record, expected in cases:
             runtime_valid = True

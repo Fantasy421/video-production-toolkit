@@ -62,3 +62,58 @@ final code and test changes; release version remains `0.1.4`.
 ## Conclusion
 
 The prerequisite gate is closed. Task 1 has not been started.
+
+## Fix round 1: structural boundary follow-up
+
+### Changes
+
+- Replaced the broad key-name URI exemption with a closed, field-specific
+  non-media token contract. Only the documented `adapter-selected:<adapter>`
+  check and `user:`/`chatcut:` provenance tokens remain eligible; arbitrary
+  schemes such as `gopher:` are rejected without decoding.
+- Made image/video inspect operations reject a handoff MIME type for the
+  opposite visual kind even when `media.kind` is omitted. Empty report-only
+  media metadata remains valid.
+- Aligned closed promotion metadata in the Artifact schema and runtime:
+  promotion text may be bounded-empty for existing semantic validation,
+  applicability uses the same type, and validation evidence permits only a
+  bounded string or one closed empty-object placeholder with no duplicates.
+- Tightened artifact path validation to reject lexical `.` and `..` segments,
+  matching the existing Draft 2020-12 path pattern.
+
+### RED evidence
+
+The focused tests were added before the implementation and then failed as
+expected: `provenance: gopher:opaque-resource` was accepted through both the
+universal result and Artifact paths; MIME-only opposite-kind image/video
+inspect handoffs were accepted; schema/runtime promotion fixtures diverged for
+empty valid fields, duplicate evidence, and lexical dot paths.
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_visual_media_context.VisualMediaContextTests.test_universal_scrub_rejects_scheme_encoding_and_alias_bypasses tests.test_visual_media_context.VisualMediaContextTests.test_inspect_operations_are_report_only tests.test_artifacts.ArtifactTests.test_artifact_extension_contract_rejects_reviewed_side_channel_probes tests.test_artifacts.ArtifactTests.test_artifact_schema_and_runtime_match_closed_promotion_metadata -v
+# Ran 4 tests; FAILED (9 failures)
+```
+
+### GREEN evidence
+
+The same four probes passed after the fix:
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_visual_media_context.VisualMediaContextTests.test_universal_scrub_rejects_scheme_encoding_and_alias_bypasses tests.test_visual_media_context.VisualMediaContextTests.test_inspect_operations_are_report_only tests.test_artifacts.ArtifactTests.test_artifact_extension_contract_rejects_reviewed_side_channel_probes tests.test_artifacts.ArtifactTests.test_artifact_schema_and_runtime_match_closed_promotion_metadata -v
+# Ran 4 tests in 0.003s; OK
+
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts tests.test_visual_media_context tests.test_tasks tests.test_validation -v
+# Ran 208 tests in 3.380s; OK
+
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts tests.test_visual_media_context tests.test_tasks tests.test_validation tests.test_package -v
+# Ran 238 tests in 5.140s; OK
+
+python3 scripts/validate_package.py
+# package valid
+
+git diff --check
+# no output (clean)
+```
+
+All work remained JSON/dict/string/schema-only; no media content was decoded,
+opened, rendered, played, displayed, extracted, or inspected.

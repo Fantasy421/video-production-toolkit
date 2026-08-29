@@ -8,7 +8,6 @@ import time
 import fcntl
 from collections.abc import Mapping
 from pathlib import Path
-from pathlib import PurePosixPath
 import re
 from typing import Any, Optional
 from uuid import uuid4
@@ -681,16 +680,29 @@ def _validate_promotion_metadata(value: Any) -> None:
         evidence = value["validation_evidence"]
         if not isinstance(evidence, list) or len(evidence) > 64:
             raise ValueError("artifact promotion validation_evidence must be bounded")
+        evidence_strings: set[str] = set()
+        has_empty_object = False
         for item in evidence:
             if isinstance(item, str):
                 if len(item) > 500:
                     raise ValueError(
                         "artifact promotion validation_evidence must be bounded"
                     )
+                if item in evidence_strings:
+                    raise ValueError(
+                        "artifact promotion validation_evidence must not contain duplicates"
+                    )
+                evidence_strings.add(item)
             elif not isinstance(item, Mapping) or item:
                 raise ValueError(
                     "artifact promotion validation_evidence must contain typed values"
                 )
+            elif has_empty_object:
+                raise ValueError(
+                    "artifact promotion validation_evidence must not contain duplicates"
+                )
+            else:
+                has_empty_object = True
     if "provenance" in value:
         provenance = value["provenance"]
         if not isinstance(provenance, Mapping) or not set(provenance) <= {
@@ -756,4 +768,4 @@ def _project_contained_path(value: Any) -> bool:
         or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", value)
     ):
         return False
-    return all(part not in {"", ".", ".."} for part in PurePosixPath(value).parts)
+    return all(part not in {".", ".."} for part in value.split("/"))

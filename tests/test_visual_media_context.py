@@ -1028,6 +1028,7 @@ class VisualMediaContextTests(unittest.TestCase):
             {"source_ref": "gopher:opaque-resource"},
             {"source_ref": "mailto:owner@example.invalid"},
             {"source_ref": "urn:example:asset"},
+            {"provenance": "gopher:opaque-resource"},
             {
                 "opaque": (
                     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -1122,6 +1123,19 @@ class VisualMediaContextTests(unittest.TestCase):
         validate_visual_media_operation_outputs(
             "image-inspect", [report], {"media": {}}, status="succeeded"
         )
+        for operation, incompatible_mime in (
+            ("image-inspect", "video/mp4"),
+            ("video-inspect", "image/png"),
+        ):
+            with self.subTest(operation=operation), self.assertRaisesRegex(
+                ValueError, "mime_type|handoff"
+            ):
+                validate_visual_media_operation_outputs(
+                    operation,
+                    [report],
+                    {"media": {"mime_type": incompatible_mime}},
+                    status="succeeded",
+                )
         with self.assertRaisesRegex(ValueError, "report-only"):
             validate_visual_media_operation_outputs(
                 "image-inspect",

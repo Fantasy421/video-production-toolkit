@@ -64,6 +64,8 @@
     "projectPath": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"},
     "token64": {"type": "string", "minLength": 1, "maxLength": 64},
     "text500": {"type": "string", "minLength": 1, "maxLength": 500},
+    "promotionText": {"type": "string", "maxLength": 500},
+    "emptyObject": {"type": "object", "maxProperties": 0, "additionalProperties": false},
     "timingSegment": {
       "type": "object",
       "required": ["start_ms", "end_ms", "text"],
@@ -87,12 +89,12 @@
     "promotionMetadata": {
       "type": "object",
       "properties": {
-        "action": {"$ref": "#/$defs/text500"},
-        "alpha": {"$ref": "#/$defs/text500"},
-        "applicability": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/text500"}, "uniqueItems": true},
-        "asset_kind": {"$ref": "#/$defs/text500"},
-        "orientation": {"$ref": "#/$defs/text500"},
-        "ownership": {"$ref": "#/$defs/text500"},
+        "action": {"$ref": "#/$defs/promotionText"},
+        "alpha": {"$ref": "#/$defs/promotionText"},
+        "applicability": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/promotionText"}, "uniqueItems": true},
+        "asset_kind": {"$ref": "#/$defs/promotionText"},
+        "orientation": {"$ref": "#/$defs/promotionText"},
+        "ownership": {"$ref": "#/$defs/promotionText"},
         "provenance": {
           "type": "object",
           "properties": {
@@ -101,11 +103,11 @@
           },
           "additionalProperties": false
         },
-        "scene": {"type": "string", "maxLength": 500},
-        "scope": {"$ref": "#/$defs/text500"},
-        "source_or_license": {"$ref": "#/$defs/text500"},
-        "subject": {"$ref": "#/$defs/text500"},
-        "validation_evidence": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/text500"}, "uniqueItems": true}
+        "scene": {"$ref": "#/$defs/promotionText"},
+        "scope": {"$ref": "#/$defs/promotionText"},
+        "source_or_license": {"$ref": "#/$defs/promotionText"},
+        "subject": {"$ref": "#/$defs/promotionText"},
+        "validation_evidence": {"type": "array", "maxItems": 64, "items": {"anyOf": [{"$ref": "#/$defs/promotionText"}, {"$ref": "#/$defs/emptyObject"}]}, "uniqueItems": true}
       },
       "additionalProperties": false
     }

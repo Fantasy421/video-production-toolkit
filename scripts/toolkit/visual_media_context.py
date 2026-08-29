@@ -431,28 +431,18 @@ SAFE_ID_VALUE_KEYS = frozenset(
         "worker_id",
     }
 )
-SAFE_NON_MEDIA_TOKEN_KEYS = SAFE_ID_VALUE_KEYS | frozenset(
-    {
-        "alpha",
-        "applicability",
-        "asset_kind",
-        "checks",
-        "consent_provenance",
-        "decision_provenance",
-        "identity_provenance",
-        "orientation",
-        "profile_provenance",
-        "provenance",
-        "severity",
-        "source_or_license",
-        "validation_evidence",
-        "warnings",
-    }
-)
 TYPED_CHECKSUM_KEYS = frozenset({"checksum", "digest", "hash", "sha256", "sha512"})
 TYPED_CHECKSUM_TEXT_RE = re.compile(
     r"(?:md5|sha(?:1|224|256|384|512))[:=][A-Fa-f0-9]{8,128}"
 )
+SAFE_SCHEME_TOKEN_PREFIXES = {
+    "checks": frozenset({"adapter-selected"}),
+    "consent_provenance": frozenset({"user"}),
+    "decision_provenance": frozenset({"user"}),
+    "identity_provenance": frozenset({"user"}),
+    "profile_provenance": frozenset({"user"}),
+    "provenance": frozenset({"chatcut", "user"}),
+}
 VISUAL_INSPECT_OPERATIONS = frozenset({"image-inspect", "video-inspect"})
 VISUAL_OUTPUT_OPERATIONS = ACTIVE_VISUAL_MEDIA_OPERATIONS - VISUAL_INSPECT_OPERATIONS
 
@@ -899,9 +889,17 @@ def validate_visual_media_operation_outputs(
     if handoff is not None:
         media = handoff.get("media") if isinstance(handoff, Mapping) else None
         handoff_kind = media.get("kind") if isinstance(media, Mapping) else None
+        handoff_mime = media.get("mime_type") if isinstance(media, Mapping) else None
         if handoff_kind is not None and handoff_kind != expected:
             raise ValueError(
                 f"visual media operation {operation} cannot declare {handoff_kind} handoff"
+            )
+        if handoff_mime is not None and (
+            not isinstance(handoff_mime, str)
+            or not handoff_mime.startswith(f"{expected}/")
+        ):
+            raise ValueError(
+                f"visual media operation {operation} cannot declare {handoff_mime} handoff"
             )
     else:
         handoff_kind = None
@@ -1144,15 +1142,15 @@ def _scrub_value(
             )
         ):
             raise ValueError("visual media result must not contain prompt history")
-        safe_non_media_token = _allows_safe_non_media_token(normalized_key, value)
         typed_checksum = _is_typed_checksum(normalized_key, compact)
+        safe_scheme_token = _is_explicit_safe_scheme_token(normalized_key, compact)
         if (
             REMOTE_URL_RE.search(value)
             or SCHEME_RELATIVE_URL_RE.search(value)
             or (
                 URI_SCHEME_RE.search(value)
-                and not safe_non_media_token
                 and not typed_checksum
+                and not safe_scheme_token
             )
         ):
             raise ValueError(
@@ -1229,18 +1227,22 @@ def _allows_safe_id_value(normalized_key: str, value: str) -> bool:
     )
 
 
-def _allows_safe_non_media_token(normalized_key: str, value: str) -> bool:
-    return (
-        normalized_key in SAFE_NON_MEDIA_TOKEN_KEYS
-        and len(value) <= 500
-        and SAFE_ID_RE.fullmatch(value) is not None
-    )
-
-
 def _is_typed_checksum(normalized_key: str, value: str) -> bool:
     if normalized_key in TYPED_CHECKSUM_KEYS:
         return CHECKSUM_RE.fullmatch(value) is not None
     return TYPED_CHECKSUM_TEXT_RE.fullmatch(value) is not None
+
+
+def _is_explicit_safe_scheme_token(normalized_key: str, value: str) -> bool:
+    prefix, separator, token = value.partition(":")
+    return (
+        bool(separator)
+        and bool(token)
+        and ":" not in token
+        and prefix in SAFE_SCHEME_TOKEN_PREFIXES.get(normalized_key, frozenset())
+        and len(value) <= 128
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", token) is not None
+    )
 
 
 def _is_canonical_base64_token(value: str) -> bool:
