@@ -166,7 +166,8 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
     revision = resumed["voice_timing_revision"]
     if (
         revision["invalidated_artifact_ids"] != revision["declared_descendant_ids"]
-        or revision["preserved_artifact_ids"] != ["style-v1", "voice-timing-v2"]
+        or revision["preserved_artifact_ids"]
+        != ["semantic-beats-v1", "style-v1", "voice-timing-v2"]
         or revision["current_voice_timing_id"] != "voice-timing-v2"
         or revision["style_status"] != "approved"
         or revision["stale_descendant_ids"] != revision["declared_descendant_ids"]
@@ -923,8 +924,41 @@ def _run_resume_scenario(
             _artifact(
                 "semantic-beats-v1",
                 "semantic-beats",
-                parents=["voice-timing-v1"],
+                parents=["narration-v1"],
+                narration_id="narration-v1",
+                beats=[
+                    {
+                        "beat_id": "B01",
+                        "text_ref": "narration-v1:S01:L1",
+                        "keyword": "timing",
+                        "intent": "core-concept-emphasis",
+                        "priority": "primary",
+                        "preferred_carrier": "motion-graphics",
+                        "approval_provenance": "user:smoke-keyword-review-v1",
+                    }
+                ],
+            ),
+        )
+        create_artifact(
+            project,
+            _artifact(
+                "timed-semantic-beats-v1",
+                "timed-semantic-beats",
+                parents=["semantic-beats-v1", "voice-timing-v1"],
+                semantic_beats_id="semantic-beats-v1",
                 voice_timing_id="voice-timing-v1",
+                timing_kind="real",
+                beats=[
+                    {
+                        "beat_id": "B01",
+                        "speech_start_ms": 0,
+                        "speech_end_ms": 5000,
+                        "keyword_start_ms": 1000,
+                        "keyword_end_ms": 2000,
+                        "emphasis_ms": 1500,
+                        "visual_window_ms": [800, 3000],
+                    }
+                ],
             ),
         )
         approve_artifact(
@@ -1063,15 +1097,17 @@ def _run_resume_scenario(
             segments=_timing_segments(voice_timing_duration_ms),
         )
         create_artifact(project, voice_timing_v2)
-        declared_descendants = [
-            "contract-S01-v1",
-            "contract-S02-v1",
-            "contract-S02-v2",
-            "scene-S01-v1",
-            "scene-S02-v1",
-            "semantic-beats-v1",
-            "storyboard-v1",
-        ]
+        declared_descendants = sorted(
+            [
+                "contract-S01-v1",
+                "contract-S02-v1",
+                "contract-S02-v2",
+                "scene-S01-v1",
+                "scene-S02-v1",
+                "timed-semantic-beats-v1",
+                "storyboard-v1",
+            ]
+        )
         invalidated = invalidate_artifact_descendants(
             project,
             "voice-timing-v1",
@@ -1116,7 +1152,11 @@ def _run_resume_scenario(
                 "declared_descendant_ids": declared_descendants,
                 "preserved_artifact_ids": sorted(
                     artifact_id
-                    for artifact_id in ("style-v1", "voice-timing-v2")
+                    for artifact_id in (
+                        "semantic-beats-v1",
+                        "style-v1",
+                        "voice-timing-v2",
+                    )
                     if artifact_id not in invalidated
                 ),
                 "stale_descendant_ids": sorted(

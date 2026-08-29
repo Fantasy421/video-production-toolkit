@@ -1800,17 +1800,28 @@ class SmokeAndInstallationTests(unittest.TestCase):
                 )
 
     def test_resume_smoke_returns_the_post_timing_revision_recovery(self):
-        """Catches the reported recovery snapshot hiding v2 invalidation effects."""
+        """Catches timing revision staling approved Stage A anchors with its binding."""
         result = _run_resume_scenario()
         artifacts = {item["artifact_id"]: item for item in result["artifacts"]}
+        revision = result["voice_timing_revision"]
 
         self.assertEqual(
             "voice-timing-v2",
-            result["voice_timing_revision"]["current_voice_timing_id"],
+            revision["current_voice_timing_id"],
         )
         self.assertEqual("approved", artifacts["voice-timing-v2"]["status"])
         self.assertEqual("approved", artifacts["style-v1"]["status"])
-        for artifact_id in result["voice_timing_revision"]["declared_descendant_ids"]:
+        self.assertEqual("approved", artifacts["semantic-beats-v1"]["status"])
+        self.assertEqual("stale", artifacts["timed-semantic-beats-v1"]["status"])
+        self.assertIn(
+            "timed-semantic-beats-v1", revision["declared_descendant_ids"]
+        )
+        self.assertNotIn("semantic-beats-v1", revision["declared_descendant_ids"])
+        self.assertEqual(
+            ["semantic-beats-v1", "style-v1", "voice-timing-v2"],
+            revision["preserved_artifact_ids"],
+        )
+        for artifact_id in revision["declared_descendant_ids"]:
             self.assertEqual("stale", artifacts[artifact_id]["status"])
 
     def test_resume_smoke_seeds_and_preserves_the_declared_voice_fixture(self):
