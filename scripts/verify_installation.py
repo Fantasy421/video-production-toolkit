@@ -957,6 +957,7 @@ def _run_resume_scenario(
                         "keyword_end_ms": 2000,
                         "emphasis_ms": 1500,
                         "visual_window_ms": [800, 3000],
+                        "approved_anchor_commitment": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
                     }
                 ],
             ),

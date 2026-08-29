@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .adapters import select_adapter
+from .artifacts import validate_artifact_record
 from .semantic_beats import validate_semantic_beats
 from .tasks import _validate_result, validate_current_task_envelope
 from .timed_semantic_beats import validate_timed_semantic_beats
@@ -406,7 +407,15 @@ def _valid_timed_semantic_output(
         semantic is None
         or timed is None
         or timing is None
-        or semantic.get("type") != "semantic-beats"
+    ):
+        return False
+    try:
+        validate_artifact_record(semantic)
+        validate_artifact_record(timed)
+    except (KeyError, TypeError, ValueError):
+        return False
+    if (
+        semantic.get("type") != "semantic-beats"
         or semantic.get("status") != "approved"
         or semantic.get("narration_id") != narration_id
         or semantic.get("parents") != [narration_id]

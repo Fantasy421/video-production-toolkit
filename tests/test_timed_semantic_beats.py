@@ -69,6 +69,7 @@ class TimedSemanticBeatTests(unittest.TestCase):
         self.assertEqual(2_100, timed["beats"][0]["speech_end_ms"])
         self.assertEqual(1_200, timed["beats"][0]["keyword_start_ms"])
         self.assertEqual(1_500, timed["beats"][0]["keyword_end_ms"])
+        self.assertRegex(timed["beats"][0]["approved_anchor_commitment"], r"^sha256:[0-9a-f]{64}$")
         self.assertGreaterEqual(250, 1_200 - timed["beats"][0]["visual_window_ms"][0])
         self.assertGreaterEqual(500, timed["beats"][0]["visual_window_ms"][1] - 1_500)
         self.assertLessEqual(120, 1_200 - timed["beats"][0]["visual_window_ms"][0])
@@ -134,6 +135,24 @@ class TimedSemanticBeatTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "closed"):
             validate_timed_semantic_beats(
                 {**timed, "word_timestamps": []}, self.semantic(), self.real_timing()
+            )
+
+    def test_validation_rejects_a_same_segment_keyword_interval_without_its_commitment(self):
+        """Catches an output substituting another word range from the same sentence."""
+        timed = bind_semantic_beats(
+            self.semantic(), self.real_timing(), self.keyword_anchors()
+        )
+        substituted = json.loads(json.dumps(timed))
+        substituted["beats"][0].update(
+            keyword_start_ms=1_600,
+            keyword_end_ms=1_700,
+            emphasis_ms=1_650,
+            visual_window_ms=[1_480, 1_900],
+        )
+
+        with self.assertRaisesRegex(ValueError, "anchor commitment"):
+            validate_timed_semantic_beats(
+                substituted, self.semantic(), self.real_timing()
             )
 
 

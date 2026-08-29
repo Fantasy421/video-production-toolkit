@@ -6,6 +6,8 @@ approved word anchors are reduced to one timing row per frozen beat.
 """
 
 from collections.abc import Mapping
+import hashlib
+import json
 from typing import Any
 
 from .artifacts import validate_artifact_record
@@ -22,6 +24,7 @@ _BEAT_FIELDS = frozenset(
         "keyword_end_ms",
         "emphasis_ms",
         "visual_window_ms",
+        "approved_anchor_commitment",
     }
 )
 _ANCHOR_FIELDS = frozenset({"beat_id", "keyword", "start_ms", "end_ms"})
@@ -61,6 +64,9 @@ def bind_semantic_beats(
                 "keyword_end_ms": end,
                 "emphasis_ms": start + (end - start) // 2,
                 "visual_window_ms": [start - _ENTRY_BEFORE_MS, end + _EXIT_AFTER_MS],
+                "approved_anchor_commitment": _anchor_commitment(
+                    semantic, beat["beat_id"], start, end
+                ),
             }
         )
     record = {
@@ -102,7 +108,7 @@ def validate_timed_semantic_beats(
         if not isinstance(beat_id, str) or beat_id not in by_id or beat_id in seen:
             raise ValueError("timed semantic beats must preserve frozen beat IDs")
         seen.add(beat_id)
-        _validate_beat(beat, segments, timing["duration_ms"])
+        _validate_beat(beat, semantic, segments, timing["duration_ms"])
         frozen.append(beat)
     return {
         "voice_timing_id": timing["artifact_id"],
@@ -172,8 +178,13 @@ def _spoken_segment(anchor: dict[str, Any], segments: list[dict[str, Any]]) -> d
     return matches[0]
 
 
-def _validate_beat(beat: dict[str, Any], segments: list[dict[str, Any]], duration_ms: int) -> None:
-    for field in _BEAT_FIELDS - {"beat_id", "visual_window_ms"}:
+def _validate_beat(
+    beat: dict[str, Any],
+    semantic: dict[str, Any],
+    segments: list[dict[str, Any]],
+    duration_ms: int,
+) -> None:
+    for field in _BEAT_FIELDS - {"beat_id", "visual_window_ms", "approved_anchor_commitment"}:
         value = beat[field]
         if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= _MAX_MS:
             raise ValueError("timed semantic beat milliseconds must be bounded integers")
@@ -199,3 +210,27 @@ def _validate_beat(beat: dict[str, Any], segments: list[dict[str, Any]], duratio
         and 200 <= window[1] - beat["keyword_end_ms"] <= 500
     ):
         raise ValueError("timed semantic beat visual window is outside default bounds")
+    if beat["approved_anchor_commitment"] != _anchor_commitment(
+        semantic,
+        beat["beat_id"],
+        beat["keyword_start_ms"],
+        beat["keyword_end_ms"],
+    ):
+        raise ValueError("timed semantic beat anchor commitment does not match")
+
+
+def _anchor_commitment(
+    semantic: dict[str, Any], beat_id: str, start_ms: int, end_ms: int
+) -> str:
+    """Commit a persisted word range to one frozen, user-approved keyword."""
+    beat = next(beat for beat in semantic["beats"] if beat["beat_id"] == beat_id)
+    payload = {
+        "approval_provenance": beat["approval_provenance"],
+        "beat_id": beat_id,
+        "end_ms": end_ms,
+        "keyword": beat["keyword"],
+        "narration_id": semantic["narration_id"],
+        "start_ms": start_ms,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"

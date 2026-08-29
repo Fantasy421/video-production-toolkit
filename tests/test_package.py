@@ -85,6 +85,7 @@ class PackageTests(unittest.TestCase):
 
         self.assertFalse(semantic["additionalProperties"])
         self.assertEqual("real", timed["properties"]["timing_kind"]["const"])
+        self.assertIn("approved_anchor_commitment", timed["$defs"]["beat"]["required"])
         self.assertEqual(
             1,
             scenes["$defs"]["scene"]["properties"]["primary_carrier"][
@@ -139,6 +140,7 @@ class PackageTests(unittest.TestCase):
                     "keyword_end_ms": 1600,
                     "emphasis_ms": 1400,
                     "visual_window_ms": [1080, 1900],
+                    "approved_anchor_commitment": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
                 }
             ],
         }
@@ -188,7 +190,7 @@ class PackageTests(unittest.TestCase):
             "artifact_id": "timed-semantic-beats-v1", "type": "timed-semantic-beats",
             "version": 1, "status": "approved", "parents": ["semantic-beats-v1", "voice-timing-v1"],
             "path": "artifacts/timed-semantic-beats-v1.json", "semantic_beats_id": "semantic-beats-v1", "voice_timing_id": "voice-timing-v1", "timing_kind": "real",
-            "beats": [{"beat_id": "B01", "speech_start_ms": 1000, "speech_end_ms": 2000, "keyword_start_ms": 1200, "keyword_end_ms": 1600, "emphasis_ms": 1400, "visual_window_ms": [1080, 1900]}],
+            "beats": [{"beat_id": "B01", "speech_start_ms": 1000, "speech_end_ms": 2000, "keyword_start_ms": 1200, "keyword_end_ms": 1600, "emphasis_ms": 1400, "visual_window_ms": [1080, 1900], "approved_anchor_commitment": "sha256:0000000000000000000000000000000000000000000000000000000000000000"}],
         }
         scenes = {
             "artifact_id": "scene-timing-contracts-v1", "type": "scene-timing-contracts",

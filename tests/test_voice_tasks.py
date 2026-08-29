@@ -308,6 +308,39 @@ class PrepareVoiceTaskTests(unittest.TestCase):
         self.assertEqual("waiting_external", result["status"])
         self.assertEqual(["voice-artifacts-pending"], result["warnings"])
 
+    def test_completion_rejects_non_structural_timed_or_semantic_artifacts(self):
+        """Catches a success result accepting a forged artifact envelope."""
+        for artifact_id, change in (
+            ("semantic-beats-v2", lambda artifact: artifact.update(path="../forged.json")),
+            ("beats-v2", lambda artifact: artifact.update(unexpected="forged")),
+        ):
+            with self.subTest(artifact_id=artifact_id):
+                artifacts = self.published_bundle()
+                change(next(item for item in artifacts if item["artifact_id"] == artifact_id))
+
+                result = prepare_voice_task(
+                    self.root, self.envelope(), artifacts, ["chatcut:voice"]
+                )
+
+                self.assertEqual("waiting_external", result["status"])
+                self.assertEqual(["voice-artifacts-pending"], result["warnings"])
+
+    def test_completion_rejects_an_alternate_same_segment_keyword_interval(self):
+        """Catches persisted timing drifting away from its frozen approved anchor."""
+        artifacts = self.published_bundle()
+        timed = next(item for item in artifacts if item["artifact_id"] == "beats-v2")
+        timed["beats"][0].update(
+            keyword_start_ms=600,
+            keyword_end_ms=700,
+            emphasis_ms=650,
+            visual_window_ms=[480, 900],
+        )
+
+        result = prepare_voice_task(self.root, self.envelope(), artifacts, ["chatcut:voice"])
+
+        self.assertEqual("waiting_external", result["status"])
+        self.assertEqual(["voice-artifacts-pending"], result["warnings"])
+
     def test_envelope_requires_a_declared_frozen_semantic_input(self):
         """Catches voice preparation inventing a mutable timing-linked beat record."""
         envelope = self.envelope()
@@ -513,6 +546,7 @@ class PrepareVoiceTaskTests(unittest.TestCase):
                             "keyword_end_ms": 500,
                             "emphasis_ms": 350,
                             "visual_window_ms": [80, 700],
+                            "approved_anchor_commitment": "sha256:fbd388f948909e3b749d922e199eb39997aa51cebcf141c76ce81ff8575bcbaa",
                         }
                     ],
                     output_contract="voiceover-v1",

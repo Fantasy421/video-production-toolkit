@@ -428,7 +428,10 @@ def _valid_timed_beat(beat: Any) -> bool:
         isinstance(beat.get(field), int) and not isinstance(beat[field], bool)
         and 0 <= beat[field] <= 36_000_000
         for field in fields
-    ) or not _valid_timing_window(beat.get("visual_window_ms")):
+    ) or not _valid_timing_window(beat.get("visual_window_ms")) or not (
+        isinstance(beat.get("approved_anchor_commitment"), str)
+        and re.fullmatch(r"sha256:[0-9a-f]{64}", beat["approved_anchor_commitment"])
+    ):
         return False
     return (
         beat["speech_start_ms"] <= beat["keyword_start_ms"]

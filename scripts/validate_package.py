@@ -598,8 +598,10 @@ def _validate_timed_semantic_beats_schema(
         or _required_fields(beat)
         != {
             "beat_id", "speech_start_ms", "speech_end_ms", "keyword_start_ms",
-            "keyword_end_ms", "emphasis_ms", "visual_window_ms",
+            "keyword_end_ms", "emphasis_ms", "visual_window_ms", "approved_anchor_commitment",
         }
+        or _mapping(beat.get("properties")).get("approved_anchor_commitment")
+        != {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
         or not _bounded_windows(definitions)
     ):
         errors.append("invalid:timed-semantic-beats-contract")

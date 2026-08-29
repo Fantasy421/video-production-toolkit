@@ -49,7 +49,9 @@ Success and result:
   `timed-semantic-beats` Artifacts. Bind sentence/segment timing by default
   and word-level anchors only for the frozen approved keyword set. The derived
   Artifact must retain the exact `semantic_beats_id` and `voice_timing_id`,
-  adding only millisecond fields without changing approved decisions.
+  adding only millisecond fields and a deterministic approved-anchor commitment
+  without changing approved decisions. Completion must recompute that commitment
+  from the frozen beat before accepting an output.
 - Return a task-result envelope containing only produced Artifact IDs,
   objective checks, compact warnings, and a decision request when waiting.
   Return `succeeded` only after all three output Artifacts are published and

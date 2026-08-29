@@ -81,6 +81,7 @@ class ArtifactTests(unittest.TestCase):
                         "keyword_end_ms": 1600,
                         "emphasis_ms": 1400,
                         "visual_window_ms": [1080, 1900],
+                        "approved_anchor_commitment": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
                     }
                 ],
             }

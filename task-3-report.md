@@ -33,3 +33,17 @@
 `tests.test_artifacts`, `tests.test_package`, and `tests.test_voice` could not
 load because no installed Python runtime on this host provides `jsonschema`.
 No dependency was installed.
+
+## Fix Round 1
+
+- Success completion now validates the complete frozen and timed Artifact
+  records before applying cross-lineage checks, rejecting unsafe paths and
+  unknown fields.
+- Every persisted timed beat carries a closed `approved_anchor_commitment`.
+  It is a deterministic `sha256:` commitment to the frozen narration ID, beat
+  ID, approved keyword, approval provenance, and keyword interval. Completion
+  recomputes it before success, so a same-segment interval substitution is
+  rejected without loading audio or media.
+- Regression verification:
+  `UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest discover -s tests -q`
+  — 517 tests passed, 4 skipped.

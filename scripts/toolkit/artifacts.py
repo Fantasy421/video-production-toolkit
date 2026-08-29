@@ -711,7 +711,7 @@ def _validate_semantic_beats(beats: Any) -> None:
 def _validate_timed_semantic_beats(beats: Any) -> None:
     expected = {
         "beat_id", "speech_start_ms", "speech_end_ms", "keyword_start_ms",
-        "keyword_end_ms", "emphasis_ms", "visual_window_ms",
+        "keyword_end_ms", "emphasis_ms", "visual_window_ms", "approved_anchor_commitment",
     }
     _validate_timing_record_list(beats, "beats")
     seen: set[str] = set()
@@ -722,11 +722,15 @@ def _validate_timed_semantic_beats(beats: Any) -> None:
         if beat["beat_id"] in seen:
             raise ValueError("timed semantic beats must have unique beat IDs")
         seen.add(beat["beat_id"])
-        for field in expected - {"beat_id", "visual_window_ms"}:
+        for field in expected - {"beat_id", "visual_window_ms", "approved_anchor_commitment"}:
             value = beat[field]
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 36_000_000:
                 raise ValueError(f"timed semantic beat {field} is outside bounds")
         _require_timing_window(beat["visual_window_ms"], "visual_window_ms")
+        if not isinstance(beat["approved_anchor_commitment"], str) or re.fullmatch(
+            r"sha256:[0-9a-f]{64}", beat["approved_anchor_commitment"]
+        ) is None:
+            raise ValueError("timed semantic beat approved_anchor_commitment is invalid")
 
 
 def _validate_scene_timing_contracts(scenes: Any) -> None:
