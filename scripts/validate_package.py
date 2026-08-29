@@ -453,6 +453,12 @@ def _validate_artifact_schema(
             for name in closed_defs
         )
         or not {"license", "promotion", "segments"}.issubset(properties)
+        or properties.get("beats")
+        != {"type": "array", "maxItems": 512, "items": {"type": "object"}}
+        or properties.get("scenes")
+        != {"type": "array", "maxItems": 512, "items": {"type": "object"}}
+        or properties.get("semantic_beats_id") != {"$ref": "#/$defs/safeId"}
+        or properties.get("timed_semantic_beats_id") != {"$ref": "#/$defs/safeId"}
     ):
         errors.append("invalid:artifact-extension-contract")
     path = _mapping(properties.get("path"))
@@ -543,12 +549,22 @@ def _validate_semantic_beats_schema(
         or properties.get("type") != {"const": "semantic-beats"}
         or properties.get("status") != {"const": "approved"}
         or "voice_timing_id" in properties
+        or set(properties)
+        != {
+            "artifact_id", "type", "version", "status", "parents", "path",
+            "output_contract", "narration_id", "beats",
+        }
         or definitions.get("safeId") != _safe_id_definition()
         or beats.get("minItems") != 1
         or beats.get("maxItems") != 512
         or beats.get("uniqueItems") is not True
         or beat.get("additionalProperties") is not False
         or _required_fields(beat)
+        != {
+            "beat_id", "text_ref", "keyword", "intent", "priority",
+            "preferred_carrier", "approval_provenance",
+        }
+        or set(beat_properties)
         != {
             "beat_id", "text_ref", "keyword", "intent", "priority",
             "preferred_carrier", "approval_provenance",

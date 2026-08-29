@@ -436,6 +436,7 @@ TYPED_CHECKSUM_TEXT_RE = re.compile(
     r"(?:md5|sha(?:1|224|256|384|512))[:=][A-Fa-f0-9]{8,128}"
 )
 SAFE_SCHEME_TOKEN_PREFIXES = {
+    "approval_provenance": frozenset({"user"}),
     "checks": frozenset({"adapter-selected"}),
     "consent_provenance": frozenset({"user"}),
     "decision_provenance": frozenset({"user"}),
@@ -1079,7 +1080,8 @@ def _scrub_value(
             "visual media result must not contain an image payload or other media payload"
         )
     if isinstance(value, (list, tuple)) and _contains_numeric_leaf(value) and not (
-        normalized_key == "segments" and _is_closed_timing_segments(value)
+        (normalized_key == "segments" and _is_closed_timing_segments(value))
+        or _is_closed_timing_window(normalized_key, value)
     ):
         raise ValueError(
             "visual media result must not contain untyped numeric arrays"
@@ -1150,6 +1152,7 @@ def _scrub_value(
                 URI_SCHEME_RE.search(value)
                 and not typed_checksum
                 and not safe_scheme_token
+                and not _is_semantic_text_reference(normalized_key, value)
             )
         ):
             raise ValueError(
@@ -1302,6 +1305,16 @@ def _is_closed_timing_segments(value: Any) -> bool:
     return True
 
 
+def _is_closed_timing_window(normalized_key: str, value: Any) -> bool:
+    return (
+        normalized_key in {"visual_window_ms", "scene_window_ms"}
+        and isinstance(value, (list, tuple))
+        and len(value) == 2
+        and all(isinstance(item, int) and not isinstance(item, bool) for item in value)
+        and all(0 <= item <= 36_000_000 for item in value)
+    )
+
+
 def _allows_safe_id_value(normalized_key: str, value: str) -> bool:
     return (
         normalized_key in SAFE_ID_VALUE_KEYS
@@ -1325,6 +1338,18 @@ def _is_explicit_safe_scheme_token(normalized_key: str, value: str) -> bool:
         and prefix in SAFE_SCHEME_TOKEN_PREFIXES.get(normalized_key, frozenset())
         and len(value) <= 128
         and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", token) is not None
+    )
+
+
+def _is_semantic_text_reference(normalized_key: str, value: str) -> bool:
+    return (
+        normalized_key == "text_ref"
+        and len(value) <= 256
+        and re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*:S[A-Za-z0-9_-]+:L[A-Za-z0-9_-]+",
+            value,
+        )
+        is not None
     )
 
 

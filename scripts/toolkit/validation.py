@@ -95,6 +95,7 @@ def validate_project(root: Path) -> dict[str, list[dict[str, Any]]]:
     )
     approvals = _read_approvals(root, errors)
     _check_artifact_graph(root, artifacts, errors)
+    _check_timed_semantic_graph(artifacts, errors)
     _check_voice_lineage(root, project, schema_origin, artifacts, errors)
     _check_packs(root, artifacts, errors)
     _check_promoted_assets(root, artifacts, errors)
@@ -347,6 +348,183 @@ def _check_artifact_parent_cycles(artifacts: dict[str, dict[str, Any]], errors: 
         visit(artifact_id)
     for artifact_id in sorted(cycle_members):
         errors.append(_issue("artifact-parent-cycle", artifact_id=artifact_id))
+
+
+def _check_timed_semantic_graph(
+    artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]]
+) -> None:
+    """Validate the metadata-only semantic-beat timing lineage."""
+    for artifact_id in sorted(artifacts):
+        artifact = artifacts[artifact_id]
+        if artifact.get("type") == "semantic-beats" and "beats" in artifact:
+            _check_semantic_beats_artifact(artifact, artifacts, errors)
+            if _has_duplicate_beat_ids(artifact.get("beats")):
+                errors.append(_issue("semantic-beat-duplicate-id", artifact_id=artifact_id))
+        elif artifact.get("type") == "timed-semantic-beats":
+            _check_timed_semantic_artifact(artifact, artifacts, errors)
+        elif artifact.get("type") == "scene-timing-contracts":
+            _check_scene_timing_artifact(artifact, artifacts, errors)
+
+
+def _timing_beat_ids(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        item["beat_id"]
+        for item in value
+        if isinstance(item, dict) and isinstance(item.get("beat_id"), str)
+    ]
+
+
+def _has_duplicate_beat_ids(value: Any) -> bool:
+    beat_ids = _timing_beat_ids(value)
+    return len(beat_ids) != len(set(beat_ids))
+
+
+def _is_approved_artifact(
+    artifact: Any, artifact_type: str
+) -> bool:
+    return (
+        isinstance(artifact, dict)
+        and artifact.get("type") == artifact_type
+        and artifact.get("status") == "approved"
+    )
+
+
+def _check_semantic_beats_artifact(
+    artifact: dict[str, Any], artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]]
+) -> None:
+    narration_id = artifact.get("narration_id")
+    narration = artifacts.get(narration_id) if isinstance(narration_id, str) else None
+    if (
+        not _is_approved_artifact(narration, "narration")
+        or narration_id not in artifact["parents"]
+    ):
+        errors.append(
+            _issue("semantic-beats-lineage-mismatch", artifact_id=artifact["artifact_id"])
+        )
+
+
+def _valid_timing_window(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) == 2
+        and all(isinstance(item, int) and not isinstance(item, bool) for item in value)
+        and 0 <= value[0] <= value[1] <= 36_000_000
+    )
+
+
+def _valid_timed_beat(beat: Any) -> bool:
+    if not isinstance(beat, dict):
+        return False
+    fields = (
+        "speech_start_ms",
+        "speech_end_ms",
+        "keyword_start_ms",
+        "keyword_end_ms",
+        "emphasis_ms",
+    )
+    if not all(
+        isinstance(beat.get(field), int) and not isinstance(beat[field], bool)
+        and 0 <= beat[field] <= 36_000_000
+        for field in fields
+    ) or not _valid_timing_window(beat.get("visual_window_ms")):
+        return False
+    return (
+        beat["speech_start_ms"] <= beat["keyword_start_ms"]
+        <= beat["emphasis_ms"] <= beat["keyword_end_ms"]
+        <= beat["speech_end_ms"]
+    )
+
+
+def _check_timed_semantic_artifact(
+    artifact: dict[str, Any], artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]]
+) -> None:
+    artifact_id = artifact["artifact_id"]
+    semantic_id = artifact.get("semantic_beats_id")
+    voice_timing_id = artifact.get("voice_timing_id")
+    semantic = artifacts.get(semantic_id) if isinstance(semantic_id, str) else None
+    voice_timing = (
+        artifacts.get(voice_timing_id) if isinstance(voice_timing_id, str) else None
+    )
+    if (
+        not _is_approved_artifact(semantic, "semantic-beats")
+        or not _is_approved_artifact(voice_timing, "voice-timing")
+        or voice_timing.get("timing_kind") != "real"
+        or semantic_id not in artifact["parents"]
+        or voice_timing_id not in artifact["parents"]
+    ):
+        errors.append(_issue("timed-semantic-lineage-mismatch", artifact_id=artifact_id))
+    timed_ids = _timing_beat_ids(artifact.get("beats"))
+    if len(timed_ids) != len(set(timed_ids)):
+        errors.append(_issue("timed-semantic-beat-duplicate-id", artifact_id=artifact_id))
+    if _is_approved_artifact(semantic, "semantic-beats"):
+        if set(timed_ids) != set(_timing_beat_ids(semantic.get("beats"))):
+            errors.append(
+                _issue("timed-semantic-beat-ids-mismatch", artifact_id=artifact_id)
+            )
+    if not isinstance(artifact.get("beats"), list) or any(
+        not _valid_timed_beat(beat) for beat in artifact["beats"]
+    ):
+        errors.append(_issue("invalid-timed-semantic-timing", artifact_id=artifact_id))
+
+
+def _check_scene_timing_artifact(
+    artifact: dict[str, Any], artifacts: dict[str, dict[str, Any]], errors: list[dict[str, Any]]
+) -> None:
+    artifact_id = artifact["artifact_id"]
+    timed_id = artifact.get("timed_semantic_beats_id")
+    timed = artifacts.get(timed_id) if isinstance(timed_id, str) else None
+    if (
+        not _is_approved_artifact(timed, "timed-semantic-beats")
+        or timed_id not in artifact["parents"]
+    ):
+        errors.append(_issue("scene-timing-lineage-mismatch", artifact_id=artifact_id))
+    scenes = artifact.get("scenes")
+    scene_beat_ids: list[str] = []
+    invalid_window = not isinstance(scenes, list)
+    timed_beats = {
+        beat_id: beat
+        for beat in _object_list(timed.get("beats") if isinstance(timed, dict) else [])
+        if isinstance((beat_id := beat.get("beat_id")), str)
+    }
+    if isinstance(scenes, list):
+        for scene in scenes:
+            if not isinstance(scene, dict):
+                invalid_window = True
+                continue
+            beat_ids = scene.get("beat_ids")
+            if not isinstance(beat_ids, list) or not all(
+                isinstance(beat_id, str) for beat_id in beat_ids
+            ):
+                invalid_window = True
+            else:
+                scene_beat_ids.extend(beat_ids)
+            scene_window = scene.get("scene_window_ms")
+            visual_window = scene.get("visual_window_ms")
+            if (
+                not _valid_timing_window(scene_window)
+                or not _valid_timing_window(visual_window)
+                or visual_window[0] < scene_window[0]
+                or visual_window[1] > scene_window[1]
+            ):
+                invalid_window = True
+            elif isinstance(beat_ids, list) and any(
+                not _valid_timing_window(timed_beats[beat_id].get("visual_window_ms"))
+                or timed_beats[beat_id]["visual_window_ms"][0] < scene_window[0]
+                or timed_beats[beat_id]["visual_window_ms"][1] > scene_window[1]
+                for beat_id in beat_ids
+                if beat_id in timed_beats
+            ):
+                invalid_window = True
+    if len(scene_beat_ids) != len(set(scene_beat_ids)):
+        errors.append(_issue("scene-timing-beat-ids-mismatch", artifact_id=artifact_id))
+    if _is_approved_artifact(timed, "timed-semantic-beats"):
+        timed_ids = set(_timing_beat_ids(timed.get("beats")))
+        if set(scene_beat_ids) != timed_ids:
+            errors.append(_issue("scene-timing-beat-ids-mismatch", artifact_id=artifact_id))
+    if invalid_window:
+        errors.append(_issue("invalid-scene-timing-window", artifact_id=artifact_id))
 
 
 def _check_packs(

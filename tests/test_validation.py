@@ -1009,6 +1009,218 @@ class ValidationTests(unittest.TestCase):
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(json.dumps(artifact), encoding="utf-8")
 
+    def write_timed_semantic_graph(self):
+        self.write_voice_bundle()
+        self.write_artifact(
+            "semantic-beats-v1",
+            "semantic-beats",
+            1,
+            "approved",
+            "metadata/semantic-beats-v1.json",
+            parents=["narration-v1"],
+            narration_id="narration-v1",
+            beats=[
+                {
+                    "beat_id": "B01",
+                    "text_ref": "narration-v1:S01:L1",
+                    "keyword": "timing",
+                    "intent": "core-concept-emphasis",
+                    "priority": "primary",
+                    "preferred_carrier": "motion-graphics",
+                    "approval_provenance": "user:keyword-review-v1",
+                }
+            ],
+        )
+        self.write_artifact(
+            "timed-semantic-beats-v1",
+            "timed-semantic-beats",
+            1,
+            "approved",
+            "metadata/timed-semantic-beats-v1.json",
+            parents=["semantic-beats-v1", "voice-timing-v1"],
+            semantic_beats_id="semantic-beats-v1",
+            voice_timing_id="voice-timing-v1",
+            timing_kind="real",
+            beats=[
+                {
+                    "beat_id": "B01",
+                    "speech_start_ms": 1000,
+                    "speech_end_ms": 2000,
+                    "keyword_start_ms": 1200,
+                    "keyword_end_ms": 1600,
+                    "emphasis_ms": 1400,
+                    "visual_window_ms": [1080, 1900],
+                }
+            ],
+        )
+        self.write_artifact(
+            "scene-timing-contracts-v1",
+            "scene-timing-contracts",
+            1,
+            "approved",
+            "metadata/scene-timing-contracts-v1.json",
+            parents=["timed-semantic-beats-v1"],
+            timed_semantic_beats_id="timed-semantic-beats-v1",
+            scenes=[
+                {
+                    "scene_id": "S01",
+                    "scene_window_ms": [1000, 2000],
+                    "beat_ids": ["B01"],
+                    "primary_carrier": "motion-graphics",
+                    "support_layer": "caption-emphasis",
+                    "visual_window_ms": [1080, 1900],
+                }
+            ],
+        )
+
+    def timing_artifact_path(self, artifact_type, artifact_id):
+        return self.root / "artifacts" / artifact_type / f"{artifact_id}.json"
+
+    def test_timed_semantic_graph_requires_exact_approved_lineage(self):
+        """Catches timing artifacts resolving to wrong parents, types, statuses, or beats."""
+        cases = (
+            (
+                "semantic-narration-parent-missing",
+                "semantic-beats",
+                "semantic-beats-v1",
+                lambda record: record.update({"parents": []}),
+                "semantic-beats-lineage-mismatch",
+            ),
+            (
+                "unapproved-semantic-source",
+                "semantic-beats",
+                "semantic-beats-v1",
+                lambda record: record.update({"status": "draft"}),
+                "timed-semantic-lineage-mismatch",
+            ),
+            (
+                "semantic-parent-missing",
+                "timed-semantic-beats",
+                "timed-semantic-beats-v1",
+                lambda record: record.update({"parents": ["voice-timing-v1"]}),
+                "timed-semantic-lineage-mismatch",
+            ),
+            (
+                "wrong-voice-source-type",
+                "voice-timing",
+                "voice-timing-v1",
+                lambda record: record.update({"type": "narration"}),
+                "timed-semantic-lineage-mismatch",
+            ),
+            (
+                "changed-timed-beat-id",
+                "timed-semantic-beats",
+                "timed-semantic-beats-v1",
+                lambda record: record["beats"][0].update({"beat_id": "B02"}),
+                "timed-semantic-beat-ids-mismatch",
+            ),
+            (
+                "missing-scene-parent",
+                "scene-timing-contracts",
+                "scene-timing-contracts-v1",
+                lambda record: record.update({"parents": []}),
+                "scene-timing-lineage-mismatch",
+            ),
+            (
+                "scene-beat-outside-timed-source",
+                "scene-timing-contracts",
+                "scene-timing-contracts-v1",
+                lambda record: record["scenes"][0].update({"beat_ids": ["B02"]}),
+                "scene-timing-beat-ids-mismatch",
+            ),
+        )
+        for name, artifact_type, artifact_id, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.write_timed_semantic_graph()
+                path = self.timing_artifact_path(artifact_type, artifact_id)
+                record = json.loads(path.read_text(encoding="utf-8"))
+                mutate(record)
+                path.write_text(json.dumps(record), encoding="utf-8")
+
+                result = validate_project(self.root)
+
+                self.assertIn(expected, {item["code"] for item in result["errors"]})
+
+    def test_timed_semantic_graph_rejects_duplicate_ids_and_invalid_windows(self):
+        """Catches changed-content duplicate beat IDs and reversed or escaping windows."""
+        cases = (
+            (
+                "changed-semantic-duplicate",
+                "semantic-beats",
+                "semantic-beats-v1",
+                lambda record: record["beats"].append(
+                    {**record["beats"][0], "intent": "supporting-detail"}
+                ),
+                "semantic-beat-duplicate-id",
+            ),
+            (
+                "changed-timed-duplicate",
+                "timed-semantic-beats",
+                "timed-semantic-beats-v1",
+                lambda record: record["beats"].append(
+                    {**record["beats"][0], "emphasis_ms": 1500}
+                ),
+                "timed-semantic-beat-duplicate-id",
+            ),
+            (
+                "reversed-speech-window",
+                "timed-semantic-beats",
+                "timed-semantic-beats-v1",
+                lambda record: record["beats"][0].update(
+                    {"speech_start_ms": 2000, "speech_end_ms": 1000}
+                ),
+                "invalid-timed-semantic-timing",
+            ),
+            (
+                "keyword-outside-speech",
+                "timed-semantic-beats",
+                "timed-semantic-beats-v1",
+                lambda record: record["beats"][0].update({"keyword_start_ms": 900}),
+                "invalid-timed-semantic-timing",
+            ),
+            (
+                "reversed-visual-window",
+                "timed-semantic-beats",
+                "timed-semantic-beats-v1",
+                lambda record: record["beats"][0].update(
+                    {"visual_window_ms": [1900, 1080]}
+                ),
+                "invalid-timed-semantic-timing",
+            ),
+            (
+                "scene-window-escape",
+                "scene-timing-contracts",
+                "scene-timing-contracts-v1",
+                lambda record: record["scenes"][0].update(
+                    {"visual_window_ms": [900, 2100]}
+                ),
+                "invalid-scene-timing-window",
+            ),
+            (
+                "timed-window-outside-scene",
+                "scene-timing-contracts",
+                "scene-timing-contracts-v1",
+                lambda record: record["scenes"][0].update(
+                    {
+                        "scene_window_ms": [1100, 1800],
+                        "visual_window_ms": [1200, 1700],
+                    }
+                ),
+                "invalid-scene-timing-window",
+            ),
+        )
+        for name, artifact_type, artifact_id, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.write_timed_semantic_graph()
+                path = self.timing_artifact_path(artifact_type, artifact_id)
+                record = json.loads(path.read_text(encoding="utf-8"))
+                mutate(record)
+                path.write_text(json.dumps(record), encoding="utf-8")
+
+                result = validate_project(self.root)
+
+                self.assertIn(expected, {item["code"] for item in result["errors"]})
+
     def write_visual_placeholder(self, relative):
         path = self.root / relative
         path.write_bytes(b"opaque visual fixture; structural validation must not read it")

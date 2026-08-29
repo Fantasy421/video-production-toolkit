@@ -66,6 +66,7 @@ ARTIFACT_BUSINESS_METADATA_FIELDS = frozenset(
     {
         "approval_id",
         "approved",
+        "beats",
         "character_ids",
         "character_pack_id",
         "consent_provenance",
@@ -87,13 +88,16 @@ ARTIFACT_BUSINESS_METADATA_FIELDS = frozenset(
         "provenance",
         "provider",
         "scene_id",
+        "scenes",
         "scope",
         "segments",
         "source_decision_id",
         "speaking_rate",
+        "semantic_beats_id",
         "target_id",
         "text",
         "timing_kind",
+        "timed_semantic_beats_id",
         "uploaded_audio_id",
         "voice_id",
         "voice_timing_id",
@@ -108,8 +112,10 @@ ARTIFACT_ID_METADATA_FIELDS = frozenset(
         "narration_id",
         "profile_id",
         "scene_id",
+        "semantic_beats_id",
         "source_decision_id",
         "target_id",
+        "timed_semantic_beats_id",
         "uploaded_audio_id",
         "voice_id",
         "voice_timing_id",
@@ -570,6 +576,13 @@ def _validate_artifact_business_metadata(artifact: Mapping[str, Any]) -> None:
         _validate_text_list(artifact["pronunciations"], "pronunciations", 256, 500)
     if "segments" in artifact:
         _validate_segments(artifact["segments"])
+    for field in ("beats", "scenes"):
+        if field in artifact and (
+            not isinstance(artifact[field], list)
+            or len(artifact[field]) > 512
+            or not all(isinstance(item, Mapping) for item in artifact[field])
+        ):
+            raise ValueError(f"artifact {field} must be a bounded object list")
     if "license" in artifact:
         _validate_license_metadata(artifact["license"])
     if "promotion" in artifact:

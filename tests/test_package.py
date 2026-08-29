@@ -232,6 +232,14 @@ class PackageTests(unittest.TestCase):
                 "invalid:semantic-beats-approval-provenance",
             ),
             (
+                "stage-a-timing-field",
+                "references/schemas/semantic-beats.schema.json",
+                lambda schema: schema["$defs"]["beat"]["properties"].update(
+                    {"speech_start_ms": {"type": "integer", "minimum": 0}}
+                ),
+                "invalid:semantic-beats-contract",
+            ),
+            (
                 "duplicate-beat-ids",
                 "references/schemas/semantic-beats.schema.json",
                 lambda schema: schema["$defs"]["beats"].update({"uniqueItems": False}),
