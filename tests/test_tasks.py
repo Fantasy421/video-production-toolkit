@@ -849,7 +849,11 @@ class TaskTests(unittest.TestCase):
                 complete_task(self.root, result)
 
         for index, (name, prose) in enumerate(HARMLESS_PROSE_CONTROLS):
-            task_id = TYPED_SAFE_ID_CONTROL if index == 0 else "safe-prose-result"
+            task_id = (
+                TYPED_SAFE_ID_CONTROL
+                if index == 0
+                else f"safe-prose-result-{index + 1}"
+            )
             safe_envelope = self.non_visual_envelope(task_id=task_id)
             create_task(self.root, safe_envelope)
             safe_claim = claim_task(self.root, task_id, "worker-a")

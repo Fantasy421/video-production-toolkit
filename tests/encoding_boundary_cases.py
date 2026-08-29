@@ -48,6 +48,23 @@ STRUCTURAL_ENCODING_CASES = tuple(
     )
     for fragment_count in range(8, 17)
     for separator_name, separator in _SEPARATORS
+) + (
+    ("low-entropy-dominant-space", " ".join(["A"] * 31 + ["B"])),
+    ("low-entropy-dominant-tab", "\t".join(["Z"] * 30 + ["Y", "X"])),
+    (
+        "low-entropy-dominant-crlf",
+        "\r\n".join(["Q"] * 28 + ["R", "S", "T", "U"]),
+    ),
+    (
+        "low-entropy-low-diversity",
+        " ".join("AAAAAAAABBBBBBBBCCCCCCCCDDDDDDDD"),
+    ),
+) + tuple(
+    (
+        f"padded-fragments-with-unpadded-tail-{separator_name}",
+        separator.join(["QQ=="] * 8 + ["QUFB"]),
+    )
+    for separator_name, separator in _SEPARATORS
 )
 
 HARMLESS_PROSE_CONTROLS = (
@@ -55,6 +72,10 @@ HARMLESS_PROSE_CONTROLS = (
     (
         "punctuated",
         "The compact report is ready; no embedded payload is present.",
+    ),
+    (
+        "alphabetic-ordinary",
+        "Reviewers will still accept ordinary alphabetic prose",
     ),
 )
 HARMLESS_PROSE_CONTROL = HARMLESS_PROSE_CONTROLS[0][1]

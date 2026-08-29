@@ -293,7 +293,9 @@ class ArtifactTests(unittest.TestCase):
             safe_control = {
                 **self.artifact,
                 "artifact_id": (
-                    TYPED_SAFE_ID_CONTROL if index == 0 else "safe-prose-v2"
+                    TYPED_SAFE_ID_CONTROL
+                    if index == 0
+                    else f"safe-prose-v{index + 1}"
                 ),
                 "path": f"metadata/encoding-boundary-safe-{index}.json",
                 "text": prose,

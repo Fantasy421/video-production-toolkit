@@ -516,3 +516,68 @@ All round-seven work used strings, dictionaries, JSON metadata, and filesystem
 metadata only. No media was opened, decoded, rendered, played, displayed,
 extracted, or perceptually inspected. No install, push, or Task 1 work was
 performed.
+
+## Fix round 8: capped low-entropy and padded-tail closure
+
+### Changes
+
+- Kept the documented inherent alphabetic-prose ambiguity boundary unchanged,
+  but made its low-entropy exclusion measurable. A normalized candidate is
+  outside the prose exception when one symbol occupies at least three quarters
+  of it or its distinct-symbol count is at most one eighth of its length.
+- Extended the canonical padded-sequence parser to accept a final canonical
+  unpadded fragment for screening. It still requires explicit padding before
+  that tail, so it does not broaden classification of the acknowledged
+  all-alphabetic ambiguous class.
+- Added shared table cases for 31 `A` plus `B`, analogous skewed space/tab/CRLF
+  distributions, low distinct-symbol diversity, and eight `QQ==` fragments
+  followed by `QUFB` under every separator. Added a third ordinary alphabetic
+  prose control.
+- Corrected the persisted-recovery fixture to store failed checkpoints in the
+  lifecycle-valid `tasks/status` directory. Its failures now prove the scrub
+  decision itself rather than relying on an independently invalid result
+  directory/status combination.
+
+### RED evidence
+
+The final fixture and recovery harness were in place before production
+changes. On `e28b34c`, all seven new encoded values were accepted through all
+four boundaries:
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts.ArtifactTests.test_artifact_rejects_structural_encodings_at_create_and_read tests.test_tasks.TaskTests.test_completion_rejects_structural_encodings_in_error_text tests.test_validation.PersistedVisualMediaValidationTests.test_recovery_rejects_structural_encodings_in_persisted_result_text -q
+# Ran 3 tests in 2.965s; FAILED (failures=28)
+```
+
+The 28 failures are two Artifact carriers times seven cases, plus seven task
+completion and seven lifecycle-valid persisted-recovery cases. All accepted
+prose controls passed during RED.
+
+### GREEN evidence
+
+```text
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts.ArtifactTests.test_artifact_rejects_structural_encodings_at_create_and_read tests.test_tasks.TaskTests.test_completion_rejects_structural_encodings_in_error_text tests.test_validation.PersistedVisualMediaValidationTests.test_recovery_rejects_structural_encodings_in_persisted_result_text -q
+# Ran 3 tests in 2.766s; OK
+
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts tests.test_visual_media_context tests.test_tasks tests.test_validation tests.test_image_context -q
+# Ran 232 tests in 6.039s; OK
+
+UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline --with jsonschema python -m unittest tests.test_artifacts tests.test_visual_media_context tests.test_tasks tests.test_validation tests.test_end_to_end tests.test_package tests.test_voice tests.test_voice_tasks tests.test_image_context tests.test_coverage -q
+# Ran 387 tests in 11.090s; OK (skipped=4)
+
+python3 scripts/validate_package.py
+# package valid
+
+python3 -c '... compare declared and computed release fingerprints ...'
+# sha256:d7d3e6dd4a7d4e3a938da7992ea7f70f8a0404330bd2638cfd0385e10fbccc3e
+# sha256:d7d3e6dd4a7d4e3a938da7992ea7f70f8a0404330bd2638cfd0385e10fbccc3e
+# True
+
+git diff --check
+# no output (clean)
+```
+
+All round-eight work used strings, dictionaries, JSON metadata, and filesystem
+metadata only. No media was opened, decoded, rendered, played, displayed,
+extracted, or perceptually inspected. No install, push, or Task 1 work was
+performed.

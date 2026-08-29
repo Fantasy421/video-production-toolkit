@@ -49,13 +49,16 @@ Base64 screening is structural and never decodes content. Whitespace is
 removed before checking canonical tokens and padding, including whitespace
 before or within `=` padding. Explicit padding, Base64/Base64URL symbols, long
 single tokens, low-entropy or short-period repetitions, and repeated canonical
-padded fragments are rejected. Pure alphabetic unpadded Base64 split at word
-boundaries is lexically indistinguishable from ordinary prose without decoding;
+padded fragments, including a canonical unpadded tail, are rejected. A
+normalized candidate is measurably low entropy when one symbol occupies at
+least three quarters of it or its distinct-symbol count is at most one eighth
+of its length. Pure alphabetic unpadded Base64 split at word boundaries is
+otherwise lexically indistinguishable from ordinary prose without decoding;
 the deterministic conservative boundary accepts bounded, non-periodic ASCII
-multiword sequences as prose. This deliberate ambiguity is not authority to
-relay encoded content: producers must use typed IDs/checksums and compact
-natural-language fields, while all explicit or structurally repeated encoding
-forms remain forbidden.
+multiword sequences outside those low-entropy criteria as prose. This
+deliberate ambiguity is not authority to relay encoded content: producers must
+use typed IDs/checksums and compact natural-language fields, while all explicit
+or structurally repeated encoding forms remain forbidden.
 
 Successful generate, edit, render, frame-extract, and contact-sheet operations
 must register at least one Artifact of the operation's exact image/video kind,

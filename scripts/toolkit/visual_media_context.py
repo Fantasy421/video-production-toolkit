@@ -25,7 +25,9 @@ BASE64_CANDIDATE_RE = re.compile(
     r"([A-Za-z0-9+/_=-]+(?:\s+[A-Za-z0-9+/_=-]+)*)"
     r"(?![A-Za-z0-9+/_=-])"
 )
-BASE64_PADDED_FRAGMENT_RE = re.compile(r"[A-Za-z0-9+/_-]+={1,2}")
+BASE64_SEQUENCE_FRAGMENT_RE = re.compile(
+    r"[A-Za-z0-9+/_-]+(?:={1,2}|$)"
+)
 REMOTE_URL_RE = re.compile(
     r"(?<![A-Za-z0-9_.-])(?:https?|ftp|ftps|file|s3|gs|ipfs|ssh)://[^\s<>\"']+",
     re.IGNORECASE,
@@ -1209,6 +1211,7 @@ def _is_conservative_natural_language_candidate(
         and len(normalized) <= 256
         and all(re.fullmatch(r"[A-Za-z]+", chunk) is not None for chunk in chunks)
         and not _has_short_repeated_period(normalized)
+        and not _has_measurably_low_symbol_entropy(normalized)
     )
 
 
@@ -1221,9 +1224,21 @@ def _has_short_repeated_period(value: str) -> bool:
     return False
 
 
+def _has_measurably_low_symbol_entropy(value: str) -> bool:
+    symbol_counts = [value.count(symbol) for symbol in set(value)]
+    return (
+        len(symbol_counts) * 8 <= len(value)
+        or max(symbol_counts) * 4 >= len(value) * 3
+    )
+
+
 def _is_canonical_padded_fragment_sequence(value: str) -> bool:
-    fragments = BASE64_PADDED_FRAGMENT_RE.findall(value)
-    if len(fragments) < 2 or "".join(fragments) != value:
+    fragments = BASE64_SEQUENCE_FRAGMENT_RE.findall(value)
+    if (
+        len(fragments) < 2
+        or "".join(fragments) != value
+        or not any("=" in fragment for fragment in fragments[:-1])
+    ):
         return False
     if not all(_is_canonical_base64_token(fragment) for fragment in fragments):
         return False

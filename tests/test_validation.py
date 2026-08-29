@@ -465,6 +465,7 @@ class PersistedVisualMediaValidationTests(unittest.TestCase):
                         **self.plain_result(task["task_id"], status="failed"),
                         "error": value,
                     },
+                    directory="status",
                 )
                 result = self.assert_validation_preserves(task_path, result_path)
                 self.assert_only_issue_for(
@@ -472,7 +473,11 @@ class PersistedVisualMediaValidationTests(unittest.TestCase):
                 )
 
         for index, (name, prose) in enumerate(HARMLESS_PROSE_CONTROLS):
-            task_id = TYPED_SAFE_ID_CONTROL if index == 0 else "safe-prose-result"
+            task_id = (
+                TYPED_SAFE_ID_CONTROL
+                if index == 0
+                else f"safe-prose-result-{index + 1}"
+            )
             safe_task = self.nonvisual_task(task_id)
             safe_task_path = self.write_task(safe_task)
             safe_result_path = self.write_result(
