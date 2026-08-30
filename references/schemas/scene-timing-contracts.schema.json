@@ -20,7 +20,7 @@
     "parents": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
     "projectPath": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"},
     "milliseconds": {"type": "integer", "minimum": 0, "maximum": 36000000},
-    "window": {"type": "array", "prefixItems": [{"$ref": "#/$defs/milliseconds"}, {"$ref": "#/$defs/milliseconds"}], "items": false, "minItems": 2, "maxItems": 2},
+    "window": {"type": "array", "prefixItems": [{"$ref": "#/$defs/milliseconds"}, {"$ref": "#/$defs/milliseconds"}], "items": false, "minItems": 2, "maxItems": 2, "uniqueItems": true},
     "carrier": {"type": "string", "minLength": 1, "enum": ["a-roll", "b-roll", "scene", "demo", "motion-graphics", "evidence"]},
     "supportLayer": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
     "scene": {

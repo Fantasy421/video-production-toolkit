@@ -18,6 +18,7 @@ from .project_state import (
 from .invalidation import invalidated_artifact_ids
 from .packs import validate_layout_pack, validate_style_pack
 from .runtime_paths import project_path, project_root
+from .scene_timing import validate_scene_timing_contracts
 from .tasks import (
     _is_current_result,
     _validate_conditional_visual_media_result,
@@ -258,6 +259,29 @@ def _read_artifacts(root: Path, errors: list[dict[str, Any]]) -> dict[str, dict[
                 _issue("unsafe-artifact-path", artifact_id=raw["artifact_id"])
             )
         if raw is None or not _valid_artifact(raw) or path.name != f"{raw.get('artifact_id')}.json":
+            if isinstance(raw, dict) and raw.get("type") == "timed-semantic-beats":
+                if isinstance(raw.get("beats"), list) and any(
+                    not _valid_timed_beat(beat) for beat in raw["beats"]
+                ):
+                    errors.append(
+                        _issue(
+                            "invalid-timed-semantic-timing",
+                            artifact_id=raw.get("artifact_id", "unknown"),
+                        )
+                    )
+            elif isinstance(raw, dict) and raw.get("type") == "scene-timing-contracts":
+                if isinstance(raw.get("scenes"), list) and any(
+                    not _valid_timing_window(scene.get("scene_window_ms"))
+                    or not _valid_timing_window(scene.get("visual_window_ms"))
+                    for scene in raw["scenes"]
+                    if isinstance(scene, dict)
+                ):
+                    errors.append(
+                        _issue(
+                            "invalid-scene-timing-window",
+                            artifact_id=raw.get("artifact_id", "unknown"),
+                        )
+                    )
             errors.append(_issue("invalid-artifact-metadata", path=_relative(root, path)))
             continue
         artifact_id = raw["artifact_id"]
@@ -410,7 +434,7 @@ def _valid_timing_window(value: Any) -> bool:
         isinstance(value, list)
         and len(value) == 2
         and all(isinstance(item, int) and not isinstance(item, bool) for item in value)
-        and 0 <= value[0] <= value[1] <= 36_000_000
+        and 0 <= value[0] < value[1] <= 36_000_000
     )
 
 
@@ -483,51 +507,22 @@ def _check_scene_timing_artifact(
         or timed_id not in artifact["parents"]
     ):
         errors.append(_issue("scene-timing-lineage-mismatch", artifact_id=artifact_id))
-    scenes = artifact.get("scenes")
-    scene_beat_ids: list[str] = []
-    invalid_window = not isinstance(scenes, list)
-    timed_beats = {
-        beat_id: beat
-        for beat in _object_list(timed.get("beats") if isinstance(timed, dict) else [])
-        if isinstance((beat_id := beat.get("beat_id")), str)
-    }
-    if isinstance(scenes, list):
-        for scene in scenes:
-            if not isinstance(scene, dict):
-                invalid_window = True
-                continue
-            beat_ids = scene.get("beat_ids")
-            if not isinstance(beat_ids, list) or not all(
-                isinstance(beat_id, str) for beat_id in beat_ids
-            ):
-                invalid_window = True
-            else:
-                scene_beat_ids.extend(beat_ids)
-            scene_window = scene.get("scene_window_ms")
-            visual_window = scene.get("visual_window_ms")
-            if (
-                not _valid_timing_window(scene_window)
-                or not _valid_timing_window(visual_window)
-                or visual_window[0] < scene_window[0]
-                or visual_window[1] > scene_window[1]
-            ):
-                invalid_window = True
-            elif isinstance(beat_ids, list) and any(
-                not _valid_timing_window(timed_beats[beat_id].get("visual_window_ms"))
-                or timed_beats[beat_id]["visual_window_ms"][0] < scene_window[0]
-                or timed_beats[beat_id]["visual_window_ms"][1] > scene_window[1]
-                for beat_id in beat_ids
-                if beat_id in timed_beats
-            ):
-                invalid_window = True
-    if len(scene_beat_ids) != len(set(scene_beat_ids)):
-        errors.append(_issue("scene-timing-beat-ids-mismatch", artifact_id=artifact_id))
-    if _is_approved_artifact(timed, "timed-semantic-beats"):
-        timed_ids = set(_timing_beat_ids(timed.get("beats")))
-        if set(scene_beat_ids) != timed_ids:
+    if not _is_approved_artifact(timed, "timed-semantic-beats") or not isinstance(timed_id, str):
+        return
+    try:
+        validate_scene_timing_contracts(
+            {
+                "timed_semantic_beats_id": timed_id,
+                "scenes": artifact.get("scenes"),
+            },
+            timed,
+        )
+    except ValueError as error:
+        message = str(error)
+        if "beat ID" in message or "exactly once" in message:
             errors.append(_issue("scene-timing-beat-ids-mismatch", artifact_id=artifact_id))
-    if invalid_window:
-        errors.append(_issue("invalid-scene-timing-window", artifact_id=artifact_id))
+        else:
+            errors.append(_issue("invalid-scene-timing-window", artifact_id=artifact_id))
 
 
 def _check_packs(

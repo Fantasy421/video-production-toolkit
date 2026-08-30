@@ -1223,6 +1223,49 @@ class ValidationTests(unittest.TestCase):
 
                 self.assertIn(expected, {item["code"] for item in result["errors"]})
 
+    def test_scene_timing_graph_reuses_canonical_order_and_containment_checks(self):
+        """Catches persisted reordered beats and keyword/visual boundary bypasses."""
+        self.write_timed_semantic_graph()
+        semantic_path = self.timing_artifact_path("semantic-beats", "semantic-beats-v1")
+        semantic = json.loads(semantic_path.read_text(encoding="utf-8"))
+        semantic["beats"].append(
+            {**semantic["beats"][0], "beat_id": "B02", "text_ref": "narration-v1:S02:L1"}
+        )
+        semantic_path.write_text(json.dumps(semantic), encoding="utf-8")
+        timed_path = self.timing_artifact_path("timed-semantic-beats", "timed-semantic-beats-v1")
+        timed = json.loads(timed_path.read_text(encoding="utf-8"))
+        timed["beats"].append(
+            {
+                **timed["beats"][0],
+                "beat_id": "B02",
+                "speech_start_ms": 2000,
+                "speech_end_ms": 3000,
+                "keyword_start_ms": 2200,
+                "keyword_end_ms": 2600,
+                "emphasis_ms": 2400,
+                "visual_window_ms": [2080, 2900],
+            }
+        )
+        timed_path.write_text(json.dumps(timed), encoding="utf-8")
+        scene_path = self.timing_artifact_path("scene-timing-contracts", "scene-timing-contracts-v1")
+        scene = json.loads(scene_path.read_text(encoding="utf-8"))
+        scene["scenes"][0].update(
+            {"scene_window_ms": [1000, 3000], "visual_window_ms": [1080, 2900], "beat_ids": ["B02", "B01"]}
+        )
+        scene_path.write_text(json.dumps(scene), encoding="utf-8")
+        result = validate_project(self.root)
+        self.assertIn("scene-timing-beat-ids-mismatch", {item["code"] for item in result["errors"]})
+
+        self.write_timed_semantic_graph()
+        scene_path = self.timing_artifact_path("scene-timing-contracts", "scene-timing-contracts-v1")
+        scene = json.loads(scene_path.read_text(encoding="utf-8"))
+        scene["scenes"][0].update(
+            {"scene_window_ms": [1000, 1500], "visual_window_ms": [1080, 1400]}
+        )
+        scene_path.write_text(json.dumps(scene), encoding="utf-8")
+        result = validate_project(self.root)
+        self.assertIn("invalid-scene-timing-window", {item["code"] for item in result["errors"]})
+
     def test_timing_artifact_contracts_reject_invalid_metadata_before_graph_checks(self):
         """Catches persisted timing records bypassing their closed dedicated schema."""
         cases = (

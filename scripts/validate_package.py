@@ -513,6 +513,7 @@ def _bounded_windows(definitions: Mapping[str, Any]) -> bool:
         and window.get("items") is False
         and window.get("minItems") == 2
         and window.get("maxItems") == 2
+        and window.get("uniqueItems") is True
     )
 
 

@@ -1,3 +1,4 @@
+import copy
 import unittest
 
 from scripts.plan_representative_slice import select_representative_slice
@@ -144,6 +145,27 @@ class RepresentativeSliceTests(unittest.TestCase):
         timed_id = "timed-semantic-beats-v1"
         scene_timing_id = "scene-timing-contracts-v1"
         beat_ids = [f"B{index:02d}" for index in range(1, len(contracts) + 1)]
+        semantic = {
+            "artifact_id": "semantic-beats-v1",
+            "type": "semantic-beats",
+            "version": 1,
+            "status": "approved",
+            "parents": [artifacts[0]["artifact_id"]],
+            "path": "metadata/semantic-beats-v1.json",
+            "narration_id": artifacts[0]["artifact_id"],
+            "beats": [
+                {
+                    "beat_id": beat_id,
+                    "text_ref": f"{artifacts[0]['artifact_id']}:{beat_id}",
+                    "keyword": beat_id,
+                    "intent": "core-concept-emphasis",
+                    "priority": "primary",
+                    "preferred_carrier": contract["primary_carrier"],
+                    "approval_provenance": "user:representative-slice-v1",
+                }
+                for beat_id, contract in zip(beat_ids, contracts)
+            ],
+        }
         timed = {
             "artifact_id": timed_id,
             "type": "timed-semantic-beats",
@@ -198,7 +220,7 @@ class RepresentativeSliceTests(unittest.TestCase):
                 for beat_id, contract in zip(beat_ids, contracts)
             ],
         }
-        return current_contracts, [*artifacts, timed, scene_timing]
+        return current_contracts, [*artifacts, semantic, timed, scene_timing]
 
     def test_scene_contract_uses_exact_real_timing_and_spoken_boundaries(self):
         """Catches estimates, a wrong timing ID, and silence-bound intervals."""
@@ -243,6 +265,32 @@ class RepresentativeSliceTests(unittest.TestCase):
             current_contracts[0],
             validate_scene_contract(current_contracts[0], artifacts=current_artifacts),
         )
+        with self.assertRaisesRegex(ValueError, "full artifact"):
+            validate_scene_contract(
+                current_contracts[0],
+                allow_legacy_unresolved_timing=True,
+            )
+        mismatched_timed = copy.deepcopy(current_artifacts)
+        next(
+            item for item in mismatched_timed
+            if item.get("artifact_id") == "timed-semantic-beats-v1"
+        )["voice_timing_id"] = "voice-timing-other"
+        with self.assertRaisesRegex(ValueError, "exact timed semantic"):
+            validate_scene_contract(current_contracts[0], artifacts=mismatched_timed)
+        wrong_parent_timing = copy.deepcopy(current_artifacts)
+        next(
+            item for item in wrong_parent_timing
+            if item.get("artifact_id") == "timed-semantic-beats-v1"
+        )["parents"] = ["semantic-beats-v1"]
+        with self.assertRaisesRegex(ValueError, "exact timed semantic"):
+            validate_scene_contract(current_contracts[0], artifacts=wrong_parent_timing)
+        omitted_beats = copy.deepcopy(current_artifacts)
+        next(
+            item for item in omitted_beats
+            if item.get("artifact_id") == "scene-timing-contracts-v1"
+        )["scenes"] = []
+        with self.assertRaisesRegex(ValueError, "valid timing artifact"):
+            validate_scene_contract(current_contracts[0], artifacts=omitted_beats)
         with self.assertRaisesRegex(ValueError, "authoritative voice timing"):
             validate_scene_contract(
                 {**current_contracts[0], "voice_timing_id": "voice-timing-v1"},

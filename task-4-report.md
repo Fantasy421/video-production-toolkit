@@ -34,3 +34,19 @@
 
 The host `python3` is 3.9 and lacks `jsonschema`; verification therefore uses
 the already-cached offline UV Python 3.10 environment and dependency.
+
+## Fix Round 1
+
+- Closed C1 by requiring current Scene Contracts to resolve the authoritative
+  approved real voice/timed/semantic lineage and scene-timing artifact, verify
+  parent links, and validate the complete scene-timing payload through the
+  canonical validator. The legacy flag no longer relaxes current contracts.
+- Closed I1/I2 by sharing strict timed-beat and scene-timing validation between
+  construction, Scene Contract reads, and persisted project graph checks.
+  Reversed/out-of-speech keywords, reordered or omitted Beats, and visual or
+  keyword boundary crossings now fail closed.
+- Closed I3 by requiring strict non-zero windows in the schema, Artifact
+  runtime, and graph validator, with schema/runtime parity regressions.
+- Fix-round verification: focused timing/contract/artifact/package checks pass;
+  full offline suite passes with 540 tests and 4 skips; package validation is
+  valid; release fingerprint equality is true; `git diff --check` passes.

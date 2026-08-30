@@ -159,6 +159,17 @@ class ArtifactTests(unittest.TestCase):
                 with TemporaryDirectory() as folder, self.assertRaises(ValueError):
                     create_artifact(Path(folder), artifact)
 
+    def test_timing_artifacts_reject_zero_duration_windows(self):
+        """Catches artifact admission accepting a window rejected by construction."""
+        for artifact_type in ("timed-semantic-beats", "scene-timing-contracts"):
+            artifact = self.semantic_timing_artifact(artifact_type)
+            if artifact_type == "timed-semantic-beats":
+                artifact["beats"][0]["visual_window_ms"] = [1000, 1000]
+            else:
+                artifact["scenes"][0]["scene_window_ms"] = [1000, 1000]
+            with self.subTest(artifact_type=artifact_type), self.assertRaises(ValueError):
+                artifacts.validate_artifact_record(artifact)
+
     def test_voice_timing_keyword_anchors_are_closed_authoritative_evidence(self):
         """Catches Artifact validation admitting worker-controlled anchor fields."""
         timing = {

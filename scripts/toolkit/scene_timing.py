@@ -93,7 +93,30 @@ def _current_timed_beats(value: Mapping[str, Any]) -> dict[str, Any]:
         or timed.get("status") != "approved"
     ):
         raise ValueError("scene timing contracts require current approved real timed beats")
+    for beat in timed["beats"]:
+        _validate_timed_beat(beat)
     return timed
+
+
+def _validate_timed_beat(beat: Mapping[str, Any]) -> None:
+    """Enforce intrinsic timing before deriving any scene-level boundaries."""
+    speech_start = beat["speech_start_ms"]
+    speech_end = beat["speech_end_ms"]
+    keyword_start = beat["keyword_start_ms"]
+    keyword_end = beat["keyword_end_ms"]
+    emphasis = beat["emphasis_ms"]
+    values = (speech_start, speech_end, keyword_start, keyword_end, emphasis)
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+        raise ValueError("scene timing timed beat milliseconds must be bounded integers")
+    if not (
+        0 <= speech_start < speech_end <= _MAX_MS
+        and speech_start <= keyword_start < keyword_end <= speech_end
+        and keyword_start <= emphasis <= keyword_end
+    ):
+        raise ValueError("scene timing timed beat speech and keyword windows must be ordered and contained")
+    beat_window = _window(beat["visual_window_ms"], "timed beat visual window")
+    if not _contains(beat_window, [keyword_start, keyword_end]):
+        raise ValueError("scene timing timed beat visual window must contain its keyword window")
 
 
 def _copy_assignments(value: Any) -> list[dict[str, Any]]:

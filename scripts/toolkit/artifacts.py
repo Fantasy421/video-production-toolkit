@@ -717,6 +717,7 @@ def _require_timing_window(value: Any, label: str) -> None:
             or not 0 <= item <= 36_000_000
             for item in value
         )
+        or value[0] >= value[1]
     ):
         raise ValueError(f"timing {label} must be a bounded two-item window")
 

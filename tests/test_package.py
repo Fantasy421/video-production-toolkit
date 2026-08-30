@@ -221,6 +221,23 @@ class PackageTests(unittest.TestCase):
                     list(self.split_schema_validator(schema_name).iter_errors(record))
                 )
 
+    def test_split_timing_schema_rejects_equal_windows_like_runtime(self):
+        """Catches schema/runtime drift on zero-duration timing windows."""
+        scenes = {
+            "artifact_id": "scene-timing-contracts-v1", "type": "scene-timing-contracts",
+            "version": 1, "status": "approved", "parents": ["timed-semantic-beats-v1"],
+            "path": "artifacts/scene-timing-contracts-v1.json",
+            "timed_semantic_beats_id": "timed-semantic-beats-v1",
+            "scenes": [{
+                "scene_id": "S01", "scene_window_ms": [1000, 1000],
+                "beat_ids": ["B01"], "primary_carrier": "motion-graphics",
+                "support_layer": None, "visual_window_ms": [1000, 1000],
+            }],
+        }
+        self.assertTrue(
+            list(self.split_schema_validator("scene-timing-contracts.schema.json").iter_errors(scenes))
+        )
+
     def test_split_timing_schema_mutations_fail_after_fingerprint_refresh(self):
         """Catches a refreshed release blessing weaker timing boundaries."""
         cases = (

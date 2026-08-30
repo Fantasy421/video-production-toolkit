@@ -165,6 +165,20 @@ class SceneTimingContractTests(unittest.TestCase):
                 self.timed_beats(timing_kind="estimated"), self.assignments()
             )
 
+    def test_rejects_malformed_approved_real_timed_beats(self):
+        """Catches reversed, out-of-speech, and keyword-missing visual ranges."""
+        cases = (
+            {"keyword_start_ms": 1_300, "keyword_end_ms": 1_100},
+            {"keyword_start_ms": 2_600, "keyword_end_ms": 2_700},
+            {"visual_window_ms": [0, 900]},
+        )
+        for mutation in cases:
+            with self.subTest(mutation=mutation):
+                timed = copy.deepcopy(self.timed_beats())
+                timed["beats"][0].update(mutation)
+                with self.assertRaises(ValueError):
+                    build_scene_timing_contracts(timed, self.assignments())
+
     def test_validation_rejects_tampered_lineage(self):
         """Catches a saved timing contract being rebound to another beat artifact."""
         record = build_scene_timing_contracts(self.timed_beats(), self.assignments())
