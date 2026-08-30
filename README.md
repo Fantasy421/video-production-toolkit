@@ -4,6 +4,8 @@
 
 当前版本：`0.3.0`
 
+附带另一个轻量版，去掉了重型的门设计和丰富check点 https://github.com/Fantasy421/video-production-toolkit-v2
+
 ### 0.3.0 重点
 
 - 通过确定性 Python 校验器把完整任务合同投影为不超过 8 KiB 的 compact task packet。
