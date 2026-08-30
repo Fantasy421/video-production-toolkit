@@ -25,7 +25,11 @@
 - `git diff --check` passed. No media or payloads were opened, generated,
   decoded, rendered, or inspected.
 
-## Concerns
+## Release fingerprint verification
 
-- `scripts/validate_package.py` reports `invalid:release-fingerprint` until
-  the release manifest is refreshed after the parent branch's final changes.
+- Refreshed `.codex-plugin/plugin.json` with the canonical validator output:
+  `sha256:682652f53fdeedb85f55d5f9b8b5969aa323760c5669ce0ef12d58ddf8dd71ce`.
+- `UV_CACHE_DIR=/private/tmp/visual-media-isolation-uv-cache uv run --offline
+  --with jsonschema python scripts/validate_package.py .` — `package valid`.
+- Explicit declared/computed equality check — both values were
+  `sha256:682652f53fdeedb85f55d5f9b8b5969aa323760c5669ce0ef12d58ddf8dd71ce`.
