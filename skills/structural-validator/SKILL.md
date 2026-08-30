@@ -20,6 +20,12 @@ closed `visual_media_operation`, `timing_validation_id`, `affected_beat_ids`,
 compact blocked result, repairs timing assignments only, and returns a compact
 task-result envelope.
 
+The shipped Draft 2020-12 schemas express the bounded structural subset. The
+runtime task and timing validators are normative for cross-field equality:
+`timing_validation_id` must be declared in `inputs`, the relay counts and
+examples must exactly match the selected current validation Artifact, and every
+example key must have a corresponding issue-count key.
+
 Allowed inputs: accept only one claimed task-envelope with capability
 `structure.validate`, or the exact delegated `timing-repair` envelope above,
 and declared timeline, contract, and project references.

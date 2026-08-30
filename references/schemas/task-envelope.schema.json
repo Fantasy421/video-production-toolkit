@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Video Production Toolkit Task Envelope",
+  "$comment": "The runtime validators are normative for cross-field equality, including timing_validation_id membership in inputs, compact relay equality, and examples-key subset checks; Draft 2020-12 expresses only the structural subset.",
   "type": "object",
   "required": ["task_id", "capability", "inputs", "adapter_preferences", "output_contract", "constraints"],
   "properties": {
@@ -166,7 +167,8 @@
         "examples": {
           "type": "object",
           "propertyNames": {"enum": ["VOICE_TIMING_REQUIRED", "KEYWORD_ANCHOR_MISSING", "VISUAL_BEFORE_ALLOWED_WINDOW", "VISUAL_AFTER_ALLOWED_WINDOW", "BEAT_OUTSIDE_SCENE", "MULTIPLE_PRIMARY_CARRIERS", "SUPPORT_LAYER_OVERFLOW", "KEYWORD_EVENTS_TOO_CLOSE", "SCENE_TOO_SHORT", "STALE_VOICE_TIMING"]},
-          "additionalProperties": {"type": "array", "maxItems": 3, "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true}
+          "additionalProperties": {"type": "array", "maxItems": 3, "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
+          "minProperties": 1
         }
       },
       "additionalProperties": false
@@ -273,6 +275,7 @@
       "then": {
         "properties": {
           "output_contract": {"const": "timing-validation-v1"},
+          "inputs": {"minItems": 1},
           "constraints": {"$ref": "#/$defs/timingRepairConstraints"}
         }
       }

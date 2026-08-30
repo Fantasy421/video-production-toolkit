@@ -340,6 +340,9 @@ def complete_task(root: Path, result: dict[str, Any]) -> str:
             envelope, artifacts
         )
         produced_artifacts = _validate_result_artifacts(envelope, result, artifacts)
+        _validate_timing_repair_completion(
+            envelope, result, produced_artifacts, artifacts
+        )
         _validate_conditional_visual_media_result(
             envelope,
             result,
@@ -550,6 +553,76 @@ def _validate_result_artifacts(
         classify_visual_media_artifact(artifact)
         returned.append(artifact)
     return returned
+
+
+def _validate_timing_repair_completion(
+    envelope: dict[str, Any],
+    result: dict[str, Any],
+    produced_artifacts: list[dict[str, Any]],
+    artifacts: dict[str, dict[str, Any]],
+) -> None:
+    """Require repair success to publish the current passed timing result."""
+    if envelope["capability"] != "timing-repair" or result["status"] != "succeeded":
+        return
+    from scripts.toolkit.orchestrator import _current_timing_validation
+    from scripts.toolkit.timing_validation import validate_timing_validation_result
+
+    authority_artifacts = {
+        artifact_id: artifact
+        for artifact_id, artifact in artifacts.items()
+        if artifact_id not in {item.get("artifact_id") for item in produced_artifacts}
+    }
+    current = _current_timing_validation(envelope, authority_artifacts)
+    if current is None or current["timing_validation"]["status"] != "blocked":
+        raise ValueError("timing-repair requires the current blocked timing validation")
+    outputs = [
+        artifact
+        for artifact in produced_artifacts
+        if artifact.get("type") == "timing-validation"
+    ]
+    if len(outputs) != len(produced_artifacts) or not outputs:
+        raise ValueError("timing-repair must return a timing-validation artifact")
+
+    for artifact in outputs:
+        if artifact.get("output_contract") != "timing-validation-v1":
+            raise ValueError("timing-repair output contract is invalid")
+        try:
+            compact = validate_timing_validation_result(artifact["timing_validation"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("timing-repair output timing validation is invalid") from error
+        if compact["status"] != "passed":
+            raise ValueError("timing-repair output timing validation must be passed")
+        parents = artifact.get("parents")
+        if not isinstance(parents, list) or len(parents) != 1:
+            raise ValueError("timing-repair output must name one scene-timing parent")
+        scene_id = parents[0]
+        scene = artifacts.get(scene_id)
+        if (
+            scene is None
+            or scene.get("type") != "scene-timing-contracts"
+            or scene.get("status") != "approved"
+        ):
+            raise ValueError("timing-repair output scene-timing lineage is invalid")
+        timed_id = scene.get("timed_semantic_beats_id")
+        timed = artifacts.get(timed_id)
+        if (
+            timed is None
+            or timed.get("type") != "timed-semantic-beats"
+            or timed.get("status") != "approved"
+            or timed.get("timing_kind") != "real"
+        ):
+            raise ValueError("timing-repair output timed-beats lineage is invalid")
+        voice_id = timed.get("voice_timing_id")
+        voice = artifacts.get(voice_id)
+        if (
+            voice is None
+            or voice.get("type") != "voice-timing"
+            or voice.get("status") != "approved"
+            or voice.get("timing_kind") != "real"
+        ):
+            raise ValueError("timing-repair output voice-timing lineage is invalid")
+        if scene_id not in current.get("parents", []):
+            raise ValueError("timing-repair output is not on the current scene lineage")
 
 
 def _compatible_retry_fallback(

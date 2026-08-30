@@ -21,6 +21,7 @@ from scripts.retire_legacy_skill import (
 from scripts.toolkit.artifacts import approve_artifact, create_artifact
 from scripts.toolkit.orchestrator import (
     _capability_is_legal_in_phase,
+    _coordinator_safe_task_projection,
     calculate_ready_tasks,
     invalidate_artifact_descendants,
     resume_project,
@@ -1897,6 +1898,45 @@ class CoordinatorTests(unittest.TestCase):
                 {"phase": "storyboard_timed", "candidate_tasks": [mismatched]},
                 [*lineage, validation_v1], [],
             )
+
+    def test_timing_repair_projection_uses_the_current_artifact_compact_result(self):
+        lineage = [
+            artifact("voice-timing-v1", "voice-timing", timing_kind="real"),
+            artifact(
+                "timed-beats-v1", "timed-semantic-beats",
+                parents=["voice-timing-v1"], voice_timing_id="voice-timing-v1",
+                timing_kind="real",
+            ),
+            artifact(
+                "scenes-v1", "scene-timing-contracts",
+                parents=["timed-beats-v1"], timed_semantic_beats_id="timed-beats-v1",
+            ),
+        ]
+        validation = artifact(
+            "validation-v1", "timing-validation", parents=["scenes-v1"],
+            timing_validation={
+                "status": "blocked", "checks_run": 1,
+                "issue_counts": {"SCENE_TOO_SHORT": 2},
+                "examples": {"SCENE_TOO_SHORT": ["B01"]},
+            },
+        )
+        repair = build_timing_repair_envelope(
+            "repair-projection", "validation-v1", ["B01"],
+            validation["timing_validation"],
+        )
+        projected = _coordinator_safe_task_projection(
+            repair, [*lineage, validation]
+        )
+        self.assertEqual(
+            {"SCENE_TOO_SHORT": 2},
+            projected["constraints"]["issue_counts"],
+        )
+        fabricated = {**repair, "constraints": {**repair["constraints"]}}
+        fabricated["constraints"]["issue_counts"] = {"STALE_VOICE_TIMING": 99}
+        self.assertNotIn(
+            "issue_counts",
+            _coordinator_safe_task_projection(fabricated, [*lineage, validation])["constraints"],
+        )
 
     def test_resume_projects_task_constraints_and_approvals_without_freeform_payloads(self):
         """Persisted prompts and approval notes never enter the coordinator view."""

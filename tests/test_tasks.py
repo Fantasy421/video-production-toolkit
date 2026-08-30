@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import os
 import shutil
@@ -2550,6 +2551,76 @@ class TaskTests(unittest.TestCase):
                 self.result_for(claim, artifacts=["wrong-contract-preview"]),
             )
         self.assertTrue((self.root / "tasks" / "locks" / "preview-S03-v2.lock").exists())
+
+    def test_timing_repair_success_requires_current_passed_timing_artifact(self):
+        """Catches generic output artifacts terminating a repair without new timing authority."""
+        semantic = self.create_artifact(
+            "semantic-beats-v1", "semantic-beats", 1,
+            parents=["narration-v1"], narration_id="narration-v1",
+            beats=[{
+                "beat_id": "B01", "text_ref": "narration-v1:S01:L1",
+                "keyword": "timing", "intent": "core-concept-emphasis",
+                "priority": "primary", "preferred_carrier": "motion-graphics",
+                "approval_provenance": "user:keyword-review-v1",
+            }],
+        )
+        commitment = "sha256:" + hashlib.sha256(b"B01").hexdigest()
+        timed = self.create_artifact(
+            "timed-beats-v1", "timed-semantic-beats", 1,
+            parents=[semantic, "voice-timing-v1"],
+            semantic_beats_id=semantic, voice_timing_id="voice-timing-v1",
+            timing_kind="real", beats=[{
+                "beat_id": "B01", "speech_start_ms": 1000,
+                "speech_end_ms": 2000, "keyword_start_ms": 1200,
+                "keyword_end_ms": 1600, "emphasis_ms": 1400,
+                "visual_window_ms": [1080, 1900],
+                "approved_anchor_commitment": commitment,
+            }],
+        )
+        scene = self.create_artifact(
+            "scene-timing-v1", "scene-timing-contracts", 1,
+            parents=[timed], timed_semantic_beats_id=timed,
+            scenes=[{
+                "scene_id": "S01", "scene_window_ms": [1000, 2000],
+                "beat_ids": ["B01"], "primary_carrier": "motion-graphics",
+                "support_layer": "caption-emphasis", "visual_window_ms": [1080, 1900],
+            }],
+        )
+        blocked = {
+            "status": "blocked", "checks_run": 1,
+            "issue_counts": {"SCENE_TOO_SHORT": 1},
+            "examples": {"SCENE_TOO_SHORT": ["B01"]},
+        }
+        validation = self.create_artifact(
+            "timing-validation-v1", "timing-validation", 1,
+            parents=[scene], timing_validation=blocked,
+        )
+        envelope = build_timing_repair_envelope(
+            "timing-repair-v1", validation, ["B01"], blocked
+        )
+        create_task(self.root, envelope)
+        claim = claim_task(self.root, envelope["task_id"], "worker-a")
+        result = {
+            "task_id": envelope["task_id"], "status": "succeeded",
+            "inputs": envelope["inputs"], "checks": [], "warnings": [], **claim,
+        }
+
+        self.create_artifact(
+            "fake-timing-result", "report", 1, parents=[scene],
+            output_contract="timing-validation-v1",
+        )
+        with self.assertRaisesRegex(ValueError, "timing-validation artifact"):
+            complete_task(self.root, {**result, "artifacts": ["fake-timing-result"]})
+
+        self.create_artifact(
+            "timing-validation-v2", "timing-validation", 2,
+            parents=[scene], output_contract="timing-validation-v1",
+            timing_validation={"status": "passed", "checks_run": 2},
+        )
+        self.assertEqual(
+            "completed",
+            complete_task(self.root, {**result, "artifacts": ["timing-validation-v2"]}),
+        )
 
     def test_succeeded_result_requires_at_least_one_returned_artifact(self):
         """Catches a success marker terminating work without its contracted output."""

@@ -321,6 +321,18 @@ def _current_timing_validation(
         )
     except (KeyError, TypeError, ValueError):
         return None
+    if candidate.get("capability") == "timing-repair":
+        compact = current["timing_validation"]
+        if (
+            constraints.get("issue_counts") != compact.get("issue_counts")
+            or constraints.get("examples") != compact.get("examples")
+            or not set(
+                beat_id
+                for ids in compact.get("examples", {}).values()
+                for beat_id in ids
+            ).issubset(set(constraints.get("affected_beat_ids", [])))
+        ):
+            return None
     return current
 
 
@@ -487,7 +499,8 @@ def resume_project(root: Path) -> dict[str, Any]:
         ],
         "approvals": [_coordinator_safe_approval_projection(item) for item in approvals],
         "candidate_tasks": [
-            _coordinator_safe_task_projection(item) for item in candidate_tasks
+            _coordinator_safe_task_projection(item, effective_artifacts)
+            for item in candidate_tasks
         ],
         "locked_task_ids": locked,
         "completed_task_ids": completed,
@@ -533,7 +546,10 @@ _SAFE_COORDINATOR_CONSTRAINTS = frozenset(
 )
 
 
-def _coordinator_safe_task_projection(task: Mapping[str, Any]) -> dict[str, Any]:
+def _coordinator_safe_task_projection(
+    task: Mapping[str, Any],
+    artifacts: Optional[Iterable[Mapping[str, Any]]] = None,
+) -> dict[str, Any]:
     """Project persisted task authority without forwarding worker payloads."""
     constraints = task.get("constraints", {})
     legacy_keys = {"image_operation", "image_context"}
@@ -554,15 +570,30 @@ def _coordinator_safe_task_projection(task: Mapping[str, Any]) -> dict[str, Any]
         for key in _SAFE_COORDINATOR_CONSTRAINTS
         if key in constraints
     }
-    is_valid_timing_repair = False
-    if task.get("capability") == "timing-repair":
+    current_timing_validation = None
+    if task.get("capability") == "timing-repair" and artifacts is not None:
         try:
-            validate_current_task_envelope(dict(task))
-        except (PermissionError, TypeError, ValueError):
-            pass
-        else:
-            is_valid_timing_repair = True
-    if not is_valid_timing_repair:
+            current_timing_validation = _current_timing_validation(
+                task, _normalize_artifacts(artifacts)
+            )
+        except (TypeError, ValueError):
+            current_timing_validation = None
+    if current_timing_validation is not None:
+        compact = current_timing_validation["timing_validation"]
+        projected_constraints.update(
+            {
+                "issue_counts": compact.get("issue_counts", {}),
+                "examples": compact.get("examples", {}),
+                "affected_beat_ids": sorted(
+                    {
+                        beat_id
+                        for ids in compact.get("examples", {}).values()
+                        for beat_id in ids
+                    }
+                ),
+            }
+        )
+    else:
         for key in ("affected_beat_ids", "issue_counts", "examples"):
             projected_constraints.pop(key, None)
     output_contract = task.get("output_contract")

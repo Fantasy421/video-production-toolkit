@@ -628,7 +628,7 @@ def _validate_timing_artifact_contract(
     if artifact_type == "timing-validation":
         _validate_exact_timing_fields(
             artifact,
-            {"timing_validation"},
+            {"timing_validation", "output_contract"},
             set(),
         )
         if "timing_validation" in artifact:

@@ -10,6 +10,7 @@ from referencing import Registry, Resource
 import scripts.validate_package as package_validation
 from scripts.validate_package import validate_package
 from scripts.toolkit.tasks import (
+    build_timing_repair_envelope,
     _validate_persisted_envelope,
     _validate_result,
     validate_current_task_envelope,
@@ -101,6 +102,28 @@ class PackageTests(unittest.TestCase):
                 "maxItems"
             ],
         )
+
+    def test_timing_repair_schema_matches_runtime_authority_boundary(self):
+        envelope = build_timing_repair_envelope(
+            "repair-schema-v1",
+            "timing-validation-v1",
+            ["B01"],
+            {
+                "status": "blocked",
+                "checks_run": 1,
+                "issue_counts": {"SCENE_TOO_SHORT": 1},
+                "examples": {"SCENE_TOO_SHORT": ["B01"]},
+            },
+        )
+        validator = self.task_envelope_validator()
+        self.assertTrue(list(validator.iter_errors({**envelope, "inputs": []})))
+        self.assertIn("runtime validators are normative", validator.schema["$comment"])
+
+        mismatch = {**envelope, "constraints": {**envelope["constraints"]}}
+        mismatch["constraints"]["examples"] = {"STALE_VOICE_TIMING": ["B01"]}
+        self.assertFalse(list(validator.iter_errors(mismatch)))
+        with self.assertRaises(ValueError):
+            validate_current_task_envelope(mismatch)
 
     def test_split_timing_schemas_accept_new_records_and_legacy_projection(self):
         """Catches new artifacts losing required lineage or legacy reads losing timing."""
