@@ -45,6 +45,7 @@ from scripts.validate_package import _release_fingerprint
 from scripts.verify_installation import (
     _candidate as smoke_candidate,
     _run_resume_scenario,
+    run_installed_timing_smoke,
     run_smoke,
     verify_installation,
 )
@@ -2102,6 +2103,40 @@ class CoordinatorTests(unittest.TestCase):
 
 
 class SmokeAndInstallationTests(unittest.TestCase):
+    def test_installed_timing_smoke_uses_only_installed_metadata_runtime(self):
+        """Catches timing smoke falling back to repository code or media access."""
+        with TemporaryDirectory() as folder:
+            home = Path(folder) / "home"
+            cache = activate_versioned_personal_plugin(home, ROOT)
+
+            smoke = run_installed_timing_smoke(cache)
+            verified = verify_installation(
+                repo=None,
+                home=home,
+                require_timing_smoke=True,
+            )
+
+            self.assertTrue(smoke["ok"], smoke)
+            self.assertTrue(verified["ok"], verified)
+            self.assertEqual("0.2.0", smoke["plugin_version"])
+            self.assertEqual(
+                cache.resolve(), Path(smoke["runtime_module_path"]).parents[2]
+            )
+            self.assertEqual(
+                {
+                    "installed_module": "passed",
+                    "frozen_semantic_beats": "passed",
+                    "real_timing_binding": "passed",
+                    "storyboard_gate": "passed",
+                    "compact_validation": "passed",
+                    "stale_timing_recovery": "passed",
+                    "v2_compatibility": "passed",
+                    "json_metadata_only": "passed",
+                },
+                smoke["checks"],
+            )
+            self.assertEqual(smoke["checks"], verified["timing_smoke"]["checks"])
+
     def test_new_cli_entrypoints_run_directly(self):
         """Catches repository imports failing when Python starts inside scripts/."""
         for script in (
@@ -2305,7 +2340,7 @@ class SmokeAndInstallationTests(unittest.TestCase):
 
             self.assertTrue(target.is_symlink())
             self.assertEqual(ROOT.resolve(), target.resolve())
-            self.assertEqual("0.1.4", installed.get("plugin_version"))
+            self.assertEqual("0.2.0", installed.get("plugin_version"))
             self.assertEqual(
                 manifest["release_fingerprint"], installed.get("release_fingerprint")
             )
@@ -2404,7 +2439,7 @@ class SmokeAndInstallationTests(unittest.TestCase):
             )
 
             self.assertTrue(smoke["ok"], smoke)
-            self.assertEqual("0.1.4", smoke["plugin_version"])
+            self.assertEqual("0.2.0", smoke["plugin_version"])
             self.assertEqual(
                 cache.resolve(), Path(smoke["runtime_module_path"]).parents[2]
             )

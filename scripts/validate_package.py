@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 
-PLUGIN_VERSION = "0.1.4"
+PLUGIN_VERSION = "0.2.0"
 VOICE_MEDIA_FORMATS = ["wav", "mp3", "m4a", "aac", "flac"]
 VOICE_DURATION_PROBE = {
     "wav": "stdlib-wave-header",
@@ -211,9 +211,11 @@ REQUIRED_FILES = (
     "scripts/toolkit/invalidation.py",
     "scripts/toolkit/orchestrator.py",
     "scripts/toolkit/project_state.py",
+    "scripts/toolkit/semantic_beats.py",
     "scripts/toolkit/scene_timing.py",
     "scripts/toolkit/tasks.py",
     "scripts/toolkit/timed_semantic_beats.py",
+    "scripts/toolkit/timing_validation.py",
     "scripts/toolkit/validation.py",
     "scripts/toolkit/visual_media_context.py",
     "scripts/toolkit/voice.py",
@@ -233,10 +235,12 @@ REQUIRED_FILES = (
     "tests/test_image_context.py",
     "tests/test_package.py",
     "tests/test_review_pack.py",
+    "tests/test_semantic_beats.py",
     "tests/test_skill_contracts.py",
     "tests/test_scene_timing.py",
     "tests/test_tasks.py",
     "tests/test_timed_semantic_beats.py",
+    "tests/test_timing_validation.py",
     "tests/test_validation.py",
     "tests/test_visual_media_context.py",
     "tests/test_voice_tasks.py",
@@ -342,6 +346,7 @@ def validate_package(root: Path) -> list[str]:
         _validate_scene_timing_contracts_schema(scenes, errors)
     if validation is not None:
         _validate_timing_validation_schema(validation, errors)
+    _validate_timing_runtime_contracts(root, errors)
     return errors
 
 
@@ -671,6 +676,48 @@ def _validate_timing_validation_schema(
         or issue_counts.get("type") != "object"
     ):
         errors.append("invalid:timing-validation-contract")
+
+
+def _validate_timing_runtime_contracts(root: Path, errors: list[str]) -> None:
+    """Keep the normative timing gates present in the shipped runtime.
+
+    The release fingerprint detects that a file changed, but a deliberately
+    refreshed fingerprint must not be able to bless a weakened timing
+    boundary.  These small source-level sentinels mirror the public invariants
+    exercised by the runtime and make the package validator fail closed before
+    installation.  They inspect Python source only; no runtime or media is
+    loaded.
+    """
+    contracts = (
+        (
+            "scripts/toolkit/semantic_beats.py",
+            (
+                'normalized["decision"] != "approved"',
+                "keyword not in approved_keywords",
+            ),
+            "invalid:semantic-beats-runtime-contract",
+        ),
+        (
+            "scripts/toolkit/timed_semantic_beats.py",
+            (
+                'timing.get("timing_kind") != "real"',
+                'timing.get("status") != "approved"',
+                'normalized["voice_timing_id"] != timing["artifact_id"]',
+            ),
+            "invalid:timed-semantic-beats-runtime-contract",
+        ),
+    )
+    for relative, required_fragments, error_code in contracts:
+        path = root / relative
+        if not path.is_file():
+            continue
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            errors.append(error_code)
+            continue
+        if any(fragment not in source for fragment in required_fragments):
+            errors.append(error_code)
 
 
 def _validate_visual_media_schema(

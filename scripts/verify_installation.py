@@ -20,6 +20,8 @@ from scripts.migration_audit import audit_legacy
 from scripts.plan_representative_slice import select_representative_slice
 from scripts.toolkit.artifacts import approve_artifact, create_artifact
 from scripts.toolkit.orchestrator import (
+    _capability_is_legal_in_phase,
+    _has_gate_approval,
     calculate_ready_tasks,
     invalidate_artifact_descendants,
     resume_project,
@@ -36,7 +38,13 @@ from scripts.toolkit.voice import (
     validate_authoritative_voice_bundle,
     validate_project_authoritative_voice_bundle,
 )
-from scripts.validate_package import validate_package
+from scripts.toolkit.semantic_beats import (
+    freeze_semantic_beats,
+    project_legacy_timed_beats,
+)
+from scripts.toolkit.timed_semantic_beats import bind_semantic_beats
+from scripts.toolkit.timing_validation import validate_timing_rows
+from scripts.validate_package import PLUGIN_VERSION, validate_package
 
 
 PLUGIN_ID = "video-production-toolkit"
@@ -324,6 +332,256 @@ def run_installed_visual_media_smoke(root: Path) -> dict[str, Any]:
     return result
 
 
+def run_installed_timing_smoke(root: Path) -> dict[str, Any]:
+    """Run the installed timing runtime in a clean Python process.
+
+    The child receives only the installed cache path.  It exercises compact
+    timing metadata and never opens audio or visual payloads, so repository
+    imports cannot mask a broken installed package.
+    """
+    root = Path(root).resolve()
+    verifier = root / "scripts" / "verify_installation.py"
+    if not verifier.is_file():
+        return {
+            "ok": False,
+            "blocker": {
+                "code": "installed-timing-smoke-missing",
+                "detail": str(verifier),
+            },
+        }
+    environment = dict(os.environ)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            str(verifier),
+            "--timing-smoke-root",
+            str(root),
+        ],
+        cwd=root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    try:
+        result = json.loads(completed.stdout)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {
+            "ok": False,
+            "blocker": {
+                "code": "installed-timing-smoke-invalid-output",
+                "detail": completed.stderr.strip() or completed.stdout.strip(),
+            },
+        }
+    if not isinstance(result, dict):
+        return {
+            "ok": False,
+            "blocker": {
+                "code": "installed-timing-smoke-invalid-output",
+                "detail": "smoke result must be an object",
+            },
+        }
+    if completed.returncode and result.get("ok"):
+        return {
+            "ok": False,
+            "blocker": {
+                "code": "installed-timing-smoke-process-failed",
+                "detail": completed.stderr.strip(),
+            },
+        }
+    return result
+
+
+def _run_timing_smoke_in_process(root: Path) -> dict[str, Any]:
+    """Exercise the installed timing APIs using JSON-shaped metadata only."""
+    root = Path(root).resolve()
+    checks = {
+        "installed_module": "not-run",
+        "frozen_semantic_beats": "not-run",
+        "real_timing_binding": "not-run",
+        "storyboard_gate": "not-run",
+        "compact_validation": "not-run",
+        "stale_timing_recovery": "not-run",
+        "v2_compatibility": "not-run",
+        "json_metadata_only": "not-run",
+    }
+    try:
+        manifest = json.loads(
+            (root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+        plugin_version = manifest.get("version") if isinstance(manifest, dict) else None
+        if plugin_version != PLUGIN_VERSION:
+            raise ValueError(
+                f"installed timing smoke requires plugin version {PLUGIN_VERSION}"
+            )
+        module_paths = {
+            Path(inspect.getfile(freeze_semantic_beats)).resolve(),
+            Path(inspect.getfile(bind_semantic_beats)).resolve(),
+            Path(inspect.getfile(validate_timing_rows)).resolve(),
+        }
+        expected_root = (root / "scripts" / "toolkit").resolve()
+        if not module_paths or any(path.parent != expected_root for path in module_paths):
+            raise ValueError("timing runtime was not loaded from the installed cache")
+        checks["installed_module"] = "passed"
+
+        candidates = [
+            {
+                "beat_id": "B01",
+                "text_ref": "narration-v1:S01:L1",
+                "keyword": "timing",
+                "intent": "core-concept-emphasis",
+                "priority": "primary",
+                "preferred_carrier": "motion-graphics",
+            }
+        ]
+        semantic = freeze_semantic_beats(
+            "narration-v1",
+            candidates,
+            {
+                "decision": "approved",
+                "provenance": "user:timing-smoke-v1",
+                "keywords": ["timing"],
+            },
+        )
+        if (
+            semantic.get("narration_id") != "narration-v1"
+            or "voice_timing_id" in semantic
+            or "keyword_start_ms" in json.dumps(semantic)
+        ):
+            raise ValueError("semantic beat freeze was not untimed and compact")
+        checks["frozen_semantic_beats"] = "passed"
+
+        anchor = {
+            "beat_id": "B01",
+            "keyword": "timing",
+            "start_ms": 1_200,
+            "end_ms": 1_500,
+        }
+        timing = _artifact(
+            "voice-timing-v1",
+            "voice-timing",
+            parents=["voiceover-v1"],
+            voiceover_id="voiceover-v1",
+            timing_kind="real",
+            duration_ms=2_400,
+            segments=[{"start_ms": 0, "end_ms": 2_400, "text": "segment"}],
+            keyword_anchors=[anchor],
+        )
+        timed = bind_semantic_beats(semantic, timing, [anchor])
+        if timed.get("timing_kind") != "real" or timed.get("voice_timing_id") != timing[
+            "artifact_id"
+        ]:
+            raise ValueError("real timing binding did not preserve authoritative lineage")
+        checks["real_timing_binding"] = "passed"
+
+        # Test the storyboard gate directly against compact coordinator inputs;
+        # routing this check through a project would require an audio file.
+        storyboard = _candidate(
+            "timing-smoke-storyboard",
+            "storyboard.plan",
+            ["style-v1", "voice-timing-v1"],
+            "visual-direction",
+            "style-v1",
+        )
+        gate_artifacts = {
+            "style-v1": _artifact("style-v1", "style-pack"),
+            "voice-timing-v1": timing,
+            "smoke-routing-scene-contract-v1": _artifact(
+                "smoke-routing-scene-contract-v1", "scene-contract"
+            ),
+        }
+        if not _capability_is_legal_in_phase(storyboard, "timing_bound"):
+            raise ValueError("storyboard gate is not legal at timing_bound")
+        if _has_gate_approval(
+            storyboard, "visual-direction", gate_artifacts, []
+        ) or not _has_gate_approval(
+            storyboard,
+            "visual-direction",
+            gate_artifacts,
+            [{"target_id": "style-v1", "scope": "visual-direction", "decision": "approved"}],
+        ):
+            raise ValueError("storyboard gate did not require exact approval")
+        checks["storyboard_gate"] = "passed"
+
+        valid_row = {
+            "beat_id": "B01",
+            "scene_id": "S01",
+            "keyword_anchor_ms": [1_200, 1_500],
+            "visual_window_ms": [1_080, 1_700],
+            "scene_window_ms": [0, 2_400],
+            "primary_carrier": "motion-graphics",
+            "support_layer": "caption-emphasis",
+            "timing_kind": "real",
+            "voice_timing_id": "voice-timing-v1",
+            "current_voice_timing_id": "voice-timing-v1",
+        }
+        compact = validate_timing_rows([valid_row], minimum_readable_duration_ms=500)
+        if compact.get("status") != "passed" or set(compact) != {"status", "checks_run"}:
+            raise ValueError("compact timing validation did not pass")
+        checks["compact_validation"] = "passed"
+
+        stale = dict(valid_row)
+        stale["voice_timing_status"] = "stale"
+        stale_result = validate_timing_rows([stale], minimum_readable_duration_ms=500)
+        if (
+            stale_result.get("status") != "blocked"
+            or stale_result.get("issue_counts", {}).get("STALE_VOICE_TIMING") != 1
+        ):
+            raise ValueError("stale timing was not blocked during recovery")
+        checks["stale_timing_recovery"] = "passed"
+
+        legacy = {
+            "artifact_id": "semantic-beats-v0",
+            "type": "semantic-beats",
+            "version": 1,
+            "status": "approved",
+            "parents": ["voice-timing-v0"],
+            "path": "metadata/semantic-beats-v0.json",
+            "voice_timing_id": "voice-timing-v0",
+        }
+        if project_legacy_timed_beats(legacy) != legacy:
+            raise ValueError("v2 semantic timing projection was not preserved")
+        checks["v2_compatibility"] = "passed"
+
+        with TemporaryDirectory() as folder:
+            metadata_root = Path(folder) / "metadata-only"
+            initialize_project(metadata_root, "timing-smoke", "knowledge-video")
+            suffixes = {
+                ".aac", ".avi", ".flac", ".jpg", ".m4a", ".mkv", ".mov",
+                ".mp3", ".mp4", ".png", ".wav", ".webm",
+            }
+            created = sorted(
+                path.relative_to(metadata_root).as_posix()
+                for path in metadata_root.rglob("*")
+                if path.is_file() and path.suffix.lower() in suffixes
+            )
+            if created:
+                raise ValueError(f"timing smoke created media files: {created}")
+        checks["json_metadata_only"] = "passed"
+    except (OSError, TypeError, ValueError, RuntimeError) as error:
+        return {
+            "ok": False,
+            "plugin_version": locals().get("plugin_version"),
+            "runtime_module_path": str(sorted(module_paths)[0])
+            if "module_paths" in locals()
+            else "",
+            "checks": checks,
+            "blocker": {
+                "code": "timing-smoke-failed",
+                "detail": str(error),
+            },
+        }
+    return {
+        "ok": True,
+        "plugin_version": plugin_version,
+        "runtime_module_path": str(sorted(module_paths)[0]),
+        "checks": checks,
+    }
+
+
 def _run_visual_media_smoke_in_process(root: Path) -> dict[str, Any]:
     """Exercise only JSON-shaped public runtime boundaries from this package copy."""
     root = Path(root).resolve()
@@ -342,8 +600,10 @@ def _run_visual_media_smoke_in_process(root: Path) -> dict[str, Any]:
             (root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
         )
         plugin_version = manifest.get("version") if isinstance(manifest, dict) else None
-        if plugin_version != "0.1.4":
-            raise ValueError("installed visual smoke requires plugin version 0.1.4")
+        if plugin_version != PLUGIN_VERSION:
+            raise ValueError(
+                f"installed visual smoke requires plugin version {PLUGIN_VERSION}"
+            )
         module_path = Path(inspect.getfile(validate_result_envelope)).resolve()
         expected_module = (
             root / "scripts" / "toolkit" / "visual_media_context.py"
@@ -606,6 +866,7 @@ def verify_installation(
     check_external_skills: bool = False,
     require_resume_smoke: bool = False,
     require_visual_media_smoke: bool = False,
+    require_timing_smoke: bool = False,
     legacy_root: Optional[Path] = None,
 ) -> dict[str, Any]:
     """Return structured package, discovery, external, and smoke status."""
@@ -701,6 +962,14 @@ def verify_installation(
                 f"{visual_media_smoke.get('blocker')}"
             )
 
+    timing_smoke: Optional[dict[str, Any]] = None
+    if require_timing_smoke:
+        timing_smoke = run_installed_timing_smoke(plugin_root)
+        if not timing_smoke["ok"]:
+            errors.append(
+                "timing smoke failed: " f"{timing_smoke.get('blocker')}"
+            )
+
     return {
         "ok": not errors,
         "plugin": {
@@ -713,6 +982,7 @@ def verify_installation(
         "external_adapters": external,
         "resume_smoke": smoke,
         "visual_media_smoke": visual_media_smoke,
+        "timing_smoke": timing_smoke,
         "warnings": warnings,
         "errors": errors,
     }
@@ -1628,12 +1898,18 @@ def main() -> int:
     parser.add_argument("--check-external-skills", action="store_true")
     parser.add_argument("--require-resume-smoke", action="store_true")
     parser.add_argument("--require-visual-media-smoke", action="store_true")
+    parser.add_argument("--require-timing-smoke", action="store_true")
     parser.add_argument(
         "--visual-media-smoke-root", type=Path, help=argparse.SUPPRESS
     )
+    parser.add_argument("--timing-smoke-root", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.visual_media_smoke_root is not None:
         result = _run_visual_media_smoke_in_process(args.visual_media_smoke_root)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ok"] else 1
+    if args.timing_smoke_root is not None:
+        result = _run_timing_smoke_in_process(args.timing_smoke_root)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["ok"] else 1
     result = verify_installation(
@@ -1644,6 +1920,7 @@ def main() -> int:
         check_external_skills=args.check_external_skills,
         require_resume_smoke=args.require_resume_smoke,
         require_visual_media_smoke=args.require_visual_media_smoke,
+        require_timing_smoke=args.require_timing_smoke,
         legacy_root=args.legacy_root,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))

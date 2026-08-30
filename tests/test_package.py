@@ -1030,8 +1030,8 @@ class PackageTests(unittest.TestCase):
             (ROOT / ".codex-plugin/plugin.json").read_text(encoding="utf-8")
         )
 
-        self.assertEqual("0.1.4", manifest["version"])
-        self.assertEqual("0.1.4", package_validation.PLUGIN_VERSION)
+        self.assertEqual("0.2.0", manifest["version"])
+        self.assertEqual("0.2.0", package_validation.PLUGIN_VERSION)
         self.assertRegex(
             manifest.get("release_fingerprint", ""), r"^sha256:[0-9a-f]{64}$"
         )
@@ -1039,9 +1039,49 @@ class PackageTests(unittest.TestCase):
             ".codex-plugin/plugin.json", package_validation.REQUIRED_FILES
         )
         self.assertIn("tests/test_artifacts.py", package_validation.REQUIRED_FILES)
+        self.assertIn("tests/test_semantic_beats.py", package_validation.REQUIRED_FILES)
         self.assertIn("tests/test_timed_semantic_beats.py", package_validation.REQUIRED_FILES)
+        self.assertIn("tests/test_timing_validation.py", package_validation.REQUIRED_FILES)
+        self.assertIn("scripts/toolkit/semantic_beats.py", package_validation.REQUIRED_FILES)
         self.assertIn("scripts/migration_audit.py", package_validation.REQUIRED_FILES)
         self.assertIn("scripts/toolkit/timed_semantic_beats.py", package_validation.REQUIRED_FILES)
+
+    def test_timing_runtime_contract_mutations_fail_after_fingerprint_refresh(self):
+        """A refreshed hash cannot bless a weakened timing runtime boundary."""
+        cases = (
+            (
+                "approval-freeze",
+                "scripts/toolkit/semantic_beats.py",
+                'if normalized["decision"] != "approved":',
+                'if False:',
+                "invalid:semantic-beats-runtime-contract",
+            ),
+            (
+                "real-timing-gate",
+                "scripts/toolkit/timed_semantic_beats.py",
+                'timing.get("timing_kind") != "real"',
+                'False',
+                "invalid:timed-semantic-beats-runtime-contract",
+            ),
+            (
+                "lineage-gate",
+                "scripts/toolkit/timed_semantic_beats.py",
+                'normalized["voice_timing_id"] != timing["artifact_id"]',
+                'False',
+                "invalid:timed-semantic-beats-runtime-contract",
+            ),
+        )
+        for name, relative, original, replacement, expected in cases:
+            with self.subTest(name=name), TemporaryDirectory() as folder:
+                package = self.copy_package(folder)
+                path = package / relative
+                source = path.read_text(encoding="utf-8")
+                self.assertIn(original, source)
+                path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
+                self.refresh_release_fingerprint(package)
+                errors = validate_package(package)
+                self.assertNotIn("invalid:release-fingerprint", errors)
+                self.assertIn(expected, errors)
 
     def test_each_required_file_is_content_fingerprinted(self):
         """Catches any required release file being present but changed or deleted."""
