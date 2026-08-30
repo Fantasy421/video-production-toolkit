@@ -184,6 +184,22 @@ class SkillContractTests(unittest.TestCase):
             with self.subTest(requirement=requirement):
                 self.assertIn(requirement, normalized)
 
+    def test_structural_validator_accepts_the_delegated_timing_repair_envelope(self):
+        """Catches the director dispatching a capability its selected child rejects."""
+        text = (ROOT / "skills/structural-validator/SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+
+        self.assertEqual(1, text.count("Owned capability:"))
+        for requirement in (
+            "also accepts the coordinator's `timing-repair` envelope",
+            "declare `timing_validation_id` in `inputs`",
+            "output_contract: timing-validation-v1",
+            "closed `visual_media_operation`, `timing_validation_id`, `affected_beat_ids`, `issue_counts`, and `examples`",
+            "compact blocked result",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, normalized)
+
     def test_project_manager_preserves_v3_timing_artifact_states_and_compact_surface(self):
         """Catches recovery documentation falling back to legacy timing or verbose payloads."""
         text = (ROOT / "skills/video-project-manager/SKILL.md").read_text(encoding="utf-8")

@@ -11,8 +11,18 @@ not perform extended subjective aesthetic critique.
 
 Owned capability: `structure.validate`
 
+Timing-repair relay: this same isolated child also accepts the coordinator's
+`timing-repair` envelope. This is a delegated timing-only operation, not a
+second owned capability. The envelope must declare `timing_validation_id` in
+`inputs`, use `output_contract: timing-validation-v1`, and contain only the
+closed `visual_media_operation`, `timing_validation_id`, `affected_beat_ids`,
+`issue_counts`, and `examples` constraint fields. The child validates the
+compact blocked result, repairs timing assignments only, and returns a compact
+task-result envelope.
+
 Allowed inputs: accept only one claimed task-envelope with capability
-`structure.validate` and declared timeline, contract, and project references.
+`structure.validate`, or the exact delegated `timing-repair` envelope above,
+and declared timeline, contract, and project references.
 New tasks declare `visual_media_operation`: `none` for structure-only
 validation, or `image-inspect` with the closed `visual_media_context`. The
 active context has one exact `scope_identity` and exact `allowed_artifact_ids`;

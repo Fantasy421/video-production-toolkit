@@ -13,6 +13,7 @@ from unittest.mock import patch
 from scripts.toolkit.artifacts import create_artifact
 from scripts.toolkit import tasks
 from scripts.toolkit.tasks import (
+    build_timing_repair_envelope,
     claim_task,
     complete_task,
     create_task,
@@ -49,6 +50,35 @@ class CurrentTaskEnvelopeMetadataTests(unittest.TestCase):
         ):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 tasks.validate_current_task_envelope(self.envelope(**{key: value}))
+
+    def test_timing_repair_must_declare_its_validation_input(self):
+        envelope = build_timing_repair_envelope(
+            "repair-envelope-v1",
+            "timing-validation-v1",
+            ["B01"],
+            {
+                "status": "blocked",
+                "checks_run": 1,
+                "issue_counts": {"SCENE_TOO_SHORT": 1},
+                "examples": {"SCENE_TOO_SHORT": ["B01"]},
+            },
+        )
+        envelope["inputs"] = []
+        with self.assertRaisesRegex(ValueError, "timing_validation_id.*input"):
+            tasks.validate_current_task_envelope(envelope)
+
+        envelope["inputs"] = ["timing-validation-v1"]
+        envelope["output_contract"] = "task-result-v1"
+        with self.assertRaisesRegex(ValueError, "output_contract"):
+            tasks.validate_current_task_envelope(envelope)
+
+    def test_task_output_contract_is_a_bounded_safe_identifier(self):
+        envelope = self.envelope(output_contract="task-result-v1")
+        for invalid in ("not a contract", "x" * 129):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                tasks.validate_current_task_envelope(
+                    {**envelope, "output_contract": invalid}
+                )
 
     def test_v3_formal_tasks_require_current_timed_beats_and_scene_contract(self):
         with TemporaryDirectory() as folder:

@@ -854,8 +854,8 @@ def _validate_envelope_shape(envelope: dict[str, Any]) -> None:
     _reject_unknown_keys(envelope, ENVELOPE_KEYS, "task envelope")
     _require_keys(envelope, ENVELOPE_KEYS, "task envelope")
     _require_safe_id(envelope["task_id"], "task_id")
-    for key in ("capability", "output_contract"):
-        _require_nonempty_string(envelope[key], key)
+    _require_nonempty_string(envelope["capability"], "capability")
+    _require_safe_id(envelope["output_contract"], "output_contract")
     if envelope["capability"] not in TASK_CAPABILITIES:
         raise ValueError("task envelope capability is not recognized")
     _validate_id_list(envelope["inputs"], "inputs")
@@ -863,7 +863,11 @@ def _validate_envelope_shape(envelope: dict[str, Any]) -> None:
     if not isinstance(envelope["constraints"], dict):
         raise ValueError("constraints must be an object")
     if envelope["capability"] == "timing-repair":
+        if envelope["output_contract"] != "timing-validation-v1":
+            raise ValueError("timing-repair output_contract must be timing-validation-v1")
         _validate_timing_repair_constraints(envelope["constraints"])
+        if envelope["constraints"]["timing_validation_id"] not in envelope["inputs"]:
+            raise ValueError("timing-repair must declare timing_validation_id as an input")
 
 
 def _validate_current_envelope(envelope: dict[str, Any]) -> None:

@@ -25,7 +25,7 @@
     },
     "inputs": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
     "adapter_preferences": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
-    "output_contract": {"type": "string", "minLength": 1},
+    "output_contract": {"$ref": "#/$defs/safeId"},
     "constraints": {
       "type": "object",
       "properties": {
@@ -272,6 +272,7 @@
       },
       "then": {
         "properties": {
+          "output_contract": {"const": "timing-validation-v1"},
           "constraints": {"$ref": "#/$defs/timingRepairConstraints"}
         }
       }

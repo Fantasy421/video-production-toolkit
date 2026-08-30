@@ -496,6 +496,16 @@ class PackageTests(unittest.TestCase):
                     validator.is_valid({**base, "constraints": constraints})
                 )
 
+        self.assertFalse(
+            validator.is_valid(
+                {
+                    **base,
+                    "output_contract": "x" * 129,
+                    "constraints": {"visual_media_operation": "none"},
+                }
+            )
+        )
+
     def test_scene_schema_accepts_current_and_persisted_legacy_only(self):
         """Catches schema/runtime drift or mixed scene authority becoming valid."""
         validator = self.task_envelope_validator()

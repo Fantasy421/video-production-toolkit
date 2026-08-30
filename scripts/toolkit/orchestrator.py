@@ -30,6 +30,8 @@ from scripts.toolkit.tasks import (
     validate_persisted_task_envelope,
     timing_contract_inputs_are_current,
 )
+from scripts.toolkit.timing_validation import validate_timing_validation_result
+from scripts.toolkit.visual_media_context import SAFE_ID_RE
 
 
 GATES = (
@@ -196,17 +198,9 @@ def _timing_route_is_current(
 ) -> bool:
     """Gate v3 visual work on the worker's compact current validation result."""
     capability = candidate["capability"]
-    validation_id = candidate["constraints"].get("timing_validation_id")
+    current = _current_timing_validation(candidate, artifacts)
     if capability == "timing-repair":
-        record = artifacts.get(validation_id)
-        return (
-            isinstance(validation_id, str)
-            and record is not None
-            and record.get("type") == "timing-validation"
-            and record.get("status") == "approved"
-            and isinstance(record.get("timing_validation"), Mapping)
-            and record["timing_validation"].get("status") == "blocked"
-        )
+        return current is not None and current["timing_validation"]["status"] == "blocked"
     if (
         not v3_project
         or phase not in V3_PHASES
@@ -222,15 +216,112 @@ def _timing_route_is_current(
         }
     ):
         return True
-    record = artifacts.get(validation_id)
-    return (
-        isinstance(validation_id, str)
-        and record is not None
-        and record.get("type") == "timing-validation"
-        and record.get("status") == "approved"
-        and isinstance(record.get("timing_validation"), Mapping)
-        and record["timing_validation"].get("status") == "passed"
+    return current is not None and current["timing_validation"]["status"] == "passed"
+
+
+def _current_timing_validation(
+    candidate: Mapping[str, Any],
+    artifacts: Mapping[str, Mapping[str, Any]],
+) -> Optional[dict[str, Any]]:
+    """Resolve the latest validated result on the current timing DAG."""
+    constraints = candidate.get("constraints", {})
+    validation_id = constraints.get("timing_validation_id")
+    inputs = candidate.get("inputs")
+    if (
+        not isinstance(validation_id, str)
+        or SAFE_ID_RE.fullmatch(validation_id) is None
+        or not isinstance(inputs, list)
+        or validation_id not in inputs
+    ):
+        return None
+
+    def latest(records: list[Mapping[str, Any]]) -> Optional[dict[str, Any]]:
+        if not records:
+            return None
+        return max(
+            (dict(record) for record in records),
+            key=lambda record: (
+                record.get("version")
+                if isinstance(record.get("version"), int)
+                and not isinstance(record.get("version"), bool)
+                else -1,
+                record.get("artifact_id")
+                if isinstance(record.get("artifact_id"), str)
+                else "",
+            ),
+        )
+
+    def has_parent(record: Mapping[str, Any], parent_id: Any) -> bool:
+        parents = record.get("parents")
+        return isinstance(parents, list) and parent_id in parents
+
+    voice = latest(
+        [
+            item
+            for item in artifacts.values()
+            if item.get("type") == "voice-timing"
+            and item.get("status") == "approved"
+            and item.get("timing_kind") == "real"
+        ]
     )
+    if voice is None:
+        return None
+    timed = latest(
+        [
+            item
+            for item in artifacts.values()
+            if item.get("type") == "timed-semantic-beats"
+            and item.get("status") == "approved"
+            and item.get("timing_kind") == "real"
+            and item.get("voice_timing_id") == voice.get("artifact_id")
+            and has_parent(item, voice.get("artifact_id"))
+        ]
+    )
+    if timed is None:
+        return None
+    scene = latest(
+        [
+            item
+            for item in artifacts.values()
+            if item.get("type") == "scene-timing-contracts"
+            and item.get("status") == "approved"
+            and item.get("timed_semantic_beats_id") == timed.get("artifact_id")
+            and has_parent(item, timed.get("artifact_id"))
+        ]
+    )
+    if scene is None:
+        return None
+
+    expected_lineage = {
+        "voice_timing_id": voice.get("artifact_id"),
+        "timed_semantic_beats_id": timed.get("artifact_id"),
+        "scene_timing_contracts_id": scene.get("artifact_id"),
+    }
+    if any(
+        key in constraints and constraints.get(key) != value
+        for key, value in expected_lineage.items()
+    ):
+        return None
+
+    candidates: list[dict[str, Any]] = []
+    for item in artifacts.values():
+        if (
+            item.get("type") != "timing-validation"
+            or item.get("status") != "approved"
+            or not has_parent(item, scene.get("artifact_id"))
+        ):
+            continue
+        candidates.append(dict(item))
+    current = latest(candidates)
+    if current is None or current.get("artifact_id") != validation_id:
+        return None
+    try:
+        current["timing_validation"] = validate_timing_validation_result(
+            current["timing_validation"]
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    return current
 
 
 def _capability_is_legal_in_phase(candidate: Mapping[str, Any], phase: str) -> bool:
@@ -449,18 +540,44 @@ def _coordinator_safe_task_projection(task: Mapping[str, Any]) -> dict[str, Any]
     if set(constraints) <= legacy_keys and constraints:
         # Preserve the historical read-only view for old callers; persisted
         # current authority always takes the compact projection below.
-        return dict(task)
+        legacy_projection = dict(task)
+        output_contract = legacy_projection.get("output_contract")
+        if not (
+            isinstance(output_contract, str)
+            and len(output_contract) <= 128
+            and SAFE_ID_RE.fullmatch(output_contract) is not None
+        ):
+            legacy_projection.pop("output_contract", None)
+        return legacy_projection
     projected_constraints = {
         key: constraints[key]
         for key in _SAFE_COORDINATOR_CONSTRAINTS
         if key in constraints
     }
+    is_valid_timing_repair = False
+    if task.get("capability") == "timing-repair":
+        try:
+            validate_current_task_envelope(dict(task))
+        except (PermissionError, TypeError, ValueError):
+            pass
+        else:
+            is_valid_timing_repair = True
+    if not is_valid_timing_repair:
+        for key in ("affected_beat_ids", "issue_counts", "examples"):
+            projected_constraints.pop(key, None)
+    output_contract = task.get("output_contract")
     return {
         "task_id": task["task_id"],
         "capability": task["capability"],
         "inputs": list(task["inputs"]),
-        "output_contract": task["output_contract"],
         "constraints": projected_constraints,
+        **(
+            {"output_contract": output_contract}
+            if isinstance(output_contract, str)
+            and len(output_contract) <= 128
+            and SAFE_ID_RE.fullmatch(output_contract) is not None
+            else {}
+        ),
     }
 
 

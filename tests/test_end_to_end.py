@@ -1790,6 +1790,7 @@ class CoordinatorTests(unittest.TestCase):
         validation = artifact(
             validation_id,
             "timing-validation",
+            parents=["scenes-v1"],
             timing_validation={
                 "status": "blocked",
                 "checks_run": 7,
@@ -1799,6 +1800,22 @@ class CoordinatorTests(unittest.TestCase):
                 },
             },
         )
+        timing_lineage = [
+            artifact("voice-timing-v1", "voice-timing", timing_kind="real"),
+            artifact(
+                "timed-beats-v1",
+                "timed-semantic-beats",
+                parents=["voice-timing-v1"],
+                voice_timing_id="voice-timing-v1",
+                timing_kind="real",
+            ),
+            artifact(
+                "scenes-v1",
+                "scene-timing-contracts",
+                parents=["timed-beats-v1"],
+                timed_semantic_beats_id="timed-beats-v1",
+            ),
+        ]
 
         self.assertEqual(
             ["timing-repair"],
@@ -1807,10 +1824,11 @@ class CoordinatorTests(unittest.TestCase):
                     "phase": "storyboard_timed",
                     "candidate_tasks": [unrelated, repair],
                 },
-                [validation],
+                [*timing_lineage, validation],
                 [],
             ),
         )
+
         self.assertLessEqual(
             len(repair["constraints"]["examples"]["VISUAL_BEFORE_ALLOWED_WINDOW"]),
             3,
@@ -1826,10 +1844,59 @@ class CoordinatorTests(unittest.TestCase):
                     "candidate_tasks": [unrelated, repair],
                     "completed_task_ids": ["timing-repair-v1"],
                 },
-                [passed],
+                [*timing_lineage, passed],
                 [],
             ),
         )
+
+    def test_timing_repair_route_requires_declared_current_validated_lineage(self):
+        """Catches repair authority drifting from its declared current validation."""
+        lineage = [
+            artifact("voice-timing-v1", "voice-timing", timing_kind="real"),
+            artifact(
+                "timed-beats-v1", "timed-semantic-beats",
+                parents=["voice-timing-v1"], voice_timing_id="voice-timing-v1",
+                timing_kind="real",
+            ),
+            artifact(
+                "scenes-v1", "scene-timing-contracts",
+                parents=["timed-beats-v1"], timed_semantic_beats_id="timed-beats-v1",
+            ),
+        ]
+        blocked = {
+            "status": "blocked",
+            "checks_run": 1,
+            "issue_counts": {"SCENE_TOO_SHORT": 1},
+            "examples": {"SCENE_TOO_SHORT": ["B01"]},
+        }
+        repair = build_timing_repair_envelope(
+            "repair-current", "validation-v1", ["B01"], blocked
+        )
+        validation_v1 = artifact(
+            "validation-v1", "timing-validation", parents=["scenes-v1"],
+            version=1, timing_validation=blocked,
+        )
+        validation_v2 = artifact(
+            "validation-v2", "timing-validation", parents=["scenes-v1"],
+            version=2, timing_validation={"status": "passed", "checks_run": 2},
+        )
+        base = {"phase": "storyboard_timed", "candidate_tasks": [repair]}
+
+        self.assertEqual([], calculate_ready_tasks(base, [*lineage, validation_v1, validation_v2], []))
+
+        malformed = dict(validation_v1)
+        malformed["artifact_id"] = "validation-v3"
+        malformed["version"] = 3
+        malformed["timing_validation"] = {"status": "blocked"}
+        self.assertEqual([], calculate_ready_tasks(base, [*lineage, validation_v1, malformed], []))
+
+        mismatched = dict(repair)
+        mismatched["inputs"] = ["validation-v2"]
+        with self.assertRaisesRegex(ValueError, "timing_validation_id.*input"):
+            calculate_ready_tasks(
+                {"phase": "storyboard_timed", "candidate_tasks": [mismatched]},
+                [*lineage, validation_v1], [],
+            )
 
     def test_resume_projects_task_constraints_and_approvals_without_freeform_payloads(self):
         """Persisted prompts and approval notes never enter the coordinator view."""
@@ -1848,6 +1915,9 @@ class CoordinatorTests(unittest.TestCase):
                     "narration": "full narration",
                     "media": {"payload": "large"},
                     "diagnostics": {"trace": "verbose"},
+                    "issue_counts": {"prompt": "full narration"},
+                    "examples": {"diagnostics": {"trace": "verbose"}},
+                    "affected_beat_ids": ["B01", "B02"],
                 },
             }
             (project / "tasks" / "manage-v1.json").write_text(
