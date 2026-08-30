@@ -104,6 +104,59 @@ class TimingValidationTests(unittest.TestCase):
         validate_timing_rows(rows, minimum_readable_duration_ms=500)
         self.assertEqual(original, rows)
 
+    def test_malformed_structural_rows_are_rejected_before_rules(self):
+        cases = (
+            ("missing scene", "scene_id", None),
+            ("missing keyword", "keyword_anchor_ms", None),
+            ("missing visual", "visual_window_ms", None),
+            ("missing scene window", "scene_window_ms", None),
+            ("reversed visual", "visual_window_ms", [1_400, 880]),
+            ("wrong-type scene", "scene_window_ms", "0..2000"),
+            ("out-of-range keyword", "keyword_anchor_ms", [-1, 1_200]),
+        )
+        for name, field, value in cases:
+            with self.subTest(case=name):
+                row = _row()
+                row.pop(field, None) if value is None else row.__setitem__(field, value)
+                with self.assertRaisesRegex(ValueError, "compact|timing row"):
+                    validate_timing_rows([row], minimum_readable_duration_ms=500)
+
+    def test_carrier_and_support_are_canonical_scalars(self):
+        cases = (
+            ("one primary", "primary_carrier", ["motion-graphics"]),
+            ("unknown primary", "primary_carrier", "not-registered"),
+            ("one support", "support_layer", ["caption-emphasis"]),
+            ("empty support", "support_layer", ""),
+            ("unknown support", "support_layer", "not-registered"),
+        )
+        for name, field, value in cases:
+            with self.subTest(case=name):
+                row = _row()
+                row[field] = value
+                with self.assertRaisesRegex(ValueError, "compact|carrier|support"):
+                    validate_timing_rows([row], minimum_readable_duration_ms=500)
+
+    def test_lineage_ids_are_safe_and_timed_lineage_mismatch_is_stale(self):
+        invalid = _row()
+        invalid["voice_timing_id"] = "audio:/secret.wav"
+        with self.assertRaisesRegex(ValueError, "lineage|safe"):
+            validate_timing_rows([invalid], minimum_readable_duration_ms=500)
+
+        stale = _row()
+        stale.update(
+            timed_semantic_beats_id="timed-v1",
+            current_timed_semantic_beats_id="timed-v2",
+        )
+        result = validate_timing_rows([stale], minimum_readable_duration_ms=500)
+        self.assertEqual(1, result["issue_counts"]["STALE_VOICE_TIMING"])
+
+        for empty_field in ("voice_timing_id", "current_voice_timing_id", "timed_semantic_beats_id", "current_timed_semantic_beats_id"):
+            with self.subTest(empty_field=empty_field):
+                row = _row()
+                row[empty_field] = None
+                result = validate_timing_rows([row], minimum_readable_duration_ms=500)
+                self.assertIn("STALE_VOICE_TIMING", result["issue_counts"])
+
 
 if __name__ == "__main__":
     unittest.main()

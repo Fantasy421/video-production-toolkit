@@ -48,6 +48,37 @@ _ROW_FIELDS = frozenset(
         "current_timed_semantic_beats_id",
     }
 )
+_REQUIRED_ROW_FIELDS = frozenset(
+    {
+        "beat_id",
+        "scene_id",
+        "keyword_anchor_ms",
+        "visual_window_ms",
+        "scene_window_ms",
+        "primary_carrier",
+        "support_layer",
+    }
+)
+_LINEAGE_FIELDS = frozenset(
+    {
+        "voice_timing_id",
+        "current_voice_timing_id",
+        "timed_semantic_beats_id",
+        "current_timed_semantic_beats_id",
+    }
+)
+_SUPPORT_LAYERS = frozenset(
+    {
+        "caption-emphasis",
+        "callout",
+        "number-animation",
+        "label",
+        "subtitle-emphasis",
+        "connection",
+        "progress-state",
+        "annotation",
+    }
+)
 _SAFE_ID = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"
 )
@@ -131,12 +162,15 @@ def _copy_row(row: Mapping[str, Any]) -> dict[str, Any]:
     unknown = set(row) - _ROW_FIELDS
     if unknown:
         raise ValueError("timing rows must be closed compact records")
+    missing = _REQUIRED_ROW_FIELDS - set(row)
+    if missing:
+        raise ValueError("timing row requires a complete compact projection")
     beat_id = row.get("beat_id")
     if not _safe_id(beat_id):
         raise ValueError("timing rows require safe Beat IDs")
     copied = dict(row)
-    # Validate supplied metadata types now, while leaving absent timing fields
-    # available for the VOICE_TIMING_REQUIRED rule.
+    # Validate supplied metadata types now, while leaving explicit empty
+    # lineage values for STALE_VOICE_TIMING to report as a bounded blocker.
     for field in (
         "timing_kind",
         "voice_timing_status",
@@ -148,9 +182,37 @@ def _copy_row(row: Mapping[str, Any]) -> dict[str, Any]:
     ):
         if field in copied and copied[field] is not None and not isinstance(copied[field], str):
             raise ValueError(f"timing row {field} must be metadata text")
-    for field in ("scene_id",):
-        if field in copied and copied[field] is not None and not _safe_id(copied[field]):
-            raise ValueError(f"timing row {field} must be a safe ID")
+    if not _safe_id(copied["scene_id"]):
+        raise ValueError("timing row scene_id must be a safe ID")
+    for field in _LINEAGE_FIELDS:
+        if field in copied and copied[field] not in (None, "") and not _safe_id(copied[field]):
+            raise ValueError(f"timing row {field} must be a safe lineage ID")
+
+    for field in ("keyword_anchor_ms", "visual_window_ms", "scene_window_ms"):
+        if _window(copied[field]) is None:
+            raise ValueError(f"timing row {field} must be an ordered bounded window")
+
+    primary = copied["primary_carrier"]
+    if isinstance(primary, (list, tuple, set, frozenset)):
+        # A multi-value collection is retained as an explicit conflict so the
+        # compact result can report MULTIPLE_PRIMARY_CARRIERS. A one-value
+        # collection is malformed rather than silently canonicalized.
+        if len(primary) <= 1:
+            raise ValueError("timing row primary_carrier must be one registered scalar")
+    elif not isinstance(primary, str) or primary not in SCENE_CARRIERS:
+        raise ValueError("timing row primary_carrier must be one registered scalar")
+
+    support = copied["support_layer"]
+    if isinstance(support, (list, tuple, set, frozenset)):
+        if len(support) <= 1:
+            raise ValueError("timing row support_layer must be one scalar or null")
+    elif support is not None and (
+        not isinstance(support, str)
+        or support not in _SUPPORT_LAYERS
+        or not 0 < len(support) <= 128
+        or not support.strip()
+    ):
+        raise ValueError("timing row support_layer must be a bounded nonempty scalar or null")
     return copied
 
 
@@ -183,7 +245,7 @@ def _milliseconds(value: Any) -> bool:
 
 def _window(value: Any) -> list[int] | None:
     if (
-        not isinstance(value, (list, tuple))
+        not isinstance(value, list)
         or len(value) != 2
         or not all(_milliseconds(item) for item in value)
         or value[0] >= value[1]
@@ -205,10 +267,7 @@ def _voice_required(row: dict[str, Any], _: int) -> bool:
         return True
     if "current_voice_timing_id" in row and not row.get("voice_timing_id"):
         return True
-    return any(
-        field in row and not row[field]
-        for field in ("voice_timing_id", "timed_semantic_beats_id")
-    )
+    return "voice_timing_id" in row and not row["voice_timing_id"]
 
 
 def _visual_before(row: dict[str, Any], _: int) -> bool:
@@ -266,9 +325,17 @@ def _stale_voice_timing(row: dict[str, Any], _: int) -> bool:
     status = row.get("voice_timing_status", row.get("timing_status"))
     if status in {"stale", "superseded", "invalid"}:
         return True
-    current = row.get("current_voice_timing_id")
-    actual = row.get("voice_timing_id")
-    return current is not None and actual is not None and current != actual
+    for claimed_field, current_field in (
+        ("voice_timing_id", "current_voice_timing_id"),
+        ("timed_semantic_beats_id", "current_timed_semantic_beats_id"),
+    ):
+        if claimed_field not in row and current_field not in row:
+            continue
+        claimed = row.get(claimed_field)
+        current = row.get(current_field)
+        if not claimed or not current or claimed != current:
+            return True
+    return False
 
 
 _ROW_RULES: tuple[tuple[str, Callable[[dict[str, Any], int], bool]], ...] = (
