@@ -2622,6 +2622,108 @@ class TaskTests(unittest.TestCase):
             complete_task(self.root, {**result, "artifacts": ["timing-validation-v2"]}),
         )
 
+    def test_timing_repair_completion_binds_selected_scene_lineage(self):
+        """Rejects alternate or metadata-only scene parents on a passed result."""
+        semantic = self.create_artifact(
+            "semantic-beats-lineage", "semantic-beats", 1,
+            parents=["narration-v1"], narration_id="narration-v1",
+            beats=[{
+                "beat_id": "B01", "text_ref": "narration-v1:S01:L1",
+                "keyword": "lineage", "intent": "core-concept-emphasis",
+                "priority": "primary", "preferred_carrier": "motion-graphics",
+                "approval_provenance": "user:keyword-review-v1",
+            }],
+        )
+        commitment = "sha256:" + hashlib.sha256(b"lineage").hexdigest()
+        beat = {
+            "beat_id": "B01", "speech_start_ms": 1000,
+            "speech_end_ms": 2000, "keyword_start_ms": 1200,
+            "keyword_end_ms": 1600, "emphasis_ms": 1400,
+            "visual_window_ms": [1080, 1900],
+            "approved_anchor_commitment": commitment,
+        }
+        timed = self.create_artifact(
+            "timed-beats-lineage", "timed-semantic-beats", 1,
+            parents=[semantic, "voice-timing-v1"],
+            semantic_beats_id=semantic, voice_timing_id="voice-timing-v1",
+            timing_kind="real", beats=[beat],
+        )
+        scene = self.create_artifact(
+            "scene-timing-lineage", "scene-timing-contracts", 1,
+            parents=[timed], timed_semantic_beats_id=timed,
+            scenes=[{
+                "scene_id": "S01", "scene_window_ms": [1000, 2000],
+                "beat_ids": ["B01"], "primary_carrier": "motion-graphics",
+                "support_layer": "caption-emphasis", "visual_window_ms": [1080, 1900],
+            }],
+        )
+
+        # Build a second approved real chain that is intentionally not selected
+        # by the resolver (the current voice ID sorts after this alternate ID).
+        voice_alt = self.create_artifact(
+            "voice-timing-alt", "voice-timing", 1,
+            parents=["voiceover-v1"], voiceover_id="voiceover-v1",
+            timing_kind="real", duration_ms=12000,
+            segments=[{"start_ms": 0, "end_ms": 12000, "text": "narration"}],
+            keyword_anchors=[],
+        )
+        timed_alt = self.create_artifact(
+            "timed-beats-alt", "timed-semantic-beats", 1,
+            parents=[semantic, voice_alt], semantic_beats_id=semantic,
+            voice_timing_id=voice_alt, timing_kind="real", beats=[beat],
+        )
+        scene_alt = self.create_artifact(
+            "scene-timing-alt", "scene-timing-contracts", 1,
+            parents=[timed_alt], timed_semantic_beats_id=timed_alt,
+            scenes=[{
+                "scene_id": "S01", "scene_window_ms": [1000, 2000],
+                "beat_ids": ["B01"], "primary_carrier": "motion-graphics",
+                "support_layer": "caption-emphasis", "visual_window_ms": [1080, 1900],
+            }],
+        )
+        blocked = {
+            "status": "blocked", "checks_run": 1,
+            "issue_counts": {"SCENE_TOO_SHORT": 1},
+            "examples": {"SCENE_TOO_SHORT": ["B01"]},
+        }
+        validation = self.create_artifact(
+            "timing-validation-lineage", "timing-validation", 1,
+            parents=[scene, scene_alt], timing_validation=blocked,
+        )
+        envelope = build_timing_repair_envelope(
+            "timing-repair-lineage", validation, ["B01"], blocked
+        )
+        create_task(self.root, envelope)
+        claim = claim_task(self.root, envelope["task_id"], "worker-a")
+        result = {
+            "task_id": envelope["task_id"], "status": "succeeded",
+            "inputs": envelope["inputs"], "checks": [], "warnings": [], **claim,
+        }
+
+        self.create_artifact(
+            "timing-validation-alt-output", "timing-validation", 2,
+            parents=[scene_alt], output_contract="timing-validation-v1",
+            timing_validation={"status": "passed", "checks_run": 2},
+        )
+        with self.assertRaisesRegex(ValueError, "selected current scene lineage"):
+            complete_task(
+                self.root,
+                {**result, "artifacts": ["timing-validation-alt-output"]},
+            )
+
+        self.create_artifact(
+            "timing-validation-lineage-output", "timing-validation", 2,
+            parents=[scene], output_contract="timing-validation-v1",
+            timing_validation={"status": "passed", "checks_run": 2},
+        )
+        self.assertEqual(
+            "completed",
+            complete_task(
+                self.root,
+                {**result, "artifacts": ["timing-validation-lineage-output"]},
+            ),
+        )
+
     def test_succeeded_result_requires_at_least_one_returned_artifact(self):
         """Catches a success marker terminating work without its contracted output."""
         claim = self.dispatch_and_claim()

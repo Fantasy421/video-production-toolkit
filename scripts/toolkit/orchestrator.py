@@ -321,6 +321,14 @@ def _current_timing_validation(
         )
     except (KeyError, TypeError, ValueError):
         return None
+    # Keep the exact chain selected above attached to the validated result.  A
+    # timing-validation Artifact may have more than one generic parent, so
+    # callers must not infer the current scene from ``current["parents"]``.
+    current["lineage"] = {
+        "voice_timing_id": voice.get("artifact_id"),
+        "timed_semantic_beats_id": timed.get("artifact_id"),
+        "scene_timing_contracts_id": scene.get("artifact_id"),
+    }
     if candidate.get("capability") == "timing-repair":
         compact = current["timing_validation"]
         if (

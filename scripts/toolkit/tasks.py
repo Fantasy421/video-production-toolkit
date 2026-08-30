@@ -596,11 +596,22 @@ def _validate_timing_repair_completion(
         if not isinstance(parents, list) or len(parents) != 1:
             raise ValueError("timing-repair output must name one scene-timing parent")
         scene_id = parents[0]
+        lineage = current.get("lineage")
+        if not isinstance(lineage, Mapping):
+            raise ValueError("timing-repair current lineage is invalid")
+        selected_scene_id = lineage.get("scene_timing_contracts_id")
+        selected_timed_id = lineage.get("timed_semantic_beats_id")
+        selected_voice_id = lineage.get("voice_timing_id")
+        if scene_id != selected_scene_id:
+            raise ValueError("timing-repair output is not on the selected current scene lineage")
         scene = artifacts.get(scene_id)
         if (
             scene is None
             or scene.get("type") != "scene-timing-contracts"
             or scene.get("status") != "approved"
+            or scene.get("timed_semantic_beats_id") != selected_timed_id
+            or not isinstance(scene.get("parents"), list)
+            or selected_timed_id not in scene.get("parents", [])
         ):
             raise ValueError("timing-repair output scene-timing lineage is invalid")
         timed_id = scene.get("timed_semantic_beats_id")
@@ -610,6 +621,9 @@ def _validate_timing_repair_completion(
             or timed.get("type") != "timed-semantic-beats"
             or timed.get("status") != "approved"
             or timed.get("timing_kind") != "real"
+            or timed.get("voice_timing_id") != selected_voice_id
+            or not isinstance(timed.get("parents"), list)
+            or selected_voice_id not in timed.get("parents", [])
         ):
             raise ValueError("timing-repair output timed-beats lineage is invalid")
         voice_id = timed.get("voice_timing_id")
