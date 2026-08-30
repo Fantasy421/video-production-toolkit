@@ -1300,6 +1300,121 @@ class ValidationTests(unittest.TestCase):
 
                 self.assertIn("invalid-artifact-metadata", {item["code"] for item in result["errors"]})
 
+    def test_v3_gate_uses_exact_authoritative_voice_timing_lineage(self):
+        """Catches structural readiness selecting a higher-version orphan chain."""
+        self.write_timed_semantic_graph()
+        self.write_artifact(
+            "voice-timing-v2-orphan",
+            "voice-timing",
+            2,
+            "approved",
+            "metadata/voice-timing-v2-orphan.json",
+            parents=["voiceover-v1"],
+            voiceover_id="voiceover-v1",
+            timing_kind="real",
+            duration_ms=10_000,
+            segments=[{"start_ms": 0, "end_ms": 10_000, "text": "orphan"}],
+            keyword_anchors=[],
+        )
+        timed = json.loads(
+            self.timing_artifact_path(
+                "timed-semantic-beats", "timed-semantic-beats-v1"
+            ).read_text(encoding="utf-8")
+        )
+        timed.update(
+            {
+                "artifact_id": "timed-v2-orphan",
+                "voice_timing_id": "voice-timing-v2-orphan",
+                "version": 2,
+                "parents": ["semantic-beats-v1", "voice-timing-v2-orphan"],
+                "path": "metadata/timed-v2-orphan.json",
+            }
+        )
+        self.write_artifact(
+            timed["artifact_id"], timed["type"], timed["version"], timed["status"],
+            timed["path"], parents=timed["parents"],
+            semantic_beats_id=timed["semantic_beats_id"],
+            voice_timing_id=timed["voice_timing_id"],
+            timing_kind=timed["timing_kind"], beats=timed["beats"],
+        )
+        scene = json.loads(
+            self.timing_artifact_path(
+                "scene-timing-contracts", "scene-timing-contracts-v1"
+            ).read_text(encoding="utf-8")
+        )
+        scene.update(
+            {
+                "artifact_id": "scene-v2-orphan",
+                "timed_semantic_beats_id": "timed-v2-orphan",
+                "version": 2,
+                "parents": ["timed-v2-orphan"],
+                "path": "metadata/scene-v2-orphan.json",
+            }
+        )
+        self.write_artifact(
+            scene["artifact_id"], scene["type"], scene["version"], scene["status"],
+            scene["path"], parents=scene["parents"],
+            timed_semantic_beats_id=scene["timed_semantic_beats_id"],
+            scenes=scene["scenes"],
+        )
+        self.write_artifact(
+            "timing-validation-v2-orphan",
+            "timing-validation",
+            2,
+            "approved",
+            "metadata/timing-validation-v2-orphan.json",
+            parents=["scene-v2-orphan"],
+        )
+        (self.root / "metadata").mkdir(exist_ok=True)
+        (self.root / "metadata/timing-validation-v2-orphan.json").write_text(
+            json.dumps({"status": "passed"}), encoding="utf-8"
+        )
+        phases = (
+            "semantic_beats_confirmed", "voiceover_ready", "timing_bound",
+            "storyboard_timed", "representative_scene_ready", "production_ready",
+        )
+        (self.root / "events/events.jsonl").write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "event": "project.initialized",
+                            "schema_version": 3,
+                            "project_id": "validation-v3",
+                            "workflow": "knowledge-video",
+                        }
+                    )
+                ]
+                + [
+                    json.dumps({"event": "project.phase_changed", "phase": phase})
+                    for phase in phases
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (self.root / "project.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 3,
+                    "project_id": "validation-v3",
+                    "workflow": "knowledge-video",
+                    "phase": "production_ready",
+                }
+            ),
+            encoding="utf-8",
+        )
+        with patch(
+            "scripts.toolkit.validation.validate_project_authoritative_voice_bundle",
+            return_value={"ok": True, "voice_timing_id": "voice-timing-v1", "issues": []},
+        ):
+            result = validate_project(self.root)
+
+        self.assertIn(
+            "timing-validation-required",
+            {item["code"] for item in result["errors"]},
+        )
+
     def test_legacy_semantic_beats_projection_rejects_new_timing_fields_before_graph(self):
         """Catches persisted legacy timing projections smuggling new contract fields."""
         cases = (

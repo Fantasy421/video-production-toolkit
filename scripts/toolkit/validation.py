@@ -261,14 +261,22 @@ def _check_v3_phase_gates(
             default=None,
         )
 
-    voice_timing = current("voice-timing")
-    if voice_timing is None or voice_timing.get("timing_kind") != "real":
+    voice_bundle = validate_project_authoritative_voice_bundle(root, artifacts.values())
+    voice_timing_id = voice_bundle.get("voice_timing_id")
+    voice_timing = artifacts.get(voice_timing_id) if isinstance(voice_timing_id, str) else None
+    if (
+        not voice_bundle.get("ok")
+        or voice_timing is None
+        or voice_timing.get("type") != "voice-timing"
+        or voice_timing.get("status") != "approved"
+        or voice_timing.get("timing_kind") != "real"
+    ):
         errors.append(_issue("voice-timing-required"))
         return
     timed = current(
         "timed-semantic-beats", voice_timing_id=voice_timing.get("artifact_id")
     )
-    if timed is None:
+    if timed is None or voice_timing.get("artifact_id") not in timed.get("parents", []):
         errors.append(_issue("timed-semantic-beats-required"))
         return
     if V3_PHASES.index(phase) < V3_PHASES.index("storyboard_timed"):
@@ -276,14 +284,25 @@ def _check_v3_phase_gates(
     scenes = current(
         "scene-timing-contracts", timed_semantic_beats_id=timed.get("artifact_id")
     )
-    if scenes is None:
+    if scenes is None or timed.get("artifact_id") not in scenes.get("parents", []):
         errors.append(_issue("scene-timing-contracts-required"))
         return
     if phase != "production_ready":
         return
-    validation = current("timing-validation")
+    validation_candidates = [
+        item
+        for item in artifacts.values()
+        if item.get("type") == "timing-validation"
+        and item.get("status") == "approved"
+        and scenes.get("artifact_id") in item.get("parents", [])
+    ]
+    validation = max(
+        validation_candidates,
+        key=lambda item: (item.get("version", 0), item.get("artifact_id", "")),
+        default=None,
+    )
     payload = None
-    if validation is not None and scenes.get("artifact_id") in validation.get("parents", []):
+    if validation is not None:
         source = _safe_project_path(root, validation.get("path"))
         payload = _read_json_object(source) if source is not None else None
     if not isinstance(payload, dict) or payload.get("status") != "passed":

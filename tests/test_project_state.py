@@ -209,6 +209,72 @@ class ProjectStateTests(unittest.TestCase):
                 {"event": "project.phase_changed", "phase": "production_ready"},
             )
 
+    def test_v3_gate_uses_authoritative_voice_timing_not_an_orphan_chain(self):
+        initialize_project(
+            self.root, "kv-v3-orphan", "knowledge-video", schema_version=3
+        )
+        for phase in (
+            "semantic_beats_confirmed",
+            "voiceover_ready",
+            "timing_bound",
+            "storyboard_timed",
+            "representative_scene_ready",
+        ):
+            append_event(self.root, {"event": "project.phase_changed", "phase": phase})
+
+        records = [
+            {"artifact_id": "voice-timing-v1", "type": "voice-timing", "status": "approved", "timing_kind": "real", "version": 1},
+            {"artifact_id": "voice-timing-v2-orphan", "type": "voice-timing", "status": "approved", "timing_kind": "real", "version": 2},
+            {"artifact_id": "timed-v2-orphan", "type": "timed-semantic-beats", "status": "approved", "version": 2, "voice_timing_id": "voice-timing-v2-orphan"},
+            {"artifact_id": "scene-v2-orphan", "type": "scene-timing-contracts", "status": "approved", "version": 2, "timed_semantic_beats_id": "timed-v2-orphan"},
+            {"artifact_id": "validation-v2-orphan", "type": "timing-validation", "status": "approved", "version": 2, "parents": ["scene-v2-orphan"], "path": "metadata/validation-v2-orphan.json"},
+        ]
+        (self.root / "metadata").mkdir()
+        (self.root / "metadata/validation-v2-orphan.json").write_text(
+            json.dumps({"status": "passed"}), encoding="utf-8"
+        )
+        with patch(
+            "scripts.toolkit.project_state._runtime_artifacts",
+            return_value=records,
+        ), patch(
+            "scripts.toolkit.project_state.validate_project_authoritative_voice_bundle",
+            return_value={"ok": True, "voice_timing_id": "voice-timing-v1"},
+        ):
+            with self.assertRaisesRegex(ValueError, "current timed semantic beats"):
+                append_event(
+                    self.root,
+                    {"event": "project.phase_changed", "phase": "production_ready"},
+                )
+            recovery = project_recovery_view(self.root, artifacts=records)
+            self.assertEqual(
+                ["TIMED_SEMANTIC_BEATS_REQUIRED"],
+                recovery["migration_requirement"]["issues"],
+            )
+
+    def test_v3_gate_fails_closed_on_malformed_persisted_artifact(self):
+        initialize_project(
+            self.root, "kv-v3-malformed", "knowledge-video", schema_version=3
+        )
+        for phase in (
+            "semantic_beats_confirmed",
+            "voiceover_ready",
+            "timing_bound",
+            "storyboard_timed",
+            "representative_scene_ready",
+        ):
+            append_event(self.root, {"event": "project.phase_changed", "phase": phase})
+        malformed = self.root / "artifacts" / "timed-semantic-beats" / "malformed.json"
+        malformed.parent.mkdir(parents=True, exist_ok=True)
+        malformed.write_text(
+            json.dumps({"artifact_id": "malformed", "type": "timed-semantic-beats"}),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "invalid artifact metadata"):
+            append_event(
+                self.root,
+                {"event": "project.phase_changed", "phase": "production_ready"},
+            )
+
     def test_v3_recovery_is_read_only_and_reports_compact_timing_blocker(self):
         event_log = self.root / "events" / "events.jsonl"
         event_log.parent.mkdir(parents=True)

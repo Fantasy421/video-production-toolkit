@@ -232,6 +232,44 @@ class InvalidationTests(unittest.TestCase):
         self.assertIn("media", self.rules["style-pack"])
         self.assertNotIn("scene-media", self.rules)
 
+    def test_semantic_beats_change_invalidates_the_full_timed_production_dag(self):
+        """Catches split timing invalidation stopping at timed beats."""
+        artifacts = [
+            {"artifact_id": "semantic-v2", "type": "semantic-beats", "parents": []},
+            {"artifact_id": "voice-v1", "type": "voice-timing", "parents": []},
+            {"artifact_id": "timed-v2", "type": "timed-semantic-beats", "parents": ["semantic-v2", "voice-v1"]},
+            {"artifact_id": "scene-timing-v2", "type": "scene-timing-contracts", "parents": ["timed-v2"]},
+            {"artifact_id": "storyboard-v2", "type": "storyboard", "parents": ["scene-timing-v2"]},
+            {"artifact_id": "scene-v2", "type": "scene-contract", "parents": ["storyboard-v2"]},
+            {"artifact_id": "media-v2", "type": "media", "parents": ["scene-v2"]},
+            {"artifact_id": "motion-v2", "type": "motion-graphic", "parents": ["media-v2"]},
+            {"artifact_id": "timeline-v2", "type": "timeline", "parents": ["motion-v2"]},
+        ]
+
+        self.assertEqual(
+            {
+                "timed-v2", "scene-timing-v2", "storyboard-v2", "scene-v2",
+                "media-v2", "motion-v2", "timeline-v2",
+            },
+            invalidate_descendants(artifacts, "semantic-v2", self.rules),
+        )
+
+    def test_voice_only_change_does_not_invalidate_stage_a_semantic_beats(self):
+        """Catches recursive timing invalidation crossing back into Stage A."""
+        artifacts = [
+            {"artifact_id": "semantic-v1", "type": "semantic-beats", "parents": []},
+            {"artifact_id": "voice-v1", "type": "voice-timing", "parents": []},
+            {"artifact_id": "timed-v1", "type": "timed-semantic-beats", "parents": ["semantic-v1", "voice-v1"]},
+            {"artifact_id": "scene-timing-v1", "type": "scene-timing-contracts", "parents": ["timed-v1"]},
+            {"artifact_id": "storyboard-v1", "type": "storyboard", "parents": ["scene-timing-v1"]},
+        ]
+
+        stale = invalidate_descendants(artifacts, "voice-v1", self.rules)
+        self.assertNotIn("semantic-v1", stale)
+        self.assertEqual(
+            {"timed-v1", "scene-timing-v1", "storyboard-v1"}, stale
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

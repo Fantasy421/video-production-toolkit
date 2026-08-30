@@ -12,6 +12,7 @@ from typing import Any, Iterable, Iterator, Mapping, Optional
 from .runtime_paths import project_path, project_root, storage_directory
 from .voice import validate_project_authoritative_voice_bundle
 from .invalidation import invalidated_artifact_ids
+from .artifacts import validate_artifact_record
 
 
 PHASES = (
@@ -245,16 +246,20 @@ def _v3_recovery_issues(
         return []
     records = [dict(item) for item in artifacts if isinstance(item, Mapping)]
     approved = [item for item in records if item.get("status") == "approved"]
-    voice = max(
-        (item for item in approved if item.get("type") == "voice-timing"),
-        key=lambda item: (item.get("version", 0), item.get("artifact_id", "")),
-        default=None,
-    )
+    voice_bundle = validate_project_authoritative_voice_bundle(root, records)
+    voice_timing_id = voice_bundle.get("voice_timing_id")
+    voice_matches = [
+        item
+        for item in approved
+        if item.get("type") == "voice-timing"
+        and item.get("artifact_id") == voice_timing_id
+    ]
+    voice = voice_matches[0] if len(voice_matches) == 1 else None
     issues: list[str] = []
     if (
         voice is None
         or voice.get("timing_kind") != "real"
-        or not validate_project_authoritative_voice_bundle(root, records).get("ok")
+        or not voice_bundle.get("ok")
     ):
         issues.append("VOICE_TIMING_REQUIRED")
         return issues
@@ -271,6 +276,9 @@ def _v3_recovery_issues(
     if timed is None:
         issues.append("TIMED_SEMANTIC_BEATS_REQUIRED")
         return issues
+    if voice.get("artifact_id") not in timed.get("parents", []):
+        issues.append("TIMED_SEMANTIC_BEATS_REQUIRED")
+        return issues
     if V3_PHASES.index(phase) >= V3_PHASES.index("storyboard_timed"):
         scenes = max(
             (
@@ -282,7 +290,7 @@ def _v3_recovery_issues(
             key=lambda item: (item.get("version", 0), item.get("artifact_id", "")),
             default=None,
         )
-        if scenes is None:
+        if scenes is None or timed.get("artifact_id") not in scenes.get("parents", []):
             issues.append("SCENE_TIMING_CONTRACTS_REQUIRED")
         elif phase == "production_ready":
             validations = [
@@ -494,14 +502,28 @@ def _validate_v3_phase_gate(root: Path, phase: str) -> None:
         candidates = by_type.get(artifact_type, [])
         return max(candidates, key=lambda item: (item.get("version", 0), item["artifact_id"]), default=None)
 
-    voice_timing = latest("voice-timing")
+    voice_timing_id = voice_bundle.get("voice_timing_id")
+    voice_timing_matches = [
+        item
+        for item in by_type.get("voice-timing", [])
+        if item.get("artifact_id") == voice_timing_id
+    ]
+    voice_timing = voice_timing_matches[0] if len(voice_timing_matches) == 1 else None
     if voice_timing is None or voice_timing.get("timing_kind") != "real":
         raise ValueError("production_ready requires current real voice timing")
     timed = latest("timed-semantic-beats")
-    if timed is None or timed.get("voice_timing_id") != voice_timing.get("artifact_id"):
+    if (
+        timed is None
+        or timed.get("voice_timing_id") != voice_timing.get("artifact_id")
+        or voice_timing.get("artifact_id") not in timed.get("parents", [])
+    ):
         raise ValueError("production_ready requires current timed semantic beats")
     scenes = latest("scene-timing-contracts")
-    if scenes is None or scenes.get("timed_semantic_beats_id") != timed.get("artifact_id"):
+    if (
+        scenes is None
+        or scenes.get("timed_semantic_beats_id") != timed.get("artifact_id")
+        or timed.get("artifact_id") not in scenes.get("parents", [])
+    ):
         raise ValueError("production_ready requires current scene timing contracts")
 
     validation = latest("timing-validation")
@@ -520,23 +542,32 @@ def _validate_v3_phase_gate(root: Path, phase: str) -> None:
 
 
 def _runtime_artifacts(root: Path) -> list[dict[str, Any]]:
-    """Read only structurally valid Artifact records for a state gate."""
+    """Read only strictly valid persisted Artifact records for a state gate."""
     artifacts_root = project_path(root, "artifacts")
     if not artifacts_root.is_dir() or artifacts_root.is_symlink():
         return []
     records: list[dict[str, Any]] = []
     for type_directory in sorted(artifacts_root.iterdir()):
+        if type_directory.name == ".locks":
+            continue
         if not type_directory.is_dir() or type_directory.is_symlink():
             continue
         for path in sorted(type_directory.glob("*.json")):
             if path.is_symlink():
-                continue
+                raise ValueError(f"invalid artifact metadata: {path}")
             try:
                 value = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, TypeError, ValueError, json.JSONDecodeError):
-                continue
-            if isinstance(value, dict):
-                records.append(value)
+            except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+                raise ValueError(f"invalid artifact metadata: {path}") from error
+            if not isinstance(value, dict):
+                raise ValueError(f"invalid artifact metadata: {path}")
+            try:
+                validate_artifact_record(value)
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"invalid artifact metadata: {path}") from error
+            if path.name != f"{value.get('artifact_id')}.json":
+                raise ValueError(f"invalid artifact metadata: {path}")
+            records.append(value)
     return records
 
 

@@ -4,5 +4,5 @@
   "version": "0.1.4",
   "description": "Recoverable, user-directed knowledge-video production workflows",
   "skills": "./skills/",
-  "release_fingerprint": "sha256:691d585ae84e4d00839686b118bb1004bb8164bdd07286c1892dc2bfca24f25a"
+  "release_fingerprint": "sha256:411940cc14a980c5b1ef2fc4e50feae1180c2fd1268b868bcaffa4fcbb94825f"
 }
