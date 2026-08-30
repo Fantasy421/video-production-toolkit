@@ -54,6 +54,7 @@ script, voice, or A-roll:
    - `representative-slice.produce` → `timeline-assembler` (delegated secondary capability)
    - `structure.validate` → `structural-validator`
    - `review.package` → `video-review-packager`
+   - `timing-repair` → `structural-validator` (timing-only repair)
 
 4. Load only that child entrypoint and only route compact artifact IDs, paths, summaries, and contract results. The child receives its claimed task envelope and returns one task-result envelope with a compact `visual_media_handoff` when applicable; persist the result through the task state manager. Do not load or return visual-media payloads in the coordinator context. The coordinator may relay the single declared review-preview path to the user but must never dereference it.
 5. Stop for unknown capabilities, invalid task contracts, or absent approval

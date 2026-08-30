@@ -304,15 +304,8 @@ def _v3_recovery_issues(
                 key=lambda item: (item.get("version", 0), item.get("artifact_id", "")),
                 default=None,
             )
-            payload = None
-            if validation is not None and isinstance(validation.get("path"), str):
-                try:
-                    payload = json.loads(
-                        project_path(root, validation["path"]).read_text(encoding="utf-8")
-                    )
-                except (OSError, TypeError, ValueError, json.JSONDecodeError):
-                    payload = None
-            if not isinstance(payload, dict) or payload.get("status") != "passed":
+            compact = validation.get("timing_validation") if validation else None
+            if not isinstance(compact, Mapping) or compact.get("status") != "passed":
                 issues.append("TIMING_VALIDATION_REQUIRED")
     return issues
 
@@ -529,15 +522,8 @@ def _validate_v3_phase_gate(root: Path, phase: str) -> None:
     validation = latest("timing-validation")
     if validation is None or scenes.get("artifact_id") not in validation.get("parents", []):
         raise ValueError("production_ready requires passed timing validation")
-    validation_path = validation.get("path")
-    if not isinstance(validation_path, str):
-        raise ValueError("production_ready requires passed timing validation")
-    path = project_path(root, validation_path)
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
-        raise ValueError("production_ready requires passed timing validation") from error
-    if not isinstance(payload, dict) or payload.get("status") != "passed":
+    compact = validation.get("timing_validation")
+    if not isinstance(compact, Mapping) or compact.get("status") != "passed":
         raise ValueError("production_ready requires passed timing validation")
 
 

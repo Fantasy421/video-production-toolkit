@@ -67,6 +67,7 @@ COORDINATOR_SAFE_ARTIFACT_FIELDS = (
     "checksum",
     "readiness",
     "historical",
+    "timing_validation",
 )
 ARTIFACT_BUSINESS_METADATA_FIELDS = frozenset(
     {
@@ -109,6 +110,7 @@ ARTIFACT_BUSINESS_METADATA_FIELDS = frozenset(
         "voice_id",
         "voice_timing_id",
         "voiceover_id",
+        "timing_validation",
     }
 )
 ARTIFACT_ALLOWED_FIELDS = frozenset(COORDINATOR_SAFE_ARTIFACT_FIELDS) | ARTIFACT_BUSINESS_METADATA_FIELDS
@@ -622,6 +624,17 @@ def _validate_timing_artifact_contract(
         _validate_voice_timing_fields(
             artifact, allow_legacy_voice_timing=allow_legacy_voice_timing
         )
+        return
+    if artifact_type == "timing-validation":
+        _validate_exact_timing_fields(
+            artifact,
+            {"timing_validation"},
+            set(),
+        )
+        if "timing_validation" in artifact:
+            from .timing_validation import validate_timing_validation_result
+
+            validate_timing_validation_result(artifact["timing_validation"])
         return
     if artifact_type not in TIMING_ARTIFACT_TYPES:
         if timing_fields & set(artifact):

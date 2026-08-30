@@ -54,6 +54,7 @@
     "target_id": {"$ref": "#/$defs/safeId"},
     "text": {"type": "string", "minLength": 1, "maxLength": 8192},
     "timing_kind": {"$ref": "#/$defs/token64"},
+    "timing_validation": {"$ref": "timing-validation.schema.json"},
     "uploaded_audio_id": {"$ref": "#/$defs/safeId"},
     "voice_id": {"$ref": "#/$defs/safeId"},
     "voice_timing_id": {"$ref": "#/$defs/safeId", "deprecated": true, "readOnly": true},

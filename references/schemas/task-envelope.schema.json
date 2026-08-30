@@ -19,7 +19,8 @@
         "structure.validate",
         "review.package",
         "captions.produce",
-        "representative-slice.produce"
+        "representative-slice.produce",
+        "timing-repair"
       ]
     },
     "inputs": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
@@ -148,7 +149,28 @@
     }
   },
   "$defs": {
-    "safeId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"}
+    "safeId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"},
+    "timingRepairConstraints": {
+      "type": "object",
+      "required": ["visual_media_operation", "timing_validation_id", "affected_beat_ids", "issue_counts", "examples"],
+      "properties": {
+        "visual_media_operation": {"const": "none"},
+        "timing_validation_id": {"$ref": "#/$defs/safeId"},
+        "affected_beat_ids": {"type": "array", "minItems": 1, "maxItems": 512, "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
+        "issue_counts": {
+          "type": "object",
+          "propertyNames": {"enum": ["VOICE_TIMING_REQUIRED", "KEYWORD_ANCHOR_MISSING", "VISUAL_BEFORE_ALLOWED_WINDOW", "VISUAL_AFTER_ALLOWED_WINDOW", "BEAT_OUTSIDE_SCENE", "MULTIPLE_PRIMARY_CARRIERS", "SUPPORT_LAYER_OVERFLOW", "KEYWORD_EVENTS_TOO_CLOSE", "SCENE_TOO_SHORT", "STALE_VOICE_TIMING"]},
+          "additionalProperties": {"type": "integer", "minimum": 1, "maximum": 1000000},
+          "minProperties": 1
+        },
+        "examples": {
+          "type": "object",
+          "propertyNames": {"enum": ["VOICE_TIMING_REQUIRED", "KEYWORD_ANCHOR_MISSING", "VISUAL_BEFORE_ALLOWED_WINDOW", "VISUAL_AFTER_ALLOWED_WINDOW", "BEAT_OUTSIDE_SCENE", "MULTIPLE_PRIMARY_CARRIERS", "SUPPORT_LAYER_OVERFLOW", "KEYWORD_EVENTS_TOO_CLOSE", "SCENE_TOO_SHORT", "STALE_VOICE_TIMING"]},
+          "additionalProperties": {"type": "array", "maxItems": 3, "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true}
+        }
+      },
+      "additionalProperties": false
+    }
   },
   "allOf": [
     {
@@ -240,6 +262,17 @@
               }
             ]
           }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"capability": {"const": "timing-repair"}},
+        "required": ["capability"]
+      },
+      "then": {
+        "properties": {
+          "constraints": {"$ref": "#/$defs/timingRepairConstraints"}
         }
       }
     }

@@ -88,6 +88,7 @@ TASK_CAPABILITIES = frozenset(
         "review.package",
         "captions.produce",
         "representative-slice.produce",
+        "timing-repair",
     }
 )
 VOICE_TIMING_CAPABILITIES = frozenset(
@@ -101,6 +102,36 @@ VOICE_TIMING_CAPABILITIES = frozenset(
         "representative-slice.produce",
     }
 )
+
+
+def build_timing_repair_envelope(
+    task_id: str,
+    timing_validation_id: str,
+    affected_beat_ids: list[str],
+    validation_result: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Build the single bounded repair envelope from a compact worker result."""
+    from scripts.toolkit.timing_validation import validate_timing_validation_result
+
+    compact = validate_timing_validation_result(validation_result)
+    if compact["status"] != "blocked":
+        raise ValueError("timing repair requires a blocked timing validation")
+    envelope = {
+        "task_id": task_id,
+        "capability": "timing-repair",
+        "inputs": [timing_validation_id],
+        "adapter_preferences": ["chatcut"],
+        "output_contract": "timing-validation-v1",
+        "constraints": {
+            "visual_media_operation": "none",
+            "timing_validation_id": timing_validation_id,
+            "affected_beat_ids": list(affected_beat_ids),
+            "issue_counts": compact["issue_counts"],
+            "examples": compact["examples"],
+        },
+    }
+    _validate_current_envelope(envelope)
+    return envelope
 
 
 def create_task(root: Path, envelope: dict[str, Any]) -> Path:
@@ -831,6 +862,8 @@ def _validate_envelope_shape(envelope: dict[str, Any]) -> None:
     _validate_adapters(envelope["adapter_preferences"])
     if not isinstance(envelope["constraints"], dict):
         raise ValueError("constraints must be an object")
+    if envelope["capability"] == "timing-repair":
+        _validate_timing_repair_constraints(envelope["constraints"])
 
 
 def _validate_current_envelope(envelope: dict[str, Any]) -> None:
@@ -843,6 +876,41 @@ def _validate_current_envelope(envelope: dict[str, Any]) -> None:
         raise ValueError("legacy image authority is read-only")
     validate_image_task_constraints(constraints)
     _validate_current_visual_operation_subset(envelope)
+
+
+def _validate_timing_repair_constraints(constraints: dict[str, Any]) -> None:
+    """Keep the repair relay closed to compact timing metadata only."""
+    from scripts.toolkit.timing_validation import validate_timing_validation_result
+
+    allowed = {
+        "visual_media_operation",
+        "timing_validation_id",
+        "affected_beat_ids",
+        "issue_counts",
+        "examples",
+    }
+    if set(constraints) - allowed:
+        raise ValueError("timing-repair constraints must be compact and closed")
+    if constraints.get("visual_media_operation") != "none":
+        raise ValueError("timing-repair must be non-visual")
+    _require_safe_id(constraints.get("timing_validation_id"), "timing_validation_id")
+    beat_ids = constraints.get("affected_beat_ids")
+    if not isinstance(beat_ids, list) or not beat_ids or len(beat_ids) > 512:
+        raise ValueError("timing-repair affected Beat IDs are invalid")
+    for beat_id in beat_ids:
+        _require_safe_id(beat_id, "affected_beat_ids")
+    if len(set(beat_ids)) != len(beat_ids):
+        raise ValueError("timing-repair affected Beat IDs must be unique")
+    compact = {
+        "status": "blocked",
+        "checks_run": 0,
+        "issue_counts": constraints.get("issue_counts"),
+        "examples": constraints.get("examples"),
+    }
+    validate_timing_validation_result(compact)
+    for code, ids in compact["examples"].items():
+        if not set(ids).issubset(set(beat_ids)):
+            raise ValueError(f"timing-repair examples must be affected Beat IDs: {code}")
 
 
 def validate_current_task_envelope(envelope: dict[str, Any]) -> None:

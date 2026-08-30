@@ -61,9 +61,9 @@ phase/scope combinations:
 | `visual_direction_previewed` | `voice.prepare` only; preview timing cannot authorize formal work |
 | `voiceover_ready` | timing binding |
 | `timing_bound` | formal `storyboard.plan` with current real timing |
-| `storyboard_timed` | representative-slice scene/motion/assembly with current scene timing |
+| `storyboard_timed` | one bounded `timing-repair` task when compact validation is blocked; otherwise representative-slice scene/motion/assembly with current scene timing |
 | `representative_scene_ready` | production readiness review |
-| `production_ready` (v3) | full production only after current real voice timing, timed beats, scene timing contracts, and passed compact timing validation |
+| `production_ready` (v3) | one bounded `timing-repair` task when compact validation is blocked; otherwise full production only after current real voice timing, timed beats, scene timing contracts, and passed compact timing validation |
 | `assembled` | `structure.validate` |
 | `review_ready` | `review.package` |
 | any valid phase | `project.manage` |

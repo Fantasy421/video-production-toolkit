@@ -22,6 +22,11 @@ return one bounded repair action for affected Beat IDs when timing is missing
 or stale; expose at most three Beat IDs per issue code and do not rewrite the
 source Artifact.
 
+The repair envelope is the non-visual `timing-repair` capability. Its closed
+constraints contain only the current `timing_validation_id`, affected Beat
+IDs, aggregate `issue_counts`, and bounded `examples`; after repair, routing
+waits for a current passed compact result.
+
 Owned capability: `project.manage`
 
 Allowed inputs: accept only one claimed task-envelope with capability

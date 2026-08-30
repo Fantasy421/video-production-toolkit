@@ -28,6 +28,7 @@ ISSUE_CODES = (
     "SCENE_TOO_SHORT",
     "STALE_VOICE_TIMING",
 )
+_ISSUE_CODE_SET = frozenset(ISSUE_CODES)
 
 # The timing row is a closed projection.  Timing lineage fields are optional
 # because the canonical scene row can be used when its parent DAG has already
@@ -90,6 +91,55 @@ _MIN_ENTRY_BEFORE_MS = 120
 _MAX_ENTRY_BEFORE_MS = 250
 _MIN_EXIT_AFTER_MS = 200
 _MAX_EXIT_AFTER_MS = 500
+
+
+def validate_timing_validation_result(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate and copy the compact result persisted by the timing worker."""
+    if not isinstance(result, Mapping):
+        raise ValueError("timing validation result must be an object")
+    allowed = {"status", "checks_run", "issue_counts", "examples"}
+    if set(result) - allowed:
+        raise ValueError("timing validation result has unknown fields")
+    status = result.get("status")
+    if status not in {"blocked", "passed"}:
+        raise ValueError("timing validation status is not recognized")
+    checks_run = result.get("checks_run")
+    if isinstance(checks_run, bool) or not isinstance(checks_run, int) or not 0 <= checks_run <= 1_000_000:
+        raise ValueError("timing validation checks_run is outside bounds")
+    if status == "passed":
+        if "issue_counts" in result or "examples" in result:
+            raise ValueError("passed timing validation cannot contain issues")
+        return {"status": status, "checks_run": checks_run}
+    if not isinstance(result.get("issue_counts"), Mapping) or not isinstance(result.get("examples"), Mapping):
+        raise ValueError("blocked timing validation requires issue counts and examples")
+    issue_counts: dict[str, int] = {}
+    examples: dict[str, list[str]] = {}
+    if not result["issue_counts"]:
+        raise ValueError("blocked timing validation requires an issue")
+    for code, count in result["issue_counts"].items():
+        if code not in _ISSUE_CODE_SET:
+            raise ValueError("timing validation issue code is not recognized")
+        if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= 1_000_000:
+            raise ValueError("timing validation issue count is outside bounds")
+        issue_counts[code] = count
+    for code, ids in result["examples"].items():
+        if code not in _ISSUE_CODE_SET or code not in issue_counts:
+            raise ValueError("timing validation example code is not recognized")
+        if not isinstance(ids, list) or len(ids) > _MAX_EXAMPLES:
+            raise ValueError("timing validation examples are outside bounds")
+        if not all(_safe_id(item) for item in ids):
+            raise ValueError("timing validation examples require safe Beat IDs")
+        if len(ids) != len(set(ids)):
+            raise ValueError("timing validation examples must be unique")
+        examples[code] = list(ids)
+    if set(examples) != set(issue_counts):
+        raise ValueError("timing validation examples must match issue counts")
+    return {
+        "status": status,
+        "checks_run": checks_run,
+        "issue_counts": issue_counts,
+        "examples": examples,
+    }
 
 
 def validate_timing_rows(

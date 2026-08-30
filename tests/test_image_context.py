@@ -424,6 +424,7 @@ class ImageSchemaTests(unittest.TestCase):
                 "review.package",
                 "captions.produce",
                 "representative-slice.produce",
+                "timing-repair",
             },
             set(envelope["properties"]["capability"]["enum"]),
         )

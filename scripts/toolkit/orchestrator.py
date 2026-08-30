@@ -53,7 +53,7 @@ _BASE_GATES = {
     "structure.validate": "storyboard-and-cost",
     "review.package": "storyboard-and-cost",
 }
-_UNGATED_CAPABILITIES = {"project.manage"}
+_UNGATED_CAPABILITIES = {"project.manage", "timing-repair"}
 _EXPANSION_SCOPES = {"full-production", "final-draft", "handoff", "export"}
 _VALID_DECISIONS = {"approved", "delegated", "skipped"}
 _GATE_TARGET_TYPES = {
@@ -80,6 +80,7 @@ _CAPABILITY_PHASES = {
     "representative-slice.produce": {"storyboard_ready"},
     "structure.validate": {"assembled"},
     "review.package": {"review_ready"},
+    "timing-repair": {"storyboard_timed", "production_ready"},
     "project.manage": set(PHASES),
 }
 
@@ -159,6 +160,13 @@ def _calculate_ready_tasks(
             continue
         if not timing_contract_inputs_are_current(candidate, by_id, root=root):
             continue
+        v3_project = (
+            state.get("schema_version") == 3
+            or phase in set(V3_PHASES) - {"production_ready"}
+            or "timing_validation_id" in candidate["constraints"]
+        )
+        if not _timing_route_is_current(candidate, by_id, phase, v3_project):
+            continue
         gate = _required_gate(candidate)
         if gate is not None and not _has_gate_approval(
             candidate, gate, by_id, normalized_approvals
@@ -175,8 +183,54 @@ def _calculate_ready_tasks(
 
     if not ready:
         return [], recovery_issues
-    selected = min(ready, key=lambda item: item["task_id"])
+    repairs = [item for item in ready if item["capability"] == "timing-repair"]
+    selected = min(repairs or ready, key=lambda item: item["task_id"])
     return [_action_name(selected)], recovery_issues
+
+
+def _timing_route_is_current(
+    candidate: Mapping[str, Any],
+    artifacts: Mapping[str, Mapping[str, Any]],
+    phase: Optional[str],
+    v3_project: bool,
+) -> bool:
+    """Gate v3 visual work on the worker's compact current validation result."""
+    capability = candidate["capability"]
+    validation_id = candidate["constraints"].get("timing_validation_id")
+    if capability == "timing-repair":
+        record = artifacts.get(validation_id)
+        return (
+            isinstance(validation_id, str)
+            and record is not None
+            and record.get("type") == "timing-validation"
+            and record.get("status") == "approved"
+            and isinstance(record.get("timing_validation"), Mapping)
+            and record["timing_validation"].get("status") == "blocked"
+        )
+    if (
+        not v3_project
+        or phase not in V3_PHASES
+        or V3_PHASES.index(phase) < V3_PHASES.index("storyboard_timed")
+        or capability
+        not in {
+            "scene.produce",
+            "motion.preview",
+            "motion.produce",
+            "timeline.assemble",
+            "captions.produce",
+            "representative-slice.produce",
+        }
+    ):
+        return True
+    record = artifacts.get(validation_id)
+    return (
+        isinstance(validation_id, str)
+        and record is not None
+        and record.get("type") == "timing-validation"
+        and record.get("status") == "approved"
+        and isinstance(record.get("timing_validation"), Mapping)
+        and record["timing_validation"].get("status") == "passed"
+    )
 
 
 def _capability_is_legal_in_phase(candidate: Mapping[str, Any], phase: str) -> bool:
@@ -199,6 +253,7 @@ def _capability_is_legal_in_phase(candidate: Mapping[str, Any], phase: str) -> b
             "captions.produce": {"storyboard_timed", "production_ready"},
             "structure.validate": set(),
             "review.package": set(),
+            "timing-repair": {"storyboard_timed", "production_ready"},
             "project.manage": set(V3_PHASES),
         }
         allowed_v3 = v3_allowed.get(capability)
@@ -339,8 +394,10 @@ def resume_project(root: Path) -> dict[str, Any]:
             coordinator_safe_artifact_projection(item)
             for item in effective_artifacts
         ],
-        "approvals": approvals,
-        "candidate_tasks": candidate_tasks,
+        "approvals": [_coordinator_safe_approval_projection(item) for item in approvals],
+        "candidate_tasks": [
+            _coordinator_safe_task_projection(item) for item in candidate_tasks
+        ],
         "locked_task_ids": locked,
         "completed_task_ids": completed,
         "ready_tasks": ready,
@@ -365,6 +422,54 @@ def _required_gate(candidate: Mapping[str, Any]) -> Optional[str]:
             f"task {candidate['task_id']} declares gate {declared!r}; expected {expected!r}"
         )
     return expected
+
+
+_SAFE_COORDINATOR_CONSTRAINTS = frozenset(
+    {
+        "visual_media_operation",
+        "required_gate",
+        "gate_target_id",
+        "production_scope",
+        "scene_id",
+        "voice_timing_id",
+        "timed_semantic_beats_id",
+        "scene_timing_contracts_id",
+        "timing_validation_id",
+        "affected_beat_ids",
+        "issue_counts",
+        "examples",
+    }
+)
+
+
+def _coordinator_safe_task_projection(task: Mapping[str, Any]) -> dict[str, Any]:
+    """Project persisted task authority without forwarding worker payloads."""
+    constraints = task.get("constraints", {})
+    legacy_keys = {"image_operation", "image_context"}
+    if set(constraints) <= legacy_keys and constraints:
+        # Preserve the historical read-only view for old callers; persisted
+        # current authority always takes the compact projection below.
+        return dict(task)
+    projected_constraints = {
+        key: constraints[key]
+        for key in _SAFE_COORDINATOR_CONSTRAINTS
+        if key in constraints
+    }
+    return {
+        "task_id": task["task_id"],
+        "capability": task["capability"],
+        "inputs": list(task["inputs"]),
+        "output_contract": task["output_contract"],
+        "constraints": projected_constraints,
+    }
+
+
+def _coordinator_safe_approval_projection(approval: Mapping[str, Any]) -> dict[str, str]:
+    return {
+        key: approval[key]
+        for key in ("approval_id", "target_id", "scope", "decision")
+        if isinstance(approval.get(key), str)
+    }
 
 
 def _has_gate_approval(

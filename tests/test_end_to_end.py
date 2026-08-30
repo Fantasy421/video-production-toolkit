@@ -25,6 +25,7 @@ from scripts.toolkit.orchestrator import (
     invalidate_artifact_descendants,
     resume_project,
 )
+from scripts.toolkit.project_state import project_recovery_view
 from scripts.toolkit.invalidation import invalidate_descendants
 from scripts.toolkit.project_state import (
     LEGACY_PHASES,
@@ -32,7 +33,12 @@ from scripts.toolkit.project_state import (
     append_event,
     initialize_project,
 )
-from scripts.toolkit.tasks import claim_task, complete_task, create_task
+from scripts.toolkit.tasks import (
+    build_timing_repair_envelope,
+    claim_task,
+    complete_task,
+    create_task,
+)
 from scripts.toolkit.timing_validation import validate_timing_rows
 from scripts.validate_package import _release_fingerprint
 from scripts.verify_installation import (
@@ -1756,6 +1762,175 @@ class CoordinatorTests(unittest.TestCase):
             self.assertEqual("license-v1", projected["artifact_id"])
             self.assertEqual("0123456789abcdef", projected["checksum"])
             self.assertNotIn("license", projected)
+
+    def test_public_v3_route_prioritizes_one_bounded_timing_repair_action(self):
+        """A blocked validation result owns one repair action, not seven tasks."""
+        validation_id = "timing-validation-v1"
+        repair = build_timing_repair_envelope(
+            "timing-repair-v1",
+            validation_id,
+            [f"B{index:02d}" for index in range(1, 8)],
+            {
+                "status": "blocked",
+                "checks_run": 7,
+                "issue_counts": {"VISUAL_BEFORE_ALLOWED_WINDOW": 7},
+                "examples": {
+                    "VISUAL_BEFORE_ALLOWED_WINDOW": ["B01", "B02", "B03"]
+                },
+            },
+        )
+        unrelated = {
+            "task_id": "project-follow-up-v1",
+            "capability": "project.manage",
+            "inputs": [],
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "project-v1",
+            "constraints": {"visual_media_operation": "none"},
+        }
+        validation = artifact(
+            validation_id,
+            "timing-validation",
+            timing_validation={
+                "status": "blocked",
+                "checks_run": 7,
+                "issue_counts": {"VISUAL_BEFORE_ALLOWED_WINDOW": 7},
+                "examples": {
+                    "VISUAL_BEFORE_ALLOWED_WINDOW": ["B01", "B02", "B03"]
+                },
+            },
+        )
+
+        self.assertEqual(
+            ["timing-repair"],
+            calculate_ready_tasks(
+                {
+                    "phase": "storyboard_timed",
+                    "candidate_tasks": [unrelated, repair],
+                },
+                [validation],
+                [],
+            ),
+        )
+        self.assertLessEqual(
+            len(repair["constraints"]["examples"]["VISUAL_BEFORE_ALLOWED_WINDOW"]),
+            3,
+        )
+
+        passed = dict(validation)
+        passed["timing_validation"] = {"status": "passed", "checks_run": 8}
+        self.assertEqual(
+            ["project.manage"],
+            calculate_ready_tasks(
+                {
+                    "phase": "storyboard_timed",
+                    "candidate_tasks": [unrelated, repair],
+                    "completed_task_ids": ["timing-repair-v1"],
+                },
+                [passed],
+                [],
+            ),
+        )
+
+    def test_resume_projects_task_constraints_and_approvals_without_freeform_payloads(self):
+        """Persisted prompts and approval notes never enter the coordinator view."""
+        with TemporaryDirectory() as folder:
+            project = Path(folder) / "project"
+            initialize_project(project, "kv-safe-task-view", "knowledge-video")
+            unsafe = {
+                "task_id": "manage-v1",
+                "capability": "project.manage",
+                "inputs": [],
+                "adapter_preferences": ["chatcut"],
+                "output_contract": "project-v1",
+                "constraints": {
+                    "visual_media_operation": "none",
+                    "prompt": "full prompt history",
+                    "narration": "full narration",
+                    "media": {"payload": "large"},
+                    "diagnostics": {"trace": "verbose"},
+                },
+            }
+            (project / "tasks" / "manage-v1.json").write_text(
+                json.dumps(unsafe), encoding="utf-8"
+            )
+            (project / "approvals" / "approval-v1.json").write_text(
+                json.dumps(
+                    {
+                        "approval_id": "approval-v1",
+                        "target_id": "project-v1",
+                        "scope": "content",
+                        "decision": "approved",
+                        "notes": "private freeform notes",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            resumed = resume_project(project)
+
+            self.assertEqual(
+                {
+                    "task_id": "manage-v1",
+                    "capability": "project.manage",
+                    "inputs": [],
+                    "output_contract": "project-v1",
+                    "constraints": {"visual_media_operation": "none"},
+                },
+                resumed["candidate_tasks"][0],
+            )
+            self.assertEqual(
+                [{"approval_id": "approval-v1", "target_id": "project-v1", "scope": "content", "decision": "approved"}],
+                resumed["approvals"],
+            )
+
+    def test_coordinator_recovery_uses_compact_timing_metadata_without_detail_path(self):
+        """Recovery never opens the timing worker's verbose result path."""
+        with TemporaryDirectory() as folder:
+            project = Path(folder) / "project"
+            initialize_project(project, "kv-compact-recovery", "knowledge-video", schema_version=3)
+            with (project / "events" / "events.jsonl").open("a", encoding="utf-8") as stream:
+                for phase in (
+                "semantic_beats_confirmed",
+                "voiceover_ready",
+                "timing_bound",
+                "storyboard_timed",
+                "representative_scene_ready",
+                "production_ready",
+                ):
+                    stream.write(
+                        json.dumps({"event": "project.phase_changed", "phase": phase}) + "\n"
+                    )
+            sentinel = project / "metadata" / "forbidden-detail.json"
+            records = [
+                artifact("voice-timing-v1", "voice-timing", timing_kind="real"),
+                artifact(
+                    "timed-v1", "timed-semantic-beats", parents=["voice-timing-v1"],
+                    voice_timing_id="voice-timing-v1", timing_kind="real",
+                ),
+                artifact(
+                    "scenes-v1", "scene-timing-contracts", parents=["timed-v1"],
+                    timed_semantic_beats_id="timed-v1",
+                ),
+                artifact(
+                    "validation-v1", "timing-validation", parents=["scenes-v1"],
+                    path="metadata/forbidden-detail.json",
+                    timing_validation={"status": "passed", "checks_run": 1},
+                ),
+            ]
+            original_read_text = Path.read_text
+
+            def read_text_without_sentinel(path, *args, **kwargs):
+                if path == sentinel:
+                    raise AssertionError("timing detail path opened")
+                return original_read_text(path, *args, **kwargs)
+
+            with patch(
+                "scripts.toolkit.project_state.validate_project_authoritative_voice_bundle",
+                return_value={"ok": True, "voice_timing_id": "voice-timing-v1"},
+            ), patch.object(Path, "read_text", new=read_text_without_sentinel):
+                recovery = project_recovery_view(project, records)
+
+            self.assertNotIn("TIMING_VALIDATION_REQUIRED", recovery.get("migration_requirement", {}).get("issues", []))
 
     def test_resume_blocks_a_tampered_unsafe_artifact_without_exposing_it(self):
         """Catches recovery trusting an Artifact payload added after publication."""

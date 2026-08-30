@@ -301,11 +301,8 @@ def _check_v3_phase_gates(
         key=lambda item: (item.get("version", 0), item.get("artifact_id", "")),
         default=None,
     )
-    payload = None
-    if validation is not None:
-        source = _safe_project_path(root, validation.get("path"))
-        payload = _read_json_object(source) if source is not None else None
-    if not isinstance(payload, dict) or payload.get("status") != "passed":
+    compact = validation.get("timing_validation") if validation else None
+    if not isinstance(compact, dict) or compact.get("status") != "passed":
         errors.append(_issue("timing-validation-required"))
 
 

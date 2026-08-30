@@ -154,6 +154,7 @@ NON_VISUAL_CAPABILITIES = frozenset(
         "structure.validate",
         "captions.produce",
         "representative-slice.produce",
+        "timing-repair",
     }
 )
 VISUAL_NAME_TOKENS = frozenset(
