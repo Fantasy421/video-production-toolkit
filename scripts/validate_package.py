@@ -513,7 +513,15 @@ def _bounded_windows(definitions: Mapping[str, Any]) -> bool:
         and window.get("items") is False
         and window.get("minItems") == 2
         and window.get("maxItems") == 2
-        and window.get("uniqueItems") is True
+    )
+
+
+def _timing_window_ruling(schema: Mapping[str, Any]) -> bool:
+    comment = schema.get("$comment")
+    return (
+        isinstance(comment, str)
+        and "Draft 2020-12 cannot compare tuple elements" in comment
+        and "not sufficient alone" in comment
     )
 
 
@@ -605,6 +613,7 @@ def _validate_timed_semantic_beats_schema(
         }
         or _mapping(beat.get("properties")).get("approved_anchor_commitment")
         != {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        or not _timing_window_ruling(schema)
         or not _bounded_windows(definitions)
     ):
         errors.append("invalid:timed-semantic-beats-contract")
@@ -637,6 +646,7 @@ def _validate_scene_timing_contracts_schema(
         != {"$ref": "#/$defs/carrier", "minLength": 1}
         or definitions.get("carrier") != _carrier_definition()
         or support != {"type": ["string", "null"], "minLength": 1, "maxLength": 128}
+        or not _timing_window_ruling(schema)
         or not _bounded_windows(definitions)
     ):
         errors.append("invalid:scene-timing-contracts-contract")

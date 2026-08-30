@@ -291,6 +291,14 @@ class RepresentativeSliceTests(unittest.TestCase):
         )["scenes"] = []
         with self.assertRaisesRegex(ValueError, "valid timing artifact"):
             validate_scene_contract(current_contracts[0], artifacts=omitted_beats)
+        changed_semantic = copy.deepcopy(current_artifacts)
+        semantic_record = next(
+            item for item in changed_semantic
+            if item.get("artifact_id") == "semantic-beats-v1"
+        )
+        semantic_record["beats"][0]["beat_id"] = "B99"
+        with self.assertRaisesRegex(ValueError, "exact semantic"):
+            validate_scene_contract(current_contracts[0], artifacts=changed_semantic)
         with self.assertRaisesRegex(ValueError, "authoritative voice timing"):
             validate_scene_contract(
                 {**current_contracts[0], "voice_timing_id": "voice-timing-v1"},

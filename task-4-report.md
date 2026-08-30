@@ -50,3 +50,19 @@ the already-cached offline UV Python 3.10 environment and dependency.
 - Fix-round verification: focused timing/contract/artifact/package checks pass;
   full offline suite passes with 540 tests and 4 skips; package validation is
   valid; release fingerprint equality is true; `git diff --check` passes.
+
+## Fix Round 2
+
+- Closed the remaining Scene Contract lineage gap by validating the resolved
+  semantic and narration records, requiring the semantic narration to be the
+  authoritative narration and a declared parent, and requiring ordered timed
+  and semantic Beat ID lists to match exactly.
+- Kept the established `[start_ms, end_ms]` timing interface because it is
+  consumed throughout the existing timing/runtime contracts. Draft 2020-12
+  cannot express a cross-element `start_ms < end_ms` relation; the schemas now
+  document this limitation explicitly and are structural only. Strict ordering
+  remains authoritative in Artifact admission, scene-timing construction, and
+  persisted graph validation, with package checks requiring the ruling marker.
+- Added representative semantic-lineage regressions and schema/runtime cases
+  for reversed and zero-duration windows. No standalone schema is treated as
+  sufficient timing authority.

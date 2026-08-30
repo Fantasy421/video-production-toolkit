@@ -221,8 +221,8 @@ class PackageTests(unittest.TestCase):
                     list(self.split_schema_validator(schema_name).iter_errors(record))
                 )
 
-    def test_split_timing_schema_rejects_equal_windows_like_runtime(self):
-        """Catches schema/runtime drift on zero-duration timing windows."""
+    def test_split_timing_schema_documents_runtime_ordering_authority(self):
+        """Catches a false Draft 2020-12 claim about tuple ordering."""
         scenes = {
             "artifact_id": "scene-timing-contracts-v1", "type": "scene-timing-contracts",
             "version": 1, "status": "approved", "parents": ["timed-semantic-beats-v1"],
@@ -234,9 +234,18 @@ class PackageTests(unittest.TestCase):
                 "support_layer": None, "visual_window_ms": [1000, 1000],
             }],
         }
-        self.assertTrue(
-            list(self.split_schema_validator("scene-timing-contracts.schema.json").iter_errors(scenes))
+        self.assertEqual(
+            [],
+            list(self.split_schema_validator("scene-timing-contracts.schema.json").iter_errors(scenes)),
         )
+        scenes["scenes"][0].update(
+            {"scene_window_ms": [2000, 1000], "visual_window_ms": [1900, 1800]}
+        )
+        self.assertEqual(
+            [],
+            list(self.split_schema_validator("scene-timing-contracts.schema.json").iter_errors(scenes)),
+        )
+        self.assertIn("not sufficient alone", self.schema("scene-timing-contracts.schema.json")["$comment"])
 
     def test_split_timing_schema_mutations_fail_after_fingerprint_refresh(self):
         """Catches a refreshed release blessing weaker timing boundaries."""

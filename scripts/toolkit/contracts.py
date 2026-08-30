@@ -5,6 +5,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Optional
 
 from .artifacts import validate_artifact_record
+from .semantic_beats import validate_semantic_beats
 from .voice import validate_authoritative_voice_bundle
 
 
@@ -126,7 +127,7 @@ def validate_scene_contract(
             raise ValueError("scene contract requires one authoritative voice timing")
         voice_timing = matches[0]
         if is_current:
-            _validate_scene_timing_artifact(value, records)
+            _validate_scene_timing_artifact(value, records, bundle["narration_id"])
     if voice_timing is not None:
         _validate_scene_interval_against_voice_timing(
             voice_timing, voice_timing_id, start, end
@@ -153,7 +154,9 @@ def _validate_current_scene_lineage(value: Mapping[str, Any]) -> None:
 
 
 def _validate_scene_timing_artifact(
-    contract: Mapping[str, Any], records: list[Mapping[str, Any]]
+    contract: Mapping[str, Any],
+    records: list[Mapping[str, Any]],
+    authoritative_narration_id: str,
 ) -> None:
     """Resolve and validate the complete current timing DAG for one scene."""
     from .scene_timing import validate_scene_timing_contracts
@@ -212,17 +215,31 @@ def _validate_scene_timing_artifact(
         or voice_id not in timed_record.get("parents", [])
         or len(semantic) != 1
         or len(voice) != 1
+        or semantic[0].get("narration_id") != authoritative_narration_id
         or not isinstance(semantic[0].get("narration_id"), str)
         or semantic[0]["narration_id"] not in semantic[0].get("parents", [])
         or len(narration) != 1
     ):
         raise ValueError("scene contract requires exact timed semantic and voice lineage")
     try:
+        validate_semantic_beats(
+            {
+                "narration_id": semantic[0]["narration_id"],
+                "beats": semantic[0].get("beats"),
+            }
+        )
         validate_artifact_record(timed_record)
         validate_artifact_record(voice[0])
+        validate_artifact_record(narration[0])
         validate_artifact_record(scene_timing[0])
     except ValueError as error:
         raise ValueError("scene contract requires valid timing artifact lineage") from error
+    timed_beat_ids = [beat.get("beat_id") for beat in timed_record.get("beats", [])]
+    semantic_beat_ids = [
+        beat.get("beat_id") for beat in semantic[0].get("beats", [])
+    ]
+    if timed_beat_ids != semantic_beat_ids:
+        raise ValueError("scene contract requires exact semantic and timed Beat IDs")
     scene_record = {
         "timed_semantic_beats_id": scene_timing[0]["timed_semantic_beats_id"],
         "scenes": scene_timing[0]["scenes"],
