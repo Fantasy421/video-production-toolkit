@@ -4,9 +4,752 @@ import shutil
 import struct
 from tempfile import TemporaryDirectory
 import unittest
-import zlib
+from unittest.mock import patch
 
 from scripts.toolkit.validation import validate_project
+from scripts.toolkit.timed_semantic_beats import bind_semantic_beats
+from tests.encoding_boundary_cases import (
+    HARMLESS_PROSE_CONTROLS,
+    STRUCTURAL_ENCODING_CASES,
+    TYPED_CHECKSUM_TEXT_CONTROL,
+    TYPED_SAFE_ID_CONTROL,
+)
+
+
+class PersistedVisualMediaValidationTests(unittest.TestCase):
+    """Metadata-only recovery checks for immutable visual task records."""
+
+    def setUp(self):
+        self.folder = TemporaryDirectory()
+        self.root = Path(self.folder.name)
+        (self.root / "artifacts").mkdir()
+        (self.root / "approvals").mkdir()
+        (self.root / "tasks").mkdir()
+        (self.root / "events").mkdir()
+        project = {
+            "schema_version": 1,
+            "project_id": "persisted-visual-validation",
+            "workflow": "knowledge-video",
+            "phase": "initialized",
+        }
+        (self.root / "project.json").write_text(
+            json.dumps(project), encoding="utf-8"
+        )
+        initialized = {
+            "event": "project.initialized",
+            "schema_version": 1,
+            "project_id": project["project_id"],
+            "workflow": project["workflow"],
+        }
+        (self.root / "events" / "events.jsonl").write_text(
+            json.dumps(initialized) + "\n", encoding="utf-8"
+        )
+
+    def tearDown(self):
+        self.folder.cleanup()
+
+    def write_task(self, task):
+        path = self.root / "tasks" / f"{task['task_id']}.json"
+        path.write_text(json.dumps(task), encoding="utf-8")
+        return path
+
+    def write_artifact(self, artifact_id, artifact_type, **metadata):
+        artifact = {
+            "artifact_id": artifact_id,
+            "type": artifact_type,
+            "version": 1,
+            "status": "approved",
+            "parents": [],
+            "path": f"metadata/{artifact_id}.json",
+            **metadata,
+        }
+        directory = self.root / "artifacts" / artifact_type
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{artifact_id}.json").write_text(
+            json.dumps(artifact), encoding="utf-8"
+        )
+        return artifact
+
+    def write_result(self, task_id, result, *, directory="results"):
+        destination = self.root / "tasks" / directory / f"{task_id}.json"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(result), encoding="utf-8")
+        return destination
+
+    @staticmethod
+    def scene_context(scene_id="scene-contract-S01-v1", *, allowed=None):
+        return {
+            "scope_identity": {"kind": "scene-contract", "id": scene_id},
+            "allowed_artifact_ids": list(allowed or []),
+            "historical_access": "character-only",
+            "continuity_exception": None,
+            "max_review_previews": 0,
+            "context_budget_bytes": 32_768,
+        }
+
+    def current_visual_task(self, *, task_id="visual-task", inputs=None, **constraints):
+        values = {
+            "visual_media_operation": "video-generate",
+            "visual_media_context": self.scene_context(),
+            "execution_context": "isolated-child-agent",
+            **constraints,
+        }
+        return {
+            "task_id": task_id,
+            "capability": "visual.preview",
+            "inputs": list(inputs or ["scene-contract-S01-v1"]),
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "scene-video-v1",
+            "constraints": values,
+        }
+
+    @staticmethod
+    def result_for(task_id, artifact_ids, *, handoff=None, **extra):
+        result = {
+            "task_id": task_id,
+            "status": "succeeded",
+            "inputs": ["scene-contract-S01-v1"],
+            "artifacts": list(artifact_ids),
+            "checks": [],
+            "warnings": [],
+            "worker_id": "isolated-worker",
+            "claim_token": "claim-token",
+            **extra,
+        }
+        if handoff is not None:
+            result["visual_media_handoff"] = handoff
+        return result
+
+    @staticmethod
+    def video_handoff(artifact_id="scene-output-v1"):
+        return {
+            "artifact_ids": [artifact_id],
+            "paths": [f"media/{artifact_id}.mp4"],
+            "media": {
+                "kind": "video",
+                "format": "mp4",
+                "mime_type": "video/mp4",
+            },
+            "checks": [],
+            "issues": [],
+            "summary": "ready",
+            "review_preview_path": None,
+        }
+
+    def assert_validation_preserves(self, *paths):
+        event_path = self.root / "events" / "events.jsonl"
+        observed = (event_path, *paths)
+        before = {path: path.read_bytes() for path in observed}
+        result = validate_project(self.root)
+        for path, contents in before.items():
+            self.assertEqual(contents, path.read_bytes())
+        return result
+
+    def assert_only_issue_for(self, result, path, code):
+        self.assertEqual(
+            {code},
+            {
+                issue["code"]
+                for issue in result["errors"]
+                if issue.get("path") == path.relative_to(self.root).as_posix()
+            },
+        )
+
+    @staticmethod
+    def nonvisual_task(task_id, *, inputs=None):
+        return {
+            "task_id": task_id,
+            "capability": "project.manage",
+            "inputs": list(inputs or []),
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "task-result-v1",
+            "constraints": {"visual_media_operation": "none"},
+        }
+
+    @staticmethod
+    def plain_result(task_id, *, status, inputs=None, artifacts=None):
+        return {
+            "task_id": task_id,
+            "status": status,
+            "inputs": list(inputs or []),
+            "artifacts": list(artifacts or []),
+            "checks": [],
+            "warnings": [],
+            "worker_id": "worker",
+            "claim_token": "claim-token",
+        }
+
+    @staticmethod
+    def legacy_video_task_without_scope():
+        return {
+            "task_id": "legacy-video-without-scope",
+            "capability": "scene.produce",
+            "inputs": [],
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "scene-video-v1",
+            "constraints": {"visual_operation": "non-image"},
+        }
+
+    @staticmethod
+    def legacy_image_context():
+        return {
+            "scope_identity": {
+                "kind": "scene-contract",
+                "id": "scene-contract-S01-v1",
+            },
+            "allowed_image_artifact_ids": [],
+            "allowed_character_pack_ids": [],
+            "forbidden_scene_image_access": True,
+            "max_review_previews": 0,
+            "context_budget": 1024,
+        }
+
+    def test_ambiguous_legacy_visual_task_is_blocked_without_history_rewrite(self):
+        """Catches recovery granting visual authority to an unscoped old record."""
+        path = self.write_task(self.legacy_video_task_without_scope())
+        event_path = self.root / "events" / "events.jsonl"
+        before_task = path.read_bytes()
+        before_events = event_path.read_bytes()
+
+        result = validate_project(self.root)
+
+        self.assert_only_issue_for(result, path, "legacy-visual-task-blocked")
+        self.assertEqual(before_task, path.read_bytes())
+        self.assertEqual(before_events, event_path.read_bytes())
+
+    def test_legacy_visual_task_missing_image_context_has_stable_blocked_issue(self):
+        """Catches generic envelope validation hiding ambiguous legacy authority."""
+        task = self.legacy_video_task_without_scope()
+        task["task_id"] = "legacy-generate-without-context"
+        task["constraints"] = {
+            "visual_operation": "image-generation",
+            "image_operation": "generate",
+        }
+        path = self.write_task(task)
+
+        result = self.assert_validation_preserves(path)
+
+        self.assert_only_issue_for(result, path, "legacy-visual-task-blocked")
+
+    def test_clear_persisted_legacy_visual_authority_remains_readable(self):
+        """Catches current-only enforcement removing explicit legacy compatibility."""
+        self.write_artifact("scene-contract-S01-v1", "scene-contract")
+        task = self.legacy_video_task_without_scope()
+        task["task_id"] = "legacy-image-generation"
+        task["inputs"] = ["scene-contract-S01-v1"]
+        task["output_contract"] = "scene-image-v1"
+        task["constraints"] = {
+            "visual_operation": "image-generation",
+            "image_operation": "generate",
+            "image_context": self.legacy_image_context(),
+        }
+        path = self.write_task(task)
+
+        result = self.assert_validation_preserves(path)
+
+        self.assertNotIn(
+            path.relative_to(self.root).as_posix(),
+            {issue.get("path") for issue in result["errors"]},
+        )
+
+    def test_persisted_record_cannot_mix_current_and_deprecated_visual_authority(self):
+        """Catches legacy compatibility broadening a current persisted record."""
+        self.write_artifact("scene-contract-S01-v1", "scene-contract")
+        task = self.current_visual_task(task_id="mixed-current-deprecated")
+        task["constraints"]["visual_operation"] = "non-image"
+        path = self.write_task(task)
+
+        result = self.assert_validation_preserves(path)
+
+        self.assert_only_issue_for(result, path, "invalid-task-envelope")
+
+    def test_unsafe_tasks_parent_stops_all_result_directory_traversal(self):
+        """Catches result recovery following a parent tasks symlink outside root."""
+        shutil.rmtree(self.root / "tasks")
+        with TemporaryDirectory() as outside_folder:
+            outside_tasks = Path(outside_folder) / "tasks"
+            (outside_tasks / "results").mkdir(parents=True)
+            probe = outside_tasks / "results" / "foreign-probe.json"
+            probe.write_text(json.dumps({"external_probe": True}), encoding="utf-8")
+            before = probe.read_bytes()
+            (self.root / "tasks").symlink_to(
+                outside_tasks, target_is_directory=True
+            )
+
+            result = validate_project(self.root)
+
+            self.assertEqual(before, probe.read_bytes())
+        self.assertIn(
+            {"code": "unsafe-runtime-storage", "storage": "tasks"},
+            result["errors"],
+        )
+        self.assertNotIn(
+            "tasks/results/foreign-probe.json",
+            {issue.get("path") for issue in result["errors"]},
+        )
+
+    def test_nondirectory_tasks_storage_is_rejected(self):
+        """Catches a regular file silently replacing the tasks storage boundary."""
+        shutil.rmtree(self.root / "tasks")
+        tasks_path = self.root / "tasks"
+        tasks_path.write_text(json.dumps({"not": "task storage"}), encoding="utf-8")
+        before = tasks_path.read_bytes()
+
+        result = validate_project(self.root)
+
+        self.assertEqual(before, tasks_path.read_bytes())
+        self.assertIn(
+            {"code": "unsafe-runtime-storage", "storage": "tasks"},
+            result["errors"],
+        )
+
+    def test_malformed_visual_scope_has_stable_context_issue(self):
+        """Catches recovery collapsing a malformed scope into a generic envelope error."""
+        self.write_artifact("scene-contract-S01-v1", "scene-contract")
+        task = self.current_visual_task()
+        task["constraints"]["visual_media_context"]["scope_identity"] = {
+            "kind": "whole-project",
+            "id": "project-v1",
+        }
+        path = self.write_task(task)
+
+        result = self.assert_validation_preserves(path)
+
+        self.assert_only_issue_for(result, path, "visual-media-context-invalid")
+
+    def test_visual_task_requires_isolated_child_during_recovery(self):
+        """Catches recovery accepting coordinator execution for persisted visual work."""
+        self.write_artifact("scene-contract-S01-v1", "scene-contract")
+        task = self.current_visual_task(execution_context="primary-coordinator")
+        path = self.write_task(task)
+
+        result = self.assert_validation_preserves(path)
+
+        self.assert_only_issue_for(result, path, "visual-media-isolation-required")
+
+    def test_historical_scene_video_input_is_forbidden(self):
+        """Catches historical scene footage being treated as character continuity."""
+        self.write_artifact("scene-contract-S01-v1", "scene-contract")
+        self.write_artifact(
+            "scene-history-v1",
+            "scene-video",
+            path="media/scene-history-v1.mp4",
+            media_kind="video",
+            mime_type="video/mp4",
+            historical=True,
+        )
+        context = self.scene_context(allowed=["scene-history-v1"])
+        task = self.current_visual_task(
+            inputs=["scene-contract-S01-v1", "scene-history-v1"],
+            visual_media_context=context,
+        )
+        path = self.write_task(task)
+
+        result = self.assert_validation_preserves(path)
+
+        self.assert_only_issue_for(result, path, "visual-media-input-forbidden")
+
+    def test_neighboring_scene_scope_is_forbidden(self):
+        """Catches one child receiving authority over an adjacent scene contract."""
+        self.write_artifact("scene-contract-S01-v1", "scene-contract")
+        self.write_artifact("scene-contract-S02-v1", "scene-contract")
+        task = self.current_visual_task(
+            inputs=["scene-contract-S01-v1", "scene-contract-S02-v1"]
+        )
+        path = self.write_task(task)
+
+        result = self.assert_validation_preserves(path)
+
+        self.assert_only_issue_for(result, path, "visual-media-input-forbidden")
+
+    def test_none_cannot_launder_a_visual_input(self):
+        """Catches a persisted none discriminator hiding declared video authority."""
+        self.write_artifact(
+            "scene-input-v1",
+            "scene-video",
+            path="media/scene-input-v1.mp4",
+            media_kind="video",
+            mime_type="video/mp4",
+            historical=False,
+        )
+        task = {
+            "task_id": "none-with-video",
+            "capability": "project.manage",
+            "inputs": ["scene-input-v1"],
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "task-result-v1",
+            "constraints": {"visual_media_operation": "none"},
+        }
+        path = self.write_task(task)
+
+        result = self.assert_validation_preserves(path)
+
+        self.assert_only_issue_for(result, path, "visual-media-context-invalid")
+
+    def test_undeclared_returned_media_has_stable_result_issue(self):
+        """Catches recovery trusting visual output from a persisted non-visual task."""
+        self.write_artifact(
+            "scene-output-v1",
+            "scene-video",
+            path="media/scene-output-v1.mp4",
+            media_kind="video",
+            mime_type="video/mp4",
+            historical=False,
+            output_contract="task-result-v1",
+        )
+        task = {
+            "task_id": "nonvisual-returned-video",
+            "capability": "project.manage",
+            "inputs": [],
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "task-result-v1",
+            "constraints": {"visual_media_operation": "none"},
+        }
+        task_path = self.write_task(task)
+        result_path = self.write_result(
+            task["task_id"],
+            {
+                "task_id": task["task_id"],
+                "status": "succeeded",
+                "inputs": [],
+                "artifacts": ["scene-output-v1"],
+                "checks": [],
+                "warnings": [],
+                "worker_id": "worker",
+                "claim_token": "claim-token",
+            },
+        )
+
+        result = self.assert_validation_preserves(task_path, result_path)
+
+        self.assert_only_issue_for(
+            result, result_path, "visual-media-result-invalid"
+        )
+
+    def test_leaked_result_payload_has_stable_result_issue(self):
+        """Catches recovery accepting embedded media payload fields from disk."""
+        self.write_artifact("scene-contract-S01-v1", "scene-contract")
+        self.write_artifact(
+            "scene-output-v1",
+            "scene-video",
+            path="media/scene-output-v1.mp4",
+            media_kind="video",
+            mime_type="video/mp4",
+            historical=False,
+            output_contract="scene-video-v1",
+        )
+        task = self.current_visual_task(task_id="visual-result-payload")
+        task_path = self.write_task(task)
+        persisted_result = self.result_for(
+            task["task_id"],
+            ["scene-output-v1"],
+            handoff=self.video_handoff(),
+            video_payload="not-even-media-bytes",
+        )
+        result_path = self.write_result(task["task_id"], persisted_result)
+
+        result = self.assert_validation_preserves(task_path, result_path)
+
+        self.assert_only_issue_for(
+            result, result_path, "visual-media-result-invalid"
+        )
+
+    def test_recovery_rejects_structural_encodings_in_persisted_result_text(self):
+        """Catches recovery trusting fragmented or low-entropy encoded error text."""
+        for index, (name, value) in enumerate(STRUCTURAL_ENCODING_CASES, 1):
+            with self.subTest(name=name):
+                task = self.nonvisual_task(f"encoded-result-{index}")
+                task_path = self.write_task(task)
+                result_path = self.write_result(
+                    task["task_id"],
+                    {
+                        **self.plain_result(task["task_id"], status="failed"),
+                        "error": value,
+                    },
+                    directory="status",
+                )
+                result = self.assert_validation_preserves(task_path, result_path)
+                self.assert_only_issue_for(
+                    result, result_path, "visual-media-result-invalid"
+                )
+
+        for index, (name, prose) in enumerate(HARMLESS_PROSE_CONTROLS):
+            task_id = (
+                TYPED_SAFE_ID_CONTROL
+                if index == 0
+                else f"safe-prose-result-{index + 1}"
+            )
+            safe_task = self.nonvisual_task(task_id)
+            safe_task_path = self.write_task(safe_task)
+            safe_result_path = self.write_result(
+                safe_task["task_id"],
+                {
+                    **self.plain_result(safe_task["task_id"], status="failed"),
+                    "checks": [TYPED_CHECKSUM_TEXT_CONTROL],
+                    "warnings": [prose],
+                    "error": prose,
+                },
+                directory="status",
+            )
+            with self.subTest(control=name):
+                validation = self.assert_validation_preserves(
+                    safe_task_path, safe_result_path
+                )
+                self.assertEqual(
+                    [],
+                    [
+                        issue
+                        for issue in validation["errors"]
+                        if issue.get("path")
+                        == safe_result_path.relative_to(self.root).as_posix()
+                    ],
+                )
+
+    def test_valid_nonvisual_task_and_result_remain_recoverable(self):
+        """Catches the visual recovery boundary rejecting ordinary compact results."""
+        self.write_artifact(
+            "report-v1", "report", output_contract="task-result-v1"
+        )
+        task = {
+            "task_id": "manage-project",
+            "capability": "project.manage",
+            "inputs": [],
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "task-result-v1",
+            "constraints": {"visual_media_operation": "none"},
+        }
+        task_path = self.write_task(task)
+        result_path = self.write_result(
+            task["task_id"],
+            {
+                "task_id": task["task_id"],
+                "status": "succeeded",
+                "inputs": [],
+                "artifacts": ["report-v1"],
+                "checks": ["metadata-valid"],
+                "warnings": [],
+                "worker_id": "worker",
+                "claim_token": "claim-token",
+            },
+        )
+
+        result = self.assert_validation_preserves(task_path, result_path)
+
+        self.assertNotIn(
+            "visual-media-result-invalid",
+            {issue["code"] for issue in result["errors"]},
+        )
+
+    def test_valid_isolated_visual_task_and_compact_result_remain_recoverable(self):
+        """Catches persisted validation rejecting a lifecycle-valid visual handoff."""
+        self.write_artifact("scene-contract-S01-v1", "scene-contract")
+        self.write_artifact(
+            "scene-output-v1",
+            "scene-video",
+            path="media/scene-output-v1.mp4",
+            media_kind="video",
+            mime_type="video/mp4",
+            historical=False,
+            output_contract="scene-video-v1",
+        )
+        task = self.current_visual_task(task_id="valid-visual-result")
+        task_path = self.write_task(task)
+        result_path = self.write_result(
+            task["task_id"],
+            self.result_for(
+                task["task_id"],
+                ["scene-output-v1"],
+                handoff=self.video_handoff(),
+            ),
+        )
+
+        result = self.assert_validation_preserves(task_path, result_path)
+
+        self.assertNotIn(
+            "visual-media-result-invalid",
+            {issue["code"] for issue in result["errors"]},
+        )
+
+    def test_result_directories_reject_statuses_from_the_wrong_lifecycle(self):
+        """Catches terminal and resumable records being accepted in either directory."""
+        self.write_artifact(
+            "report-v1", "report", output_contract="task-result-v1"
+        )
+        terminal_task = self.nonvisual_task("failed-in-results")
+        resumable_task = self.nonvisual_task("success-in-status")
+        terminal_task_path = self.write_task(terminal_task)
+        resumable_task_path = self.write_task(resumable_task)
+        failed_path = self.write_result(
+            terminal_task["task_id"],
+            self.plain_result(terminal_task["task_id"], status="failed"),
+            directory="results",
+        )
+        succeeded_path = self.write_result(
+            resumable_task["task_id"],
+            self.plain_result(
+                resumable_task["task_id"],
+                status="succeeded",
+                artifacts=["report-v1"],
+            ),
+            directory="status",
+        )
+
+        result = self.assert_validation_preserves(
+            terminal_task_path,
+            resumable_task_path,
+            failed_path,
+            succeeded_path,
+        )
+
+        self.assert_only_issue_for(
+            result, failed_path, "visual-media-result-invalid"
+        )
+        self.assert_only_issue_for(
+            result, succeeded_path, "visual-media-result-invalid"
+        )
+
+    def test_duplicate_task_result_across_directories_is_rejected(self):
+        """Catches one task reaching conflicting persisted lifecycle states."""
+        self.write_artifact(
+            "report-v1", "report", output_contract="task-result-v1"
+        )
+        task = self.nonvisual_task("duplicate-result")
+        task_path = self.write_task(task)
+        result_path = self.write_result(
+            task["task_id"],
+            self.plain_result(
+                task["task_id"],
+                status="succeeded",
+                artifacts=["report-v1"],
+            ),
+            directory="results",
+        )
+        status_path = self.write_result(
+            task["task_id"],
+            self.plain_result(task["task_id"], status="failed"),
+            directory="status",
+        )
+
+        result = self.assert_validation_preserves(
+            task_path, result_path, status_path
+        )
+
+        self.assert_only_issue_for(
+            result, result_path, "visual-media-result-invalid"
+        )
+        self.assert_only_issue_for(
+            result, status_path, "visual-media-result-invalid"
+        )
+
+    def test_malformed_duplicate_cannot_hide_a_conflicting_valid_result(self):
+        """Catches duplicate detection trusting only an invalid record's body ID."""
+        self.write_artifact(
+            "report-v1", "report", output_contract="task-result-v1"
+        )
+        task = self.nonvisual_task("duplicate-malformed")
+        task_path = self.write_task(task)
+        result_path = self.write_result(
+            task["task_id"],
+            self.plain_result(
+                task["task_id"],
+                status="succeeded",
+                artifacts=["report-v1"],
+            ),
+            directory="results",
+        )
+        status_path = self.write_result(
+            task["task_id"], {}, directory="status"
+        )
+
+        result = self.assert_validation_preserves(
+            task_path, result_path, status_path
+        )
+
+        self.assert_only_issue_for(
+            result, result_path, "visual-media-result-invalid"
+        )
+        self.assert_only_issue_for(
+            result, status_path, "visual-media-result-invalid"
+        )
+
+    def test_stale_result_requires_a_noncurrent_input(self):
+        """Catches a current-input success being mislabeled as stale recovery."""
+        self.write_artifact("input-v1", "input")
+        self.write_artifact(
+            "report-v1", "report", output_contract="task-result-v1"
+        )
+        task = self.nonvisual_task("fake-stale", inputs=["input-v1"])
+        task_path = self.write_task(task)
+        result_path = self.write_result(
+            task["task_id"],
+            self.plain_result(
+                task["task_id"],
+                status="succeeded",
+                inputs=["input-v1"],
+                artifacts=["report-v1"],
+            ),
+            directory="stale-results",
+        )
+
+        result = self.assert_validation_preserves(task_path, result_path)
+
+        self.assert_only_issue_for(
+            result, result_path, "visual-media-result-invalid"
+        )
+
+    def test_each_result_directory_accepts_its_legal_lifecycle_record(self):
+        """Catches lifecycle placement checks rejecting valid persisted recovery."""
+        self.write_artifact("stale-input-v1", "input", status="stale")
+        for artifact_id in ("terminal-report-v1", "stale-report-v1"):
+            self.write_artifact(
+                artifact_id, "report", output_contract="task-result-v1"
+            )
+        terminal = self.nonvisual_task("terminal-result")
+        resumable = self.nonvisual_task("resumable-status")
+        stale = self.nonvisual_task(
+            "real-stale-result", inputs=["stale-input-v1"]
+        )
+        task_paths = [self.write_task(task) for task in (terminal, resumable, stale)]
+        result_paths = [
+            self.write_result(
+                terminal["task_id"],
+                self.plain_result(
+                    terminal["task_id"],
+                    status="succeeded",
+                    artifacts=["terminal-report-v1"],
+                ),
+                directory="results",
+            ),
+            self.write_result(
+                resumable["task_id"],
+                self.plain_result(resumable["task_id"], status="waiting_user"),
+                directory="status",
+            ),
+            self.write_result(
+                stale["task_id"],
+                self.plain_result(
+                    stale["task_id"],
+                    status="succeeded",
+                    inputs=["stale-input-v1"],
+                    artifacts=["stale-report-v1"],
+                ),
+                directory="stale-results",
+            ),
+        ]
+
+        result = self.assert_validation_preserves(*task_paths, *result_paths)
+
+        self.assertFalse(
+            {
+                path.relative_to(self.root).as_posix()
+                for path in result_paths
+            }
+            & {
+                issue.get("path")
+                for issue in result["errors"]
+                if issue["code"] == "visual-media-result-invalid"
+            }
+        )
 
 
 class ValidationTests(unittest.TestCase):
@@ -232,6 +975,7 @@ class ValidationTests(unittest.TestCase):
                 segments=[
                     {"start_ms": 0, "end_ms": 10_000, "text": f"timing {version}"}
                 ],
+                keyword_anchors=[],
             )
 
     def write_wav_header(self, relative, duration_ms):
@@ -267,39 +1011,501 @@ class ValidationTests(unittest.TestCase):
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(json.dumps(artifact), encoding="utf-8")
 
-    @staticmethod
-    def png_chunk(kind, payload):
-        checksum = zlib.crc32(kind + payload) & 0xFFFFFFFF
-        return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", checksum)
-
-    @classmethod
-    def rgba_png_bytes(cls, alpha):
-        header = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
-        pixel = bytes((32, 64, 96, alpha))
-        return (
-            b"\x89PNG\r\n\x1a\n"
-            + cls.png_chunk(b"IHDR", header)
-            + cls.png_chunk(b"IDAT", zlib.compress(b"\x00" + pixel))
-            + cls.png_chunk(b"IEND", b"")
+    def write_timed_semantic_graph(self):
+        self.write_voice_bundle()
+        timing_path = self.timing_artifact_path("voice-timing", "voice-timing-v1")
+        voice_timing = json.loads(timing_path.read_text(encoding="utf-8"))
+        voice_timing["keyword_anchors"] = [{
+            "beat_id": "B01", "keyword": "timing", "start_ms": 1200,
+            "end_ms": 1600,
+        }]
+        timing_path.write_text(json.dumps(voice_timing), encoding="utf-8")
+        semantic_record = {
+            "narration_id": "narration-v1",
+            "beats": [
+                {
+                    "beat_id": "B01",
+                    "text_ref": "narration-v1:S01:L1",
+                    "keyword": "timing",
+                    "intent": "core-concept-emphasis",
+                    "priority": "primary",
+                    "preferred_carrier": "motion-graphics",
+                    "approval_provenance": "user:keyword-review-v1",
+                }
+            ],
+        }
+        exact_timed = bind_semantic_beats(
+            semantic_record, voice_timing, voice_timing["keyword_anchors"]
         )
-
-    def write_rgba_png(self, relative, alpha):
-        path = self.root / relative
-        path.write_bytes(self.rgba_png_bytes(alpha))
-        return path
-
-    def promoted_png_error_codes(self, contents):
-        path = "media/presenter_points-right_right_v01.png"
-        (self.root / path).write_bytes(contents)
         self.write_artifact(
-            "promoted-character-v1",
-            "promoted-asset",
+            "semantic-beats-v1",
+            "semantic-beats",
             1,
             "approved",
-            path,
-            **self.promoted_character_metadata(),
+            "metadata/semantic-beats-v1.json",
+            parents=["narration-v1"],
+            narration_id="narration-v1",
+            beats=semantic_record["beats"],
         )
-        return {item["code"] for item in validate_project(self.root)["errors"]}
+        self.write_artifact(
+            "timed-semantic-beats-v1",
+            "timed-semantic-beats",
+            1,
+            "approved",
+            "metadata/timed-semantic-beats-v1.json",
+            parents=["semantic-beats-v1", "voice-timing-v1"],
+            semantic_beats_id="semantic-beats-v1",
+            voice_timing_id="voice-timing-v1",
+            timing_kind="real",
+            beats=exact_timed["beats"],
+        )
+        self.write_artifact(
+            "scene-timing-contracts-v1",
+            "scene-timing-contracts",
+            1,
+            "approved",
+            "metadata/scene-timing-contracts-v1.json",
+            parents=["timed-semantic-beats-v1"],
+            timed_semantic_beats_id="timed-semantic-beats-v1",
+            scenes=[
+                {
+                    "scene_id": "S01",
+                    "scene_window_ms": [0, 10_000],
+                    "beat_ids": ["B01"],
+                    "primary_carrier": "motion-graphics",
+                    "support_layer": "caption-emphasis",
+                    "visual_window_ms": exact_timed["beats"][0]["visual_window_ms"],
+                }
+            ],
+        )
+
+    def timing_artifact_path(self, artifact_type, artifact_id):
+        return self.root / "artifacts" / artifact_type / f"{artifact_id}.json"
+
+    def test_timed_semantic_graph_requires_exact_approved_lineage(self):
+        """Catches timing artifacts resolving to wrong parents, types, statuses, or beats."""
+        cases = (
+            (
+                "semantic-narration-parent-missing",
+                "semantic-beats",
+                "semantic-beats-v1",
+                lambda record: record.update({"parents": []}),
+                "semantic-beats-lineage-mismatch",
+            ),
+            (
+                "unapproved-semantic-source",
+                "semantic-beats",
+                "semantic-beats-v1",
+                lambda record: record.update({"status": "draft"}),
+                "timed-semantic-lineage-mismatch",
+            ),
+            (
+                "semantic-parent-missing",
+                "timed-semantic-beats",
+                "timed-semantic-beats-v1",
+                lambda record: record.update({"parents": ["voice-timing-v1"]}),
+                "timed-semantic-lineage-mismatch",
+            ),
+            (
+                "timed-extra-parent",
+                "timed-semantic-beats",
+                "timed-semantic-beats-v1",
+                lambda record: record["parents"].append("unrelated-v1"),
+                "timed-semantic-lineage-mismatch",
+            ),
+            (
+                "wrong-voice-source-type",
+                "voice-timing",
+                "voice-timing-v1",
+                lambda record: record.update({"type": "narration"}),
+                "timed-semantic-lineage-mismatch",
+            ),
+            (
+                "changed-timed-beat-id",
+                "timed-semantic-beats",
+                "timed-semantic-beats-v1",
+                lambda record: record["beats"][0].update({"beat_id": "B02"}),
+                "timed-semantic-beat-ids-mismatch",
+            ),
+            (
+                "missing-scene-parent",
+                "scene-timing-contracts",
+                "scene-timing-contracts-v1",
+                lambda record: record.update({"parents": []}),
+                "scene-timing-lineage-mismatch",
+            ),
+            (
+                "scene-beat-outside-timed-source",
+                "scene-timing-contracts",
+                "scene-timing-contracts-v1",
+                lambda record: record["scenes"][0].update({"beat_ids": ["B02"]}),
+                "scene-timing-beat-ids-mismatch",
+            ),
+        )
+        for name, artifact_type, artifact_id, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.write_timed_semantic_graph()
+                path = self.timing_artifact_path(artifact_type, artifact_id)
+                record = json.loads(path.read_text(encoding="utf-8"))
+                mutate(record)
+                path.write_text(json.dumps(record), encoding="utf-8")
+
+                result = validate_project(self.root)
+
+                self.assertIn(expected, {item["code"] for item in result["errors"]})
+
+    def test_project_rejects_a_recommitted_timed_range_not_on_the_voice_anchor(self):
+        """Catches persisted graph validation trusting a self-consistent invented range."""
+        self.write_timed_semantic_graph()
+        semantic_path = self.timing_artifact_path("semantic-beats", "semantic-beats-v1")
+        voice_path = self.timing_artifact_path("voice-timing", "voice-timing-v1")
+        timed_path = self.timing_artifact_path(
+            "timed-semantic-beats", "timed-semantic-beats-v1"
+        )
+        semantic = json.loads(semantic_path.read_text(encoding="utf-8"))
+        voice = json.loads(voice_path.read_text(encoding="utf-8"))
+        invented_voice = json.loads(json.dumps(voice))
+        invented_voice["keyword_anchors"][0].update(start_ms=1600, end_ms=1700)
+        invented = bind_semantic_beats(
+            {"narration_id": semantic["narration_id"], "beats": semantic["beats"]},
+            invented_voice,
+            invented_voice["keyword_anchors"],
+        )
+        timed = json.loads(timed_path.read_text(encoding="utf-8"))
+        timed["beats"] = invented["beats"]
+        timed_path.write_text(json.dumps(timed), encoding="utf-8")
+
+        result = validate_project(self.root)
+
+        self.assertIn(
+            "timed-semantic-authority-mismatch",
+            {item["code"] for item in result["errors"]},
+        )
+
+    def test_timed_semantic_graph_rejects_duplicate_ids_and_invalid_windows(self):
+        """Catches changed-content duplicate beat IDs and reversed or escaping windows."""
+        cases = (
+            (
+                "changed-semantic-duplicate",
+                "semantic-beats",
+                "semantic-beats-v1",
+                lambda record: record["beats"].append(
+                    {**record["beats"][0], "intent": "supporting-detail"}
+                ),
+                "invalid-artifact-metadata",
+            ),
+            (
+                "changed-timed-duplicate",
+                "timed-semantic-beats",
+                "timed-semantic-beats-v1",
+                lambda record: record["beats"].append(
+                    {**record["beats"][0], "emphasis_ms": 1500}
+                ),
+                "invalid-artifact-metadata",
+            ),
+            (
+                "reversed-speech-window",
+                "timed-semantic-beats",
+                "timed-semantic-beats-v1",
+                lambda record: record["beats"][0].update(
+                    {"speech_start_ms": 2000, "speech_end_ms": 1000}
+                ),
+                "invalid-timed-semantic-timing",
+            ),
+            (
+                "keyword-outside-speech",
+                "timed-semantic-beats",
+                "timed-semantic-beats-v1",
+                lambda record: record["beats"][0].update({"keyword_start_ms": 900}),
+                "invalid-timed-semantic-timing",
+            ),
+            (
+                "reversed-visual-window",
+                "timed-semantic-beats",
+                "timed-semantic-beats-v1",
+                lambda record: record["beats"][0].update(
+                    {"visual_window_ms": [1900, 1080]}
+                ),
+                "invalid-timed-semantic-timing",
+            ),
+            (
+                "scene-window-escape",
+                "scene-timing-contracts",
+                "scene-timing-contracts-v1",
+                lambda record: record["scenes"][0].update(
+                    {"visual_window_ms": [900, 2100]}
+                ),
+                "invalid-scene-timing-window",
+            ),
+            (
+                "timed-window-outside-scene",
+                "scene-timing-contracts",
+                "scene-timing-contracts-v1",
+                lambda record: record["scenes"][0].update(
+                    {
+                        "scene_window_ms": [1100, 1800],
+                        "visual_window_ms": [1200, 1700],
+                    }
+                ),
+                "invalid-scene-timing-window",
+            ),
+        )
+        for name, artifact_type, artifact_id, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.write_timed_semantic_graph()
+                path = self.timing_artifact_path(artifact_type, artifact_id)
+                record = json.loads(path.read_text(encoding="utf-8"))
+                mutate(record)
+                path.write_text(json.dumps(record), encoding="utf-8")
+
+                result = validate_project(self.root)
+
+                self.assertIn(expected, {item["code"] for item in result["errors"]})
+
+    def test_scene_timing_graph_reuses_canonical_order_and_containment_checks(self):
+        """Catches persisted reordered beats and keyword/visual boundary bypasses."""
+        self.write_timed_semantic_graph()
+        semantic_path = self.timing_artifact_path("semantic-beats", "semantic-beats-v1")
+        semantic = json.loads(semantic_path.read_text(encoding="utf-8"))
+        semantic["beats"].append(
+            {**semantic["beats"][0], "beat_id": "B02", "text_ref": "narration-v1:S02:L1"}
+        )
+        semantic_path.write_text(json.dumps(semantic), encoding="utf-8")
+        timed_path = self.timing_artifact_path("timed-semantic-beats", "timed-semantic-beats-v1")
+        timed = json.loads(timed_path.read_text(encoding="utf-8"))
+        timed["beats"].append(
+            {
+                **timed["beats"][0],
+                "beat_id": "B02",
+                "speech_start_ms": 2000,
+                "speech_end_ms": 3000,
+                "keyword_start_ms": 2200,
+                "keyword_end_ms": 2600,
+                "emphasis_ms": 2400,
+                "visual_window_ms": [2080, 2900],
+            }
+        )
+        timed_path.write_text(json.dumps(timed), encoding="utf-8")
+        scene_path = self.timing_artifact_path("scene-timing-contracts", "scene-timing-contracts-v1")
+        scene = json.loads(scene_path.read_text(encoding="utf-8"))
+        scene["scenes"][0].update(
+            {"scene_window_ms": [1000, 3000], "visual_window_ms": [1080, 2900], "beat_ids": ["B02", "B01"]}
+        )
+        scene_path.write_text(json.dumps(scene), encoding="utf-8")
+        result = validate_project(self.root)
+        self.assertIn("scene-timing-beat-ids-mismatch", {item["code"] for item in result["errors"]})
+
+        self.write_timed_semantic_graph()
+        scene_path = self.timing_artifact_path("scene-timing-contracts", "scene-timing-contracts-v1")
+        scene = json.loads(scene_path.read_text(encoding="utf-8"))
+        scene["scenes"][0].update(
+            {"scene_window_ms": [1000, 1500], "visual_window_ms": [1080, 1400]}
+        )
+        scene_path.write_text(json.dumps(scene), encoding="utf-8")
+        result = validate_project(self.root)
+        self.assertIn("invalid-scene-timing-window", {item["code"] for item in result["errors"]})
+
+    def test_timing_artifact_contracts_reject_invalid_metadata_before_graph_checks(self):
+        """Catches persisted timing records bypassing their closed dedicated schema."""
+        cases = (
+            (
+                "semantic-missing-beats",
+                "semantic-beats",
+                "semantic-beats-v1",
+                lambda record: record.pop("beats"),
+            ),
+            (
+                "timed-empty-beats",
+                "timed-semantic-beats",
+                "timed-semantic-beats-v1",
+                lambda record: record.update({"beats": []}),
+            ),
+            (
+                "scene-unexpected-nested-key",
+                "scene-timing-contracts",
+                "scene-timing-contracts-v1",
+                lambda record: record["scenes"][0].update({"unexpected": "metadata"}),
+            ),
+        )
+        for name, artifact_type, artifact_id, mutate in cases:
+            with self.subTest(name=name):
+                self.write_timed_semantic_graph()
+                path = self.timing_artifact_path(artifact_type, artifact_id)
+                record = json.loads(path.read_text(encoding="utf-8"))
+                mutate(record)
+                path.write_text(json.dumps(record), encoding="utf-8")
+
+                result = validate_project(self.root)
+
+                self.assertIn("invalid-artifact-metadata", {item["code"] for item in result["errors"]})
+
+    def test_v3_gate_uses_exact_authoritative_voice_timing_lineage(self):
+        """Catches structural readiness selecting a higher-version orphan chain."""
+        self.write_timed_semantic_graph()
+        self.write_artifact(
+            "voice-timing-v2-orphan",
+            "voice-timing",
+            2,
+            "approved",
+            "metadata/voice-timing-v2-orphan.json",
+            parents=["voiceover-v1"],
+            voiceover_id="voiceover-v1",
+            timing_kind="real",
+            duration_ms=10_000,
+            segments=[{"start_ms": 0, "end_ms": 10_000, "text": "orphan"}],
+            keyword_anchors=[],
+        )
+        timed = json.loads(
+            self.timing_artifact_path(
+                "timed-semantic-beats", "timed-semantic-beats-v1"
+            ).read_text(encoding="utf-8")
+        )
+        timed.update(
+            {
+                "artifact_id": "timed-v2-orphan",
+                "voice_timing_id": "voice-timing-v2-orphan",
+                "version": 2,
+                "parents": ["semantic-beats-v1", "voice-timing-v2-orphan"],
+                "path": "metadata/timed-v2-orphan.json",
+            }
+        )
+        self.write_artifact(
+            timed["artifact_id"], timed["type"], timed["version"], timed["status"],
+            timed["path"], parents=timed["parents"],
+            semantic_beats_id=timed["semantic_beats_id"],
+            voice_timing_id=timed["voice_timing_id"],
+            timing_kind=timed["timing_kind"], beats=timed["beats"],
+        )
+        scene = json.loads(
+            self.timing_artifact_path(
+                "scene-timing-contracts", "scene-timing-contracts-v1"
+            ).read_text(encoding="utf-8")
+        )
+        scene.update(
+            {
+                "artifact_id": "scene-v2-orphan",
+                "timed_semantic_beats_id": "timed-v2-orphan",
+                "version": 2,
+                "parents": ["timed-v2-orphan"],
+                "path": "metadata/scene-v2-orphan.json",
+            }
+        )
+        self.write_artifact(
+            scene["artifact_id"], scene["type"], scene["version"], scene["status"],
+            scene["path"], parents=scene["parents"],
+            timed_semantic_beats_id=scene["timed_semantic_beats_id"],
+            scenes=scene["scenes"],
+        )
+        self.write_artifact(
+            "timing-validation-v2-orphan",
+            "timing-validation",
+            2,
+            "approved",
+            "metadata/timing-validation-v2-orphan.json",
+            parents=["scene-v2-orphan"],
+        )
+        (self.root / "metadata").mkdir(exist_ok=True)
+        (self.root / "metadata/timing-validation-v2-orphan.json").write_text(
+            json.dumps({"status": "passed"}), encoding="utf-8"
+        )
+        phases = (
+            "semantic_beats_confirmed", "voiceover_ready", "timing_bound",
+            "storyboard_timed", "representative_scene_ready", "production_ready",
+        )
+        (self.root / "events/events.jsonl").write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "event": "project.initialized",
+                            "schema_version": 3,
+                            "project_id": "validation-v3",
+                            "workflow": "knowledge-video",
+                        }
+                    )
+                ]
+                + [
+                    json.dumps({"event": "project.phase_changed", "phase": phase})
+                    for phase in phases
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (self.root / "project.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 3,
+                    "project_id": "validation-v3",
+                    "workflow": "knowledge-video",
+                    "phase": "production_ready",
+                }
+            ),
+            encoding="utf-8",
+        )
+        with patch(
+            "scripts.toolkit.validation.validate_project_authoritative_voice_bundle",
+            return_value={
+                "ok": True,
+                "narration_id": "narration-v1",
+                "voice_timing_id": "voice-timing-v1",
+                "issues": [],
+            },
+        ):
+            result = validate_project(self.root)
+
+        self.assertIn(
+            "timing-validation-required",
+            {item["code"] for item in result["errors"]},
+        )
+
+    def test_legacy_semantic_beats_projection_rejects_new_timing_fields_before_graph(self):
+        """Catches persisted legacy timing projections smuggling new contract fields."""
+        cases = (
+            ("beats", [{"unexpected": "metadata"}]),
+            ("scenes", [{"unexpected": "metadata"}]),
+            ("semantic_beats_id", "semantic-beats-v1"),
+            ("timed_semantic_beats_id", "timed-semantic-beats-v1"),
+            ("timing_kind", "real"),
+        )
+        for field, value in cases:
+            with self.subTest(field=field):
+                self.write_artifact(
+                    "semantic-beats-v0",
+                    "semantic-beats",
+                    1,
+                    "approved",
+                    "metadata/semantic-beats-v0.json",
+                    voice_timing_id="voice-timing-v0",
+                    **{field: value},
+                )
+
+                result = validate_project(self.root)
+
+                self.assertIn("invalid-artifact-metadata", {item["code"] for item in result["errors"]})
+
+    def test_valid_legacy_semantic_beats_projection_remains_project_readable(self):
+        """Catches authoring hardening accidentally removing persisted compatibility."""
+        self.write_artifact(
+            "semantic-beats-v0",
+            "semantic-beats",
+            1,
+            "approved",
+            "metadata/semantic-beats-v0.json",
+            voice_timing_id="voice-timing-v0",
+        )
+
+        result = validate_project(self.root)
+
+        self.assertNotIn(
+            "invalid-artifact-metadata",
+            {item["code"] for item in result["errors"]},
+        )
+
+    def write_visual_placeholder(self, relative):
+        path = self.root / relative
+        path.write_bytes(b"opaque visual fixture; structural validation must not read it")
+        return path
 
     def promoted_character_metadata(self):
         return {
@@ -322,35 +1528,74 @@ class ValidationTests(unittest.TestCase):
             }
         }
 
-    def test_promoted_character_action_requires_real_transparency(self):
-        """Catches metadata-only alpha claims accepting a fully opaque PNG."""
-        self.write_rgba_png("media/presenter_points-right_right_v01.png", 255)
+    def test_structural_validation_never_reads_or_decodes_visual_media(self):
+        """Catches metadata-only recovery reopening pixels for alpha inspection."""
+        relative = "media/presenter_points-right_right_v01.png"
+        target = self.root / relative
+        target.write_bytes(b"visual bytes must remain opaque to this validator")
+        metadata = self.promoted_character_metadata()
+        metadata["promotion"]["validation_evidence"].append(
+            "isolated-image-inspect:alpha-transparency-present"
+        )
         self.write_artifact(
             "promoted-character-v1",
             "promoted-asset",
             1,
             "approved",
-            "media/presenter_points-right_right_v01.png",
+            relative,
+            **metadata,
+        )
+        original_read_bytes = Path.read_bytes
+
+        def guarded_read_bytes(path):
+            if path == target:
+                raise AssertionError("structural validator read visual bytes")
+            return original_read_bytes(path)
+
+        with patch.object(
+            Path, "read_bytes", autospec=True, side_effect=guarded_read_bytes
+        ):
+            result = validate_project(self.root)
+
+        self.assertNotIn(
+            "promoted-character-action-alpha-inspection-required",
+            {item["code"] for item in result["errors"]},
+        )
+
+    def test_promoted_character_alpha_requires_isolated_inspection_evidence(self):
+        """Catches an alpha claim passing without isolated image-inspect evidence."""
+        relative = "media/presenter_points-right_right_v01.png"
+        (self.root / relative).write_bytes(b"opaque structural fixture")
+        self.write_artifact(
+            "promoted-character-v1",
+            "promoted-asset",
+            1,
+            "approved",
+            relative,
             **self.promoted_character_metadata(),
         )
 
         result = validate_project(self.root)
 
         self.assertIn(
-            "promoted-character-action-alpha-missing",
+            "promoted-character-action-alpha-inspection-required",
             {item["code"] for item in result["errors"]},
         )
 
-    def test_promoted_character_action_with_real_transparency_passes(self):
-        """Catches a real transparent pixel being rejected as metadata-only alpha."""
-        self.write_rgba_png("media/presenter_points-right_right_v01.png", 0)
+    def test_promoted_character_action_with_isolated_alpha_evidence_passes(self):
+        """Catches compact isolated inspection evidence being ignored."""
+        self.write_visual_placeholder("media/presenter_points-right_right_v01.png")
+        metadata = self.promoted_character_metadata()
+        metadata["promotion"]["validation_evidence"].append(
+            "isolated-image-inspect:alpha-transparency-present"
+        )
         self.write_artifact(
             "promoted-character-v1",
             "promoted-asset",
             1,
             "approved",
             "media/presenter_points-right_right_v01.png",
-            **self.promoted_character_metadata(),
+            **metadata,
         )
 
         result = validate_project(self.root)
@@ -366,7 +1611,7 @@ class ValidationTests(unittest.TestCase):
 
     def test_promoted_character_action_requires_neutral_owned_provenance(self):
         """Catches project-coupled or unattributed media entering cross-project reuse."""
-        self.write_rgba_png("media/presenter_points-right_right_v01.png", 0)
+        self.write_visual_placeholder("media/presenter_points-right_right_v01.png")
         metadata = self.promoted_character_metadata()
         promotion = metadata["promotion"]
         promotion["ownership"] = "current-project"
@@ -392,7 +1637,7 @@ class ValidationTests(unittest.TestCase):
 
     def test_promoted_character_action_requires_explicit_neutral_scene_metadata(self):
         """Catches an absent scene field being treated as proven project independence."""
-        self.write_rgba_png("media/presenter_points-right_right_v01.png", 0)
+        self.write_visual_placeholder("media/presenter_points-right_right_v01.png")
         metadata = self.promoted_character_metadata()
         metadata["promotion"].pop("scene")
         self.write_artifact(
@@ -413,7 +1658,7 @@ class ValidationTests(unittest.TestCase):
 
     def test_promoted_character_action_requires_identity_continuity_evidence(self):
         """Catches generic evidence satisfying the character identity promise."""
-        self.write_rgba_png("media/presenter_points-right_right_v01.png", 0)
+        self.write_visual_placeholder("media/presenter_points-right_right_v01.png")
         metadata = self.promoted_character_metadata()
         metadata["promotion"]["validation_evidence"] = ["alpha-reviewed"]
         self.write_artifact(
@@ -432,199 +1677,10 @@ class ValidationTests(unittest.TestCase):
             {item["code"] for item in result["errors"]},
         )
 
-    def test_promoted_character_alpha_inspection_failure_is_an_issue(self):
-        """Catches corrupt or unsupported files crashing structural validation."""
-        path = "media/presenter_points-right_right_v01.png"
-        (self.root / path).write_bytes(b"not a png")
-        self.write_artifact(
-            "promoted-character-v1",
-            "promoted-asset",
-            1,
-            "approved",
-            path,
-            **self.promoted_character_metadata(),
-        )
-
-        result = validate_project(self.root)
-
-        self.assertIn(
-            "promoted-character-action-alpha-unverifiable",
-            {item["code"] for item in result["errors"]},
-        )
-
-    def test_promoted_character_png_with_bad_crc_is_unverifiable(self):
-        """Catches transparent pixel data bypassing a corrupt IDAT checksum."""
-        png = bytearray(self.rgba_png_bytes(0))
-        idat_type = png.index(b"IDAT")
-        idat_length = struct.unpack(">I", png[idat_type - 4 : idat_type])[0]
-        idat_crc = idat_type + 4 + idat_length
-        png[idat_crc] ^= 0x01
-        path = "media/presenter_points-right_right_v01.png"
-        (self.root / path).write_bytes(png)
-        self.write_artifact(
-            "promoted-character-v1",
-            "promoted-asset",
-            1,
-            "approved",
-            path,
-            **self.promoted_character_metadata(),
-        )
-
-        result = validate_project(self.root)
-
-        self.assertIn(
-            "promoted-character-action-alpha-unverifiable",
-            {item["code"] for item in result["errors"]},
-        )
-
-    def test_promoted_character_png_without_iend_is_unverifiable(self):
-        """Catches a complete pixel stream being accepted without terminal IEND."""
-        path = "media/presenter_points-right_right_v01.png"
-        (self.root / path).write_bytes(self.rgba_png_bytes(0)[:-12])
-        self.write_artifact(
-            "promoted-character-v1",
-            "promoted-asset",
-            1,
-            "approved",
-            path,
-            **self.promoted_character_metadata(),
-        )
-
-        result = validate_project(self.root)
-
-        self.assertIn(
-            "promoted-character-action-alpha-unverifiable",
-            {item["code"] for item in result["errors"]},
-        )
-
-    def test_promoted_character_png_requires_valid_chunk_structure(self):
-        """Catches reordered, duplicate, or post-IEND PNG chunks."""
-        valid = self.rgba_png_bytes(0)
-        signature = valid[:8]
-        ihdr = valid[8:33]
-        idat = valid[33:-12]
-        iend = valid[-12:]
-        malformed_files = {
-            "idat-before-ihdr": signature + idat + ihdr + iend,
-            "duplicate-ihdr": signature + ihdr + ihdr + idat + iend,
-            "trailing-data": valid + b"trailing",
-        }
-        for label, contents in malformed_files.items():
-            with self.subTest(label=label):
-                path = "media/presenter_points-right_right_v01.png"
-                (self.root / path).write_bytes(contents)
-                self.write_artifact(
-                    "promoted-character-v1",
-                    "promoted-asset",
-                    1,
-                    "approved",
-                    path,
-                    **self.promoted_character_metadata(),
-                )
-
-                result = validate_project(self.root)
-
-                self.assertIn(
-                    "promoted-character-action-alpha-unverifiable",
-                    {item["code"] for item in result["errors"]},
-                )
-
-    def test_promoted_character_png_rejects_illegal_plte_chunks(self):
-        """Catches misplaced, duplicate, malformed, or forbidden PLTE chunks."""
-        valid = self.rgba_png_bytes(0)
-        signature = valid[:8]
-        rgba_ihdr = valid[8:33]
-        rgba_idat = valid[33:-12]
-        iend = valid[-12:]
-        plte = self.png_chunk(b"PLTE", b"\x20\x40\x60")
-        grayscale_alpha_ihdr = self.png_chunk(
-            b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 4, 0, 0, 0)
-        )
-        grayscale_alpha_idat = self.png_chunk(
-            b"IDAT", zlib.compress(b"\x00\x20\x00")
-        )
-        malformed_files = {
-            "after-idat": signature + rgba_ihdr + rgba_idat + plte + iend,
-            "duplicate": signature + rgba_ihdr + plte + plte + rgba_idat + iend,
-            "invalid-length": (
-                signature
-                + rgba_ihdr
-                + self.png_chunk(b"PLTE", b"\x00")
-                + rgba_idat
-                + iend
-            ),
-            "forbidden-for-grayscale-alpha": (
-                signature
-                + grayscale_alpha_ihdr
-                + plte
-                + grayscale_alpha_idat
-                + iend
-            ),
-        }
-        for label, contents in malformed_files.items():
-            with self.subTest(label=label):
-                self.assertIn(
-                    "promoted-character-action-alpha-unverifiable",
-                    self.promoted_png_error_codes(contents),
-                )
-
-    def test_promoted_character_png_rejects_unknown_critical_chunks(self):
-        """Catches unknown chunks whose first type byte marks them critical."""
-        valid = self.rgba_png_bytes(0)
-        signature = valid[:8]
-        ihdr = valid[8:33]
-        idat_and_iend = valid[33:]
-        variants = {
-            "unknown-critical": (
-                self.png_chunk(b"VpAg", b"payload"),
-                True,
-            ),
-            "unknown-ancillary": (
-                self.png_chunk(b"vpAg", b"payload"),
-                False,
-            ),
-        }
-        for label, (chunk, expect_unverifiable) in variants.items():
-            with self.subTest(label=label):
-                codes = self.promoted_png_error_codes(
-                    signature + ihdr + chunk + idat_and_iend
-                )
-                self.assertEqual(
-                    expect_unverifiable,
-                    "promoted-character-action-alpha-unverifiable" in codes,
-                )
-
-    def test_promoted_character_png_rejects_invalid_zlib_or_scanline_streams(self):
-        """Catches nonterminal zlib streams and invalid decoded scanlines."""
-        valid = self.rgba_png_bytes(0)
-        signature_and_ihdr = valid[:33]
-        iend = valid[-12:]
-        pixel = bytes((32, 64, 96, 0))
-        scanline = b"\x00" + pixel
-        compressed = zlib.compress(scanline)
-        malformed_streams = {
-            "trailing-zlib-bytes": compressed + b"trailing",
-            "concatenated-zlib-stream": compressed + zlib.compress(scanline),
-            "incomplete-zlib-stream": compressed[:-1],
-            "wrong-decoded-size": zlib.compress(scanline + b"\x00"),
-            "invalid-filter": zlib.compress(b"\x05" + pixel),
-        }
-        for label, stream in malformed_streams.items():
-            with self.subTest(label=label):
-                contents = (
-                    signature_and_ihdr
-                    + self.png_chunk(b"IDAT", stream)
-                    + iend
-                )
-                self.assertIn(
-                    "promoted-character-action-alpha-unverifiable",
-                    self.promoted_png_error_codes(contents),
-                )
-
     def test_promoted_character_name_rejects_project_coupling(self):
         """Catches legacy shot identifiers in promoted character filenames."""
         path = "media/复利效应_S004_灰发猫耳少年_讲解_右侧_v01.png"
-        self.write_rgba_png(path, 0)
+        self.write_visual_placeholder(path)
         metadata = self.promoted_character_metadata()
         metadata["promotion"]["subject"] = "灰发猫耳少年"
         metadata["promotion"]["action"] = "讲解"
@@ -648,7 +1704,7 @@ class ValidationTests(unittest.TestCase):
     def test_promoted_character_name_requires_version_suffix(self):
         """Catches promoted names that omit the legacy two-digit version suffix."""
         path = "media/presenter_points-right_right.png"
-        self.write_rgba_png(path, 0)
+        self.write_visual_placeholder(path)
         self.write_artifact(
             "promoted-character-v1",
             "promoted-asset",
@@ -668,7 +1724,7 @@ class ValidationTests(unittest.TestCase):
     def test_promoted_character_name_requires_literal_subject_and_action(self):
         """Catches filename metadata drift for the declared subject or action."""
         path = "media/presenter_wave_right_v01.png"
-        self.write_rgba_png(path, 0)
+        self.write_visual_placeholder(path)
         self.write_artifact(
             "promoted-character-v1",
             "promoted-asset",
@@ -687,7 +1743,7 @@ class ValidationTests(unittest.TestCase):
 
     def test_malformed_promotion_evidence_is_an_issue_not_an_exception(self):
         """Catches unhashable metadata values crashing structural validation."""
-        self.write_rgba_png("media/presenter_points-right_right_v01.png", 0)
+        self.write_visual_placeholder("media/presenter_points-right_right_v01.png")
         metadata = self.promoted_character_metadata()
         metadata["promotion"]["validation_evidence"] = [{}]
         self.write_artifact(
@@ -870,6 +1926,18 @@ class ValidationTests(unittest.TestCase):
 
     def test_validator_rejects_scene_scope_with_an_unlisted_character_pack(self):
         """Catches persisted scene tasks acquiring an independent pack scope."""
+        contract_path = self.root / "contracts" / "S01.json"
+        bound_contract_path = self.root / "contracts" / "scene-contract-S01-v1.json"
+        contract_path.rename(bound_contract_path)
+        artifact_path = (
+            self.root
+            / "artifacts"
+            / "scene-contract"
+            / "scene-contract-S01-v1.json"
+        )
+        scene_contract = json.loads(artifact_path.read_text(encoding="utf-8"))
+        scene_contract["path"] = "contracts/scene-contract-S01-v1.json"
+        artifact_path.write_text(json.dumps(scene_contract), encoding="utf-8")
         self.write_artifact(
             "unlisted-pack-a",
             "character-pack",
@@ -915,7 +1983,7 @@ class ValidationTests(unittest.TestCase):
             {
                 item["path"]
                 for item in result["errors"]
-                if item["code"] == "invalid-task-envelope"
+                if item["code"] == "visual-media-input-forbidden"
             },
         )
 
@@ -1137,6 +2205,7 @@ class ValidationTests(unittest.TestCase):
             timing_kind="estimated",
             duration_ms=10_000,
             segments=[{"start_ms": 0, "end_ms": 10_000, "text": "estimate"}],
+            keyword_anchors=[],
         )
 
         result = validate_project(self.root)

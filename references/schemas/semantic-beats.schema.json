@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Video Production Toolkit Approved Semantic Beats Artifact",
+  "type": "object",
+  "required": ["artifact_id", "type", "version", "status", "parents", "path", "narration_id", "beats"],
+  "properties": {
+    "artifact_id": {"$ref": "#/$defs/safeId"},
+    "type": {"const": "semantic-beats"},
+    "version": {"type": "integer", "minimum": 1},
+    "status": {"const": "approved"},
+    "parents": {"$ref": "#/$defs/parents"},
+    "path": {"$ref": "#/$defs/projectPath"},
+    "output_contract": {"type": "string", "minLength": 1, "maxLength": 128},
+    "narration_id": {"$ref": "#/$defs/safeId"},
+    "beats": {"$ref": "#/$defs/beats"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "safeId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"},
+    "parents": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
+    "projectPath": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"},
+    "beats": {"type": "array", "minItems": 1, "maxItems": 512, "items": {"$ref": "#/$defs/beat"}, "uniqueItems": true},
+    "beat": {
+      "type": "object",
+      "required": ["beat_id", "text_ref", "keyword", "intent", "priority", "preferred_carrier", "approval_provenance"],
+      "properties": {
+        "beat_id": {"$ref": "#/$defs/safeId"},
+        "text_ref": {"type": "string", "minLength": 1, "maxLength": 256},
+        "keyword": {"type": "string", "minLength": 1, "maxLength": 256},
+        "intent": {"type": "string", "minLength": 1, "maxLength": 128},
+        "priority": {"enum": ["primary", "secondary"]},
+        "preferred_carrier": {"$ref": "#/$defs/carrier"},
+        "approval_provenance": {"type": "string", "minLength": 6, "maxLength": 500, "pattern": "^user:.+"}
+      },
+      "additionalProperties": false
+    },
+    "carrier": {"type": "string", "minLength": 1, "enum": ["a-roll", "b-roll", "scene", "demo", "motion-graphics", "evidence"]}
+  }
+}

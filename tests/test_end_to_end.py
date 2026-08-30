@@ -9,6 +9,7 @@ from unittest.mock import patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import scripts.verify_installation as installation_verifier
 from scripts.install_personal_plugin import install_personal_plugin
 from scripts.migration_audit import DISPOSITIONS
 from scripts.retire_legacy_skill import (
@@ -19,18 +20,39 @@ from scripts.retire_legacy_skill import (
 )
 from scripts.toolkit.artifacts import approve_artifact, create_artifact
 from scripts.toolkit.orchestrator import (
+    _capability_is_legal_in_phase,
+    _coordinator_safe_task_projection,
     calculate_ready_tasks,
     invalidate_artifact_descendants,
     resume_project,
 )
+from scripts.toolkit.project_state import project_recovery_view
+from scripts.toolkit.invalidation import invalidate_descendants
 from scripts.toolkit.project_state import (
     LEGACY_PHASES,
     PHASES,
     append_event,
     initialize_project,
 )
-from scripts.toolkit.tasks import claim_task, complete_task, create_task
-from scripts.verify_installation import _run_resume_scenario, run_smoke, verify_installation
+from scripts.toolkit.tasks import (
+    build_timing_repair_envelope,
+    claim_task,
+    complete_task,
+    create_task,
+)
+from scripts.toolkit.timed_semantic_beats import bind_semantic_beats
+from scripts.toolkit.timing_validation import (
+    build_compact_timing_rows,
+    validate_timing_rows,
+)
+from scripts.validate_package import _release_fingerprint
+from scripts.verify_installation import (
+    _candidate as smoke_candidate,
+    _run_resume_scenario,
+    run_installed_timing_smoke,
+    run_smoke,
+    verify_installation,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -39,6 +61,7 @@ SHIPPED_INVALIDATION = json.loads(
 )
 FIXTURE = ROOT / "tests" / "fixtures" / "knowledge-video-minimal"
 LEGACY = Path.home() / ".codex" / "skills" / "knowledge-video-visual-director"
+ROUTING_SCENE_SCOPE_ID = "routing-scene-contract-v1"
 
 
 def advance_project(project, target_phase):
@@ -243,21 +266,85 @@ def artifact(
     if artifact_type == "media":
         metadata.setdefault("media_kind", "video")
         metadata.setdefault("mime_type", "video/mp4")
+    if artifact_type in {"media", "storyboard"}:
+        metadata.setdefault("historical", False)
+    default_path = (
+        f"metadata/{artifact_id}"
+        if artifact_type in {"media", "storyboard"}
+        else f"metadata/{artifact_id}.json"
+    )
     return {
         "artifact_id": artifact_id,
         "type": artifact_type,
         "version": version,
         "status": status,
         "parents": list(parents or []),
-        "path": path or f"metadata/{artifact_id}.json",
+        "path": path or default_path,
         **metadata,
     }
 
 
 def candidate(task_id, capability, inputs, gate, target_id, **constraints):
     inputs = list(inputs)
-    if capability == "scene.produce":
-        constraints.setdefault("visual_operation", "non-image")
+    visual_operation = {
+        "visual.preview": "image-generate",
+        "scene.produce": "video-generate",
+        "motion.preview": "video-generate",
+        "motion.produce": "video-render",
+        "timeline.assemble": "video-edit",
+        "review.package": "video-inspect",
+    }.get(capability)
+    if visual_operation is None:
+        constraints.setdefault("visual_media_operation", "none")
+    else:
+        constraints.setdefault("visual_media_operation", visual_operation)
+        constraints.setdefault("execution_context", "isolated-child-agent")
+        if "visual_media_context" not in constraints:
+            scope_id = next(
+                (
+                    artifact_id
+                    for artifact_id in inputs
+                    if "contract" in artifact_id.casefold()
+                ),
+                ROUTING_SCENE_SCOPE_ID,
+            )
+            if scope_id not in inputs:
+                inputs.append(scope_id)
+            continuity_id = next(
+                (
+                    artifact_id
+                    for artifact_id in inputs
+                    if artifact_id != scope_id
+                    and any(
+                        marker in artifact_id.casefold()
+                        for marker in (
+                            "storyboard",
+                            "scene-",
+                            "preview",
+                            "image",
+                            "video",
+                            "screen",
+                        )
+                    )
+                ),
+                None,
+            )
+            constraints["visual_media_context"] = {
+                "scope_identity": {"kind": "scene-contract", "id": scope_id},
+                "allowed_artifact_ids": [],
+                "historical_access": "character-only",
+                "continuity_exception": (
+                    {
+                        "artifact_id": continuity_id,
+                        "user_requested": True,
+                        "reason": "Use this exact current visual production input.",
+                    }
+                    if continuity_id is not None
+                    else None
+                ),
+                "max_review_previews": 1,
+                "context_budget_bytes": 32_768,
+            }
     if capability in {
         "storyboard.plan",
         "scene.produce",
@@ -341,6 +428,7 @@ def voice_bundle(*, timing_id="voice-timing-v1", timing_status="approved"):
                 {"start_ms": 0, "end_ms": 6000, "text": "first"},
                 {"start_ms": 6000, "end_ms": 12000, "text": "second"},
             ],
+            keyword_anchors=[],
         ),
     ]
 
@@ -353,6 +441,53 @@ def create_voice_bundle(project):
         create_artifact(project, record)
 
 
+def timing_repair_lineage(*, minimum_readable_duration_ms=900):
+    """Return one exact metadata-only authority DAG and its derived blocker."""
+    records = voice_bundle()
+    anchor = {
+        "beat_id": "B01", "keyword": "timing", "start_ms": 1200,
+        "end_ms": 1600,
+    }
+    records[-1]["keyword_anchors"] = [anchor]
+    semantic_record = {
+        "narration_id": "narration-v1",
+        "beats": [{
+            "beat_id": "B01", "text_ref": "narration-v1:S01:L1",
+            "keyword": "timing", "intent": "core-concept-emphasis",
+            "priority": "primary", "preferred_carrier": "motion-graphics",
+            "approval_provenance": "user:timing-repair-review-v1",
+        }],
+    }
+    semantic = artifact(
+        "semantic-beats-v1", "semantic-beats", parents=["narration-v1"],
+        **semantic_record,
+    )
+    exact = bind_semantic_beats(semantic_record, records[-1], [anchor])
+    timed = artifact(
+        "timed-beats-v1", "timed-semantic-beats",
+        parents=["semantic-beats-v1", "voice-timing-v1"],
+        semantic_beats_id="semantic-beats-v1", **exact,
+    )
+    scene = artifact(
+        "scenes-v1", "scene-timing-contracts", parents=["timed-beats-v1"],
+        timed_semantic_beats_id="timed-beats-v1",
+        scenes=[{
+            "scene_id": "S01", "scene_window_ms": [1080, 1800],
+            "beat_ids": ["B01"], "primary_carrier": "motion-graphics",
+            "support_layer": "caption-emphasis",
+            "visual_window_ms": [1080, 1800],
+        }],
+    )
+    rows = build_compact_timing_rows(
+        scene, timed, current_voice_timing_id="voice-timing-v1",
+        current_timed_semantic_beats_id="timed-beats-v1",
+    )
+    compact = validate_timing_rows(
+        rows, minimum_readable_duration_ms=minimum_readable_duration_ms
+    )
+    return [*records, semantic, timed, scene], compact
+
+
 def synthetic_wav(duration_ms, sample_rate=8_000):
     sample_count = duration_ms * sample_rate // 1_000
     audio = b"\0\0" * sample_count
@@ -361,6 +496,247 @@ def synthetic_wav(duration_ms, sample_rate=8_000):
         + struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, sample_rate * 2, 2, 16)
         + b"data" + struct.pack("<I", len(audio)) + audio
     )
+
+
+class SmokeFixtureMetadataTests(unittest.TestCase):
+    def test_candidate_declares_current_visual_authority_by_capability(self):
+        """Catches smoke records retaining ambiguous pre-isolation authority."""
+        visual = smoke_candidate(
+            "produce-S01",
+            "scene.produce",
+            ["contract-S01-v1"],
+            "storyboard-and-cost",
+            "storyboard-v1",
+        )
+        nonvisual = smoke_candidate(
+            "manage-project",
+            "project.manage",
+            [],
+            None,
+            "project-v1",
+        )
+
+        expected_visual = {
+            "visual_media_operation": "video-generate",
+            "execution_context": "isolated-child-agent",
+        }
+        self.assertEqual(
+            expected_visual,
+            {
+                key: visual["constraints"][key]
+                for key in expected_visual
+                if key in visual["constraints"]
+            },
+        )
+        self.assertNotIn("visual_operation", visual["constraints"])
+        self.assertEqual(
+            {"visual_media_operation": "none"},
+            {
+                key: nonvisual["constraints"][key]
+                for key in ("visual_media_operation",)
+                if key in nonvisual["constraints"]
+            },
+        )
+
+    def test_orchestrator_validates_current_candidates_without_legacy_fallback(self):
+        """Catches candidate routing reopening read-only legacy task authority."""
+        current = smoke_candidate(
+            "manage-project",
+            "project.manage",
+            [],
+            None,
+            "project-v1",
+        )
+        legacy = json.loads(json.dumps(current))
+        legacy["constraints"].pop("visual_media_operation")
+        legacy["constraints"]["image_operation"] = "structure-only"
+
+        self.assertEqual(
+            ["project.manage"],
+            calculate_ready_tasks(
+                {"phase": "initialized", "candidate_tasks": [current]}, [], []
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "legacy image authority is read-only"):
+            calculate_ready_tasks(
+                {"phase": "initialized", "candidate_tasks": [legacy]}, [], []
+            )
+
+    def test_orchestrator_rejects_every_deprecated_current_authority_key(self):
+        """Catches current candidate routing accepting any read-only authority key."""
+        for key, value in (
+            ("visual_operation", "non-image"),
+            ("image_operation", "structure-only"),
+            ("image_context", {}),
+        ):
+            with self.subTest(key=key):
+                candidate_record = smoke_candidate(
+                    f"deprecated-{key}",
+                    "project.manage",
+                    [],
+                    None,
+                    "project-v1",
+                )
+                candidate_record["constraints"].pop("visual_media_operation")
+                candidate_record["constraints"][key] = value
+
+                with self.assertRaisesRegex(
+                    ValueError, "legacy .* authority is read-only"
+                ):
+                    calculate_ready_tasks(
+                        {
+                            "phase": "initialized",
+                            "candidate_tasks": [candidate_record],
+                        },
+                        [],
+                        [],
+                    )
+
+    def test_orchestrator_construction_applies_shared_visual_artifact_authority(self):
+        """Catches readiness validating envelope shape without its Artifact scope."""
+        task = smoke_candidate(
+            "launder-current-visual",
+            "project.manage",
+            ["screen-v1"],
+            None,
+            "project-v1",
+        )
+        screenshot = artifact(
+            "screen-v1",
+            "browser-screenshot",
+            path="media/screen-v1.png",
+            media_kind="image",
+            historical=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "visual media.*none"):
+            calculate_ready_tasks(
+                {"phase": "initialized", "candidate_tasks": [task]},
+                [screenshot],
+                [],
+            )
+
+
+class V3CoordinatorTimingTests(unittest.TestCase):
+    """Exercise the coordinator's metadata-only voice-timing boundaries."""
+
+    @staticmethod
+    def timing_row(beat_id, *, timing_kind="real", visual_window=None):
+        return {
+            "beat_id": beat_id,
+            "scene_id": "S01",
+            "keyword_anchor_ms": [1_000, 1_200],
+            "visual_window_ms": visual_window or [880, 1_400],
+            "scene_window_ms": [0, 2_000],
+            "primary_carrier": "motion-graphics",
+            "support_layer": "caption-emphasis",
+            "timing_kind": timing_kind,
+        }
+
+    def test_v3_workflow_blocks_estimated_storyboards_and_accepts_real_timing(self):
+        """Catches formal storyboard routing from estimates or a pre-timing phase."""
+        storyboard = candidate(
+            "storyboard-v3",
+            "storyboard.plan",
+            ["semantic-beats-v1", "timed-semantic-beats-v1"],
+            "visual-direction",
+            "style-v1",
+            voice_timing_id="voice-timing-v1",
+            timed_semantic_beats_id="timed-semantic-beats-v1",
+        )
+
+        self.assertFalse(_capability_is_legal_in_phase(storyboard, "voiceover_ready"))
+        self.assertTrue(_capability_is_legal_in_phase(storyboard, "timing_bound"))
+
+        estimated = validate_timing_rows(
+            [self.timing_row("B01", timing_kind="estimated")],
+            minimum_readable_duration_ms=500,
+        )
+        self.assertEqual("blocked", estimated["status"])
+        self.assertIn("VOICE_TIMING_REQUIRED", estimated["issue_counts"])
+
+        real = validate_timing_rows(
+            [self.timing_row("B01")], minimum_readable_duration_ms=500
+        )
+        self.assertEqual("passed", real["status"])
+
+    def test_changed_voice_timing_invalidates_all_downstream_contracts(self):
+        """Catches a voice revision leaving timed beats or scene contracts current."""
+        artifacts = [
+            {"artifact_id": "voice-timing-v1", "type": "voice-timing", "parents": []},
+            {
+                "artifact_id": "timed-semantic-beats-v1",
+                "type": "timed-semantic-beats",
+                "parents": ["voice-timing-v1"],
+            },
+            {
+                "artifact_id": "scene-timing-contracts-v1",
+                "type": "scene-timing-contracts",
+                "parents": ["timed-semantic-beats-v1"],
+            },
+            {
+                "artifact_id": "storyboard-v1",
+                "type": "storyboard",
+                "parents": ["scene-timing-contracts-v1"],
+            },
+            {
+                "artifact_id": "scene-contract-v1",
+                "type": "scene-contract",
+                "parents": ["storyboard-v1"],
+            },
+        ]
+        self.assertEqual(
+            {
+                "timed-semantic-beats-v1",
+                "scene-timing-contracts-v1",
+                "storyboard-v1",
+                "scene-contract-v1",
+            },
+            invalidate_descendants(artifacts, "voice-timing-v1", SHIPPED_INVALIDATION),
+        )
+
+    def test_compact_timing_review_exposes_three_examples_per_issue_code(self):
+        """Catches coordinator context growth from detailed timing diagnostics."""
+        rows = [
+            self.timing_row(
+                f"B{index:02d}", visual_window=[1_050, 1_400]
+            )
+            for index in range(1, 8)
+        ]
+        result = validate_timing_rows(rows, minimum_readable_duration_ms=500)
+
+        self.assertEqual("blocked", result["status"])
+        self.assertEqual(7, result["issue_counts"]["VISUAL_BEFORE_ALLOWED_WINDOW"])
+        self.assertEqual(
+            ["B01", "B02", "B03"],
+            result["examples"]["VISUAL_BEFORE_ALLOWED_WINDOW"],
+        )
+        self.assertTrue(
+            all(len(beat_ids) <= 3 for beat_ids in result["examples"].values())
+        )
+
+    def test_null_anchor_maps_to_one_bounded_repair_envelope(self):
+        """Routes the explicit missing-anchor sentinel once for its affected Beat."""
+        row = self.timing_row("B01")
+        row["keyword_anchor_ms"] = None
+        compact = validate_timing_rows([row], minimum_readable_duration_ms=500)
+
+        self.assertEqual(
+            {"KEYWORD_ANCHOR_MISSING": 1}, compact["issue_counts"]
+        )
+        repair = build_timing_repair_envelope(
+            "repair-missing-anchor", "timing-validation-v1", ["B01"], compact,
+            voice_timing_id="voice-timing-v1",
+            timed_semantic_beats_id="timed-beats-v1",
+            scene_timing_contracts_id="scenes-v1",
+        )
+
+        self.assertEqual("timing-repair", repair["capability"])
+        self.assertEqual(["B01"], repair["constraints"]["affected_beat_ids"])
+        self.assertEqual(
+            {"KEYWORD_ANCHOR_MISSING": ["B01"]},
+            repair["constraints"]["examples"],
+        )
 
 
 class CoordinatorTests(unittest.TestCase):
@@ -375,6 +751,18 @@ class CoordinatorTests(unittest.TestCase):
         self._routing_folder.cleanup()
 
     def ready_tasks(self, state, artifacts, approvals):
+        artifacts = list(artifacts)
+        if any(
+            ROUTING_SCENE_SCOPE_ID in task.get("inputs", [])
+            for task in state.get("candidate_tasks", [])
+            if isinstance(task, dict)
+        ) and not any(
+            item.get("artifact_id") == ROUTING_SCENE_SCOPE_ID
+            for item in artifacts
+        ):
+            artifacts.append(
+                artifact(ROUTING_SCENE_SCOPE_ID, "scene-contract")
+            )
         return calculate_ready_tasks(
             state, artifacts, approvals, root=self.routing_root
         )
@@ -489,6 +877,7 @@ class CoordinatorTests(unittest.TestCase):
             timing_kind="real",
             duration_ms=12000,
             segments=[{"start_ms": 0, "end_ms": 12000, "text": "old"}],
+            keyword_anchors=[],
         )
 
         self.assertEqual(
@@ -636,7 +1025,12 @@ class CoordinatorTests(unittest.TestCase):
             "scope": "storyboard-and-cost",
             "decision": "approved",
         }
-        artifacts = [storyboard, *voice_bundle()]
+        contract = artifact(
+            "scene-contract-v1",
+            "scene-contract",
+            parents=["storyboard-v1"],
+        )
+        artifacts = [storyboard, contract, *voice_bundle()]
         cases = (
             ("captions.produce", "captions.produce"),
             ("representative-slice.produce", "representative-slice.produce"),
@@ -646,7 +1040,7 @@ class CoordinatorTests(unittest.TestCase):
                 task = candidate(
                     f"{capability}-v1",
                     capability,
-                    ["storyboard-v1"],
+                    ["scene-contract-v1"],
                     "storyboard-and-cost",
                     "storyboard-v1",
                     production_scope="representative-slice",
@@ -722,7 +1116,11 @@ class CoordinatorTests(unittest.TestCase):
         )
         for index, (capability, gate, target_type, extra) in enumerate(cases, 1):
             with self.subTest(gate=gate):
-                target_id = f"gate-target-{index}"
+                target_id = (
+                    f"storyboard-gate-{index}"
+                    if target_type == "storyboard"
+                    else f"gate-target-{index}"
+                )
                 task = candidate(
                     f"task-{index}",
                     capability,
@@ -778,7 +1176,11 @@ class CoordinatorTests(unittest.TestCase):
                     ),
                 )
 
-                descendant_id = f"gate-input-{index}"
+                descendant_id = (
+                    f"storyboard-input-{index}"
+                    if target_type == "storyboard"
+                    else f"gate-input-{index}"
+                )
                 unrelated_task = candidate(
                     f"unrelated-task-{index}",
                     capability,
@@ -795,7 +1197,14 @@ class CoordinatorTests(unittest.TestCase):
                     [],
                     self.ready_tasks(
                         unrelated_state,
-                        [artifacts[0], artifact(descendant_id, "task-input"), *gate_voice],
+                        [
+                            artifacts[0],
+                            artifact(
+                                descendant_id,
+                                "storyboard" if target_type == "storyboard" else "task-input",
+                            ),
+                            *gate_voice,
+                        ],
                         [approval],
                     ),
                     "an artifact of the right type must not approve another lineage",
@@ -808,7 +1217,7 @@ class CoordinatorTests(unittest.TestCase):
                             artifacts[0],
                             artifact(
                                 descendant_id,
-                                "task-input",
+                                "storyboard" if target_type == "storyboard" else "task-input",
                                 parents=[target_id],
                             ),
                             *gate_voice,
@@ -1135,6 +1544,21 @@ class CoordinatorTests(unittest.TestCase):
                     "storyboard-v1",
                     production_scope="representative-slice",
                     scene_id="S02",
+                    visual_media_context={
+                        "scope_identity": {
+                            "kind": "scene-contract",
+                            "id": "contract-S02-v2",
+                        },
+                        "allowed_artifact_ids": [],
+                        "historical_access": "character-only",
+                        "continuity_exception": {
+                            "artifact_id": "storyboard-v1",
+                            "user_requested": True,
+                            "reason": "Use this exact current storyboard input.",
+                        },
+                        "max_review_previews": 0,
+                        "context_budget_bytes": 32_768,
+                    },
                 ),
             )
             advance_project(project, "storyboard_ready")
@@ -1196,6 +1620,17 @@ class CoordinatorTests(unittest.TestCase):
                 "scene-S02-v1",
                 production_scope="representative-slice",
                 scene_id="S02",
+                visual_media_context={
+                    "scope_identity": {
+                        "kind": "review-batch",
+                        "id": ["scene-S02-v1"],
+                    },
+                    "allowed_artifact_ids": [],
+                    "historical_access": "character-only",
+                    "continuity_exception": None,
+                    "max_review_previews": 1,
+                    "context_budget_bytes": 32_768,
+                },
             )
             create_task(project, envelope)
             create_artifact(
@@ -1204,6 +1639,7 @@ class CoordinatorTests(unittest.TestCase):
                     "review-S02-v1",
                     "review-pack",
                     parents=["scene-S02-v1"],
+                    path="artifacts/review-pack/review-S02-v1.json",
                     output_contract="task-result-v1",
                 ),
             )
@@ -1214,22 +1650,31 @@ class CoordinatorTests(unittest.TestCase):
                 "contract-S02-v1",
                 SHIPPED_INVALIDATION,
             )
-            status = complete_task(
-                project,
-                {
-                    "task_id": "review-S02",
-                    "status": "succeeded",
-                    "inputs": ["scene-S02-v1"],
-                    "artifacts": ["review-S02-v1"],
-                    "checks": ["review-ready"],
-                    "warnings": [],
-                    **claim,
-                },
-            )
+            with self.assertRaisesRegex(ValueError, "current approved output"):
+                complete_task(
+                    project,
+                    {
+                        "task_id": "review-S02",
+                        "status": "succeeded",
+                        "inputs": ["scene-S02-v1"],
+                        "artifacts": ["review-S02-v1"],
+                        "checks": ["review-ready"],
+                        "warnings": [],
+                        "visual_media_handoff": {
+                            "artifact_ids": ["review-S02-v1"],
+                            "paths": ["artifacts/review-pack/review-S02-v1.json"],
+                            "media": {},
+                            "checks": ["review-ready"],
+                            "issues": [],
+                            "summary": "review ready",
+                            "review_preview_path": None,
+                        },
+                        **claim,
+                    },
+                )
 
-            self.assertEqual("stale-result", status)
-            self.assertTrue(
-                (project / "tasks" / "stale-results" / "review-S02.json").is_file()
+            self.assertFalse(
+                (project / "tasks" / "stale-results" / "review-S02.json").exists()
             )
             self.assertFalse(
                 (project / "tasks" / "results" / "review-S02.json").exists()
@@ -1242,6 +1687,15 @@ class CoordinatorTests(unittest.TestCase):
             initialize_project(project, "kv-dead-lock", "knowledge-video")
             create_voice_bundle(project)
             create_artifact(project, artifact("storyboard-v1", "storyboard"))
+            create_artifact(
+                project,
+                artifact(
+                    "contract-S02-v1",
+                    "scene-contract",
+                    parents=["storyboard-v1"],
+                    scene_id="S02",
+                ),
+            )
             approve_artifact(
                 project,
                 "storyboard-v1",
@@ -1253,11 +1707,26 @@ class CoordinatorTests(unittest.TestCase):
                 candidate(
                     "produce-S02",
                     "scene.produce",
-                    ["storyboard-v1"],
+                    ["contract-S02-v1", "storyboard-v1"],
                     "storyboard-and-cost",
                     "storyboard-v1",
                     production_scope="representative-slice",
                     scene_id="S02",
+                    visual_media_context={
+                        "scope_identity": {
+                            "kind": "scene-contract",
+                            "id": "contract-S02-v1",
+                        },
+                            "allowed_artifact_ids": [],
+                            "historical_access": "character-only",
+                            "continuity_exception": {
+                                "artifact_id": "storyboard-v1",
+                                "user_requested": True,
+                                "reason": "Use this exact current storyboard input.",
+                            },
+                        "max_review_previews": 0,
+                        "context_budget_bytes": 32_768,
+                    },
                 ),
             )
             advance_project(project, "storyboard_ready")
@@ -1273,6 +1742,361 @@ class CoordinatorTests(unittest.TestCase):
             self.assertEqual(["scene.produce:S02"], resumed["ready_tasks"])
             self.assertEqual([], resumed["locked_task_ids"])
             self.assertFalse(lock_path.exists())
+
+    def test_resume_blocks_invalid_visual_tasks_in_a_safe_recovery_view(self):
+        """Catches malformed persisted authority crashing or routing production."""
+        with TemporaryDirectory() as folder:
+            project = Path(folder) / "project"
+            initialize_project(project, "kv-invalid-resume", "knowledge-video")
+            malformed = {
+                "task_id": "invalid-visual-v1",
+                "capability": "project.manage",
+                "inputs": [],
+                "adapter_preferences": ["chatcut"],
+                "output_contract": "scene-video-v1",
+                "constraints": {
+                    "visual_media_operation": "video-render",
+                    "execution_context": "isolated-child-agent",
+                },
+            }
+            (project / "tasks" / "invalid-visual-v1.json").write_text(
+                json.dumps(malformed), encoding="utf-8"
+            )
+
+            resumed = resume_project(project)
+
+            self.assertEqual("initialized", resumed["phase"])
+            self.assertEqual([], resumed["ready_tasks"])
+            self.assertEqual([], resumed["candidate_tasks"])
+            self.assertEqual(
+                "visual-media-recovery-blocked",
+                resumed["migration_requirement"]["code"],
+            )
+            self.assertIn(
+                "visual-media-context-invalid",
+                {issue["code"] for issue in resumed["recovery_issues"]},
+            )
+
+    def test_resume_reads_valid_legacy_authority_without_minting_it(self):
+        """Catches current construction validation making legacy recovery unreadable."""
+        with TemporaryDirectory() as folder:
+            project = Path(folder) / "project"
+            initialize_project(project, "kv-legacy-task", "knowledge-video")
+            create_artifact(project, artifact("contract-S01-v1", "scene-contract"))
+            legacy = {
+                "task_id": "legacy-inspect-S01",
+                "capability": "structure.validate",
+                "inputs": ["contract-S01-v1"],
+                "adapter_preferences": ["chatcut"],
+                "output_contract": "image-report-v1",
+                "constraints": {
+                    "image_operation": "image-inspect",
+                    "image_context": {
+                        "scope_identity": {
+                            "kind": "scene-contract",
+                            "id": "contract-S01-v1",
+                        },
+                        "allowed_image_artifact_ids": [],
+                        "allowed_character_pack_ids": [],
+                        "forbidden_scene_image_access": True,
+                        "max_review_previews": 1,
+                        "context_budget": 4096,
+                    },
+                },
+            }
+            (project / "tasks" / "legacy-inspect-S01.json").write_text(
+                json.dumps(legacy), encoding="utf-8"
+            )
+
+            resumed = resume_project(project)
+
+            self.assertEqual([legacy], resumed["candidate_tasks"])
+            self.assertEqual([], resumed["ready_tasks"])
+
+    def test_resume_returns_only_coordinator_safe_artifact_projection(self):
+        """Catches safe-but-arbitrary Artifact extras expanding coordinator context."""
+        with TemporaryDirectory() as folder:
+            project = Path(folder) / "project"
+            initialize_project(project, "kv-projection", "knowledge-video")
+            create_artifact(
+                project,
+                artifact(
+                    "license-v1",
+                    "license-document",
+                    path="artifacts/licenses/source.json",
+                    checksum="0123456789abcdef",
+                    license={
+                        "owner": "Example Studio",
+                        "territories": ["global"],
+                    },
+                ),
+            )
+
+            resumed = resume_project(project)
+            projected = resumed["artifacts"][0]
+
+            self.assertEqual("license-v1", projected["artifact_id"])
+            self.assertEqual("0123456789abcdef", projected["checksum"])
+            self.assertNotIn("license", projected)
+
+    def test_public_v3_route_prioritizes_one_bounded_timing_repair_action(self):
+        """A blocked validation result owns one repair action, not seven tasks."""
+        timing_lineage, blocked = timing_repair_lineage()
+        validation_id = "timing-validation-v1"
+        repair = build_timing_repair_envelope(
+            "timing-repair-v1",
+            validation_id,
+            ["B01"],
+            blocked,
+            voice_timing_id="voice-timing-v1",
+            timed_semantic_beats_id="timed-beats-v1",
+            scene_timing_contracts_id="scenes-v1",
+            minimum_readable_duration_ms=900,
+        )
+        unrelated = {
+            "task_id": "project-follow-up-v1",
+            "capability": "project.manage",
+            "inputs": [],
+            "adapter_preferences": ["chatcut"],
+            "output_contract": "project-v1",
+            "constraints": {"visual_media_operation": "none"},
+        }
+        validation = artifact(
+            validation_id,
+            "timing-validation",
+            parents=["scenes-v1"],
+            timing_validation=blocked,
+        )
+
+        self.assertEqual(
+            ["timing-repair"],
+            calculate_ready_tasks(
+                {
+                    "phase": "storyboard_timed",
+                    "candidate_tasks": [unrelated, repair],
+                },
+                [*timing_lineage, validation],
+                [],
+            ),
+        )
+
+        self.assertLessEqual(
+            len(repair["constraints"]["examples"]["SCENE_TOO_SHORT"]),
+            3,
+        )
+
+        passed = dict(validation)
+        passed["timing_validation"] = {"status": "passed", "checks_run": 8}
+        self.assertEqual(
+            ["project.manage"],
+            calculate_ready_tasks(
+                {
+                    "phase": "storyboard_timed",
+                    "candidate_tasks": [unrelated, repair],
+                    "completed_task_ids": ["timing-repair-v1"],
+                },
+                [*timing_lineage, passed],
+                [],
+            ),
+        )
+
+    def test_timing_repair_route_requires_declared_current_validated_lineage(self):
+        """Catches repair authority drifting from its declared current validation."""
+        lineage, blocked = timing_repair_lineage()
+        repair = build_timing_repair_envelope(
+            "repair-current", "validation-v1", ["B01"], blocked,
+            voice_timing_id="voice-timing-v1",
+            timed_semantic_beats_id="timed-beats-v1",
+            scene_timing_contracts_id="scenes-v1",
+            minimum_readable_duration_ms=900,
+        )
+        validation_v1 = artifact(
+            "validation-v1", "timing-validation", parents=["scenes-v1"],
+            version=1, timing_validation=blocked,
+        )
+        validation_v2 = artifact(
+            "validation-v2", "timing-validation", parents=["scenes-v1"],
+            version=2, timing_validation={"status": "passed", "checks_run": 2},
+        )
+        base = {"phase": "storyboard_timed", "candidate_tasks": [repair]}
+
+        self.assertEqual([], calculate_ready_tasks(base, [*lineage, validation_v1, validation_v2], []))
+
+        malformed = dict(validation_v1)
+        malformed["artifact_id"] = "validation-v3"
+        malformed["version"] = 3
+        malformed["timing_validation"] = {"status": "blocked"}
+        self.assertEqual([], calculate_ready_tasks(base, [*lineage, validation_v1, malformed], []))
+
+        mismatched = dict(repair)
+        mismatched["inputs"] = ["validation-v2"]
+        with self.assertRaisesRegex(ValueError, "timing_validation_id.*input"):
+            calculate_ready_tasks(
+                {"phase": "storyboard_timed", "candidate_tasks": [mismatched]},
+                [*lineage, validation_v1], [],
+            )
+
+    def test_timing_repair_projection_uses_the_current_artifact_compact_result(self):
+        lineage, blocked = timing_repair_lineage()
+        validation = artifact(
+            "validation-v1", "timing-validation", parents=["scenes-v1"],
+            timing_validation=blocked,
+        )
+        repair = build_timing_repair_envelope(
+            "repair-projection", "validation-v1", ["B01"],
+            validation["timing_validation"],
+            voice_timing_id="voice-timing-v1",
+            timed_semantic_beats_id="timed-beats-v1",
+            scene_timing_contracts_id="scenes-v1",
+            minimum_readable_duration_ms=900,
+        )
+        projected = _coordinator_safe_task_projection(
+            repair, [*lineage, validation]
+        )
+        self.assertEqual(
+            {"SCENE_TOO_SHORT": 1},
+            projected["constraints"]["issue_counts"],
+        )
+        fabricated = {**repair, "constraints": {**repair["constraints"]}}
+        fabricated["constraints"]["issue_counts"] = {"STALE_VOICE_TIMING": 99}
+        self.assertNotIn(
+            "issue_counts",
+            _coordinator_safe_task_projection(fabricated, [*lineage, validation])["constraints"],
+        )
+
+    def test_resume_projects_task_constraints_and_approvals_without_freeform_payloads(self):
+        """Persisted prompts and approval notes never enter the coordinator view."""
+        with TemporaryDirectory() as folder:
+            project = Path(folder) / "project"
+            initialize_project(project, "kv-safe-task-view", "knowledge-video")
+            unsafe = {
+                "task_id": "manage-v1",
+                "capability": "project.manage",
+                "inputs": [],
+                "adapter_preferences": ["chatcut"],
+                "output_contract": "project-v1",
+                "constraints": {
+                    "visual_media_operation": "none",
+                    "prompt": "full prompt history",
+                    "narration": "full narration",
+                    "media": {"payload": "large"},
+                    "diagnostics": {"trace": "verbose"},
+                    "issue_counts": {"prompt": "full narration"},
+                    "examples": {"diagnostics": {"trace": "verbose"}},
+                    "affected_beat_ids": ["B01", "B02"],
+                },
+            }
+            (project / "tasks" / "manage-v1.json").write_text(
+                json.dumps(unsafe), encoding="utf-8"
+            )
+            (project / "approvals" / "approval-v1.json").write_text(
+                json.dumps(
+                    {
+                        "approval_id": "approval-v1",
+                        "target_id": "project-v1",
+                        "scope": "content",
+                        "decision": "approved",
+                        "notes": "private freeform notes",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            resumed = resume_project(project)
+
+            self.assertEqual(
+                {
+                    "task_id": "manage-v1",
+                    "capability": "project.manage",
+                    "inputs": [],
+                    "output_contract": "project-v1",
+                    "constraints": {"visual_media_operation": "none"},
+                },
+                resumed["candidate_tasks"][0],
+            )
+            self.assertEqual(
+                [{"approval_id": "approval-v1", "target_id": "project-v1", "scope": "content", "decision": "approved"}],
+                resumed["approvals"],
+            )
+
+    def test_coordinator_recovery_uses_compact_timing_metadata_without_detail_path(self):
+        """Recovery never opens the timing worker's verbose result path."""
+        with TemporaryDirectory() as folder:
+            project = Path(folder) / "project"
+            initialize_project(project, "kv-compact-recovery", "knowledge-video", schema_version=3)
+            with (project / "events" / "events.jsonl").open("a", encoding="utf-8") as stream:
+                for phase in (
+                "semantic_beats_confirmed",
+                "voiceover_ready",
+                "timing_bound",
+                "storyboard_timed",
+                "representative_scene_ready",
+                "production_ready",
+                ):
+                    stream.write(
+                        json.dumps({"event": "project.phase_changed", "phase": phase}) + "\n"
+                    )
+            sentinel = project / "metadata" / "forbidden-detail.json"
+            records = [
+                artifact("voice-timing-v1", "voice-timing", timing_kind="real"),
+                artifact(
+                    "timed-v1", "timed-semantic-beats", parents=["voice-timing-v1"],
+                    voice_timing_id="voice-timing-v1", timing_kind="real",
+                ),
+                artifact(
+                    "scenes-v1", "scene-timing-contracts", parents=["timed-v1"],
+                    timed_semantic_beats_id="timed-v1",
+                ),
+                artifact(
+                    "validation-v1", "timing-validation", parents=["scenes-v1"],
+                    path="metadata/forbidden-detail.json",
+                    timing_validation={"status": "passed", "checks_run": 1},
+                ),
+            ]
+            original_read_text = Path.read_text
+
+            def read_text_without_sentinel(path, *args, **kwargs):
+                if path == sentinel:
+                    raise AssertionError("timing detail path opened")
+                return original_read_text(path, *args, **kwargs)
+
+            with patch(
+                "scripts.toolkit.project_state.validate_project_authoritative_voice_bundle",
+                return_value={"ok": True, "voice_timing_id": "voice-timing-v1"},
+            ), patch.object(Path, "read_text", new=read_text_without_sentinel):
+                recovery = project_recovery_view(project, records)
+
+            self.assertNotIn("TIMING_VALIDATION_REQUIRED", recovery.get("migration_requirement", {}).get("issues", []))
+
+    def test_resume_blocks_a_tampered_unsafe_artifact_without_exposing_it(self):
+        """Catches recovery trusting an Artifact payload added after publication."""
+        with TemporaryDirectory() as folder:
+            project = Path(folder) / "project"
+            initialize_project(project, "kv-tampered-artifact", "knowledge-video")
+            path = create_artifact(
+                project,
+                artifact(
+                    "tampered-v1",
+                    "report",
+                    path="artifacts/reports/tampered-v1.json",
+                ),
+            )
+            record = json.loads(path.read_text(encoding="utf-8"))
+            record["checksum_backup"] = "A" * 64
+            path.write_text(json.dumps(record), encoding="utf-8")
+
+            resumed = resume_project(project)
+
+            self.assertEqual([], resumed["artifacts"])
+            self.assertEqual([], resumed["ready_tasks"])
+            self.assertEqual(
+                "visual-media-recovery-blocked",
+                resumed["migration_requirement"]["code"],
+            )
+            self.assertIn(
+                "invalid-artifact-metadata",
+                {issue["code"] for issue in resumed["recovery_issues"]},
+            )
 
     def test_resume_rejects_a_symlinked_task_result_directory(self):
         """Catches completed-task discovery following storage outside the project."""
@@ -1304,6 +2128,40 @@ class CoordinatorTests(unittest.TestCase):
 
 
 class SmokeAndInstallationTests(unittest.TestCase):
+    def test_installed_timing_smoke_uses_only_installed_metadata_runtime(self):
+        """Catches timing smoke falling back to repository code or media access."""
+        with TemporaryDirectory() as folder:
+            home = Path(folder) / "home"
+            cache = activate_versioned_personal_plugin(home, ROOT)
+
+            smoke = run_installed_timing_smoke(cache)
+            verified = verify_installation(
+                repo=None,
+                home=home,
+                require_timing_smoke=True,
+            )
+
+            self.assertTrue(smoke["ok"], smoke)
+            self.assertTrue(verified["ok"], verified)
+            self.assertEqual("0.2.0", smoke["plugin_version"])
+            self.assertEqual(
+                cache.resolve(), Path(smoke["runtime_module_path"]).parents[2]
+            )
+            self.assertEqual(
+                {
+                    "installed_module": "passed",
+                    "frozen_semantic_beats": "passed",
+                    "real_timing_binding": "passed",
+                    "storyboard_gate": "passed",
+                    "compact_validation": "passed",
+                    "stale_timing_recovery": "passed",
+                    "v2_compatibility": "passed",
+                    "json_metadata_only": "passed",
+                },
+                smoke["checks"],
+            )
+            self.assertEqual(smoke["checks"], verified["timing_smoke"]["checks"])
+
     def test_new_cli_entrypoints_run_directly(self):
         """Catches repository imports failing when Python starts inside scripts/."""
         for script in (
@@ -1391,17 +2249,28 @@ class SmokeAndInstallationTests(unittest.TestCase):
                 )
 
     def test_resume_smoke_returns_the_post_timing_revision_recovery(self):
-        """Catches the reported recovery snapshot hiding v2 invalidation effects."""
+        """Catches timing revision staling approved Stage A anchors with its binding."""
         result = _run_resume_scenario()
         artifacts = {item["artifact_id"]: item for item in result["artifacts"]}
+        revision = result["voice_timing_revision"]
 
         self.assertEqual(
             "voice-timing-v2",
-            result["voice_timing_revision"]["current_voice_timing_id"],
+            revision["current_voice_timing_id"],
         )
         self.assertEqual("approved", artifacts["voice-timing-v2"]["status"])
         self.assertEqual("approved", artifacts["style-v1"]["status"])
-        for artifact_id in result["voice_timing_revision"]["declared_descendant_ids"]:
+        self.assertEqual("approved", artifacts["semantic-beats-v1"]["status"])
+        self.assertEqual("stale", artifacts["timed-semantic-beats-v1"]["status"])
+        self.assertIn(
+            "timed-semantic-beats-v1", revision["declared_descendant_ids"]
+        )
+        self.assertNotIn("semantic-beats-v1", revision["declared_descendant_ids"])
+        self.assertEqual(
+            ["semantic-beats-v1", "style-v1", "voice-timing-v2"],
+            revision["preserved_artifact_ids"],
+        )
+        for artifact_id in revision["declared_descendant_ids"]:
             self.assertEqual("stale", artifacts[artifact_id]["status"])
 
     def test_resume_smoke_seeds_and_preserves_the_declared_voice_fixture(self):
@@ -1490,9 +2359,16 @@ class SmokeAndInstallationTests(unittest.TestCase):
             installed = install_personal_plugin(ROOT, home=home, mode="link")
             target = Path(installed["plugin_path"])
             catalog = json.loads(marketplace.read_text(encoding="utf-8"))
+            manifest = json.loads(
+                (ROOT / ".codex-plugin/plugin.json").read_text(encoding="utf-8")
+            )
 
             self.assertTrue(target.is_symlink())
             self.assertEqual(ROOT.resolve(), target.resolve())
+            self.assertEqual("0.2.0", installed.get("plugin_version"))
+            self.assertEqual(
+                manifest["release_fingerprint"], installed.get("release_fingerprint")
+            )
             self.assertEqual(
                 {"unrelated", "video-production-toolkit"},
                 {entry["name"] for entry in catalog["plugins"]},
@@ -1566,6 +2442,55 @@ class SmokeAndInstallationTests(unittest.TestCase):
 
             self.assertTrue(result["ok"], result)
             self.assertEqual(cache.resolve(), Path(result["plugin"]["root"]).resolve())
+
+    def test_host_cache_visual_isolation_smoke_uses_only_public_metadata_runtime(self):
+        """Catches repo imports or visual operations masking a broken installed boundary."""
+        runner = getattr(
+            installation_verifier, "run_installed_visual_media_smoke", None
+        )
+        self.assertIsNotNone(runner)
+        if runner is None:
+            return
+
+        with TemporaryDirectory() as folder:
+            home = Path(folder) / "home"
+            cache = activate_versioned_personal_plugin(home, ROOT)
+
+            smoke = runner(cache)
+            verified = verify_installation(
+                repo=None,
+                home=home,
+                require_visual_media_smoke=True,
+            )
+
+            self.assertTrue(smoke["ok"], smoke)
+            self.assertEqual("0.2.0", smoke["plugin_version"])
+            self.assertEqual(
+                cache.resolve(), Path(smoke["runtime_module_path"]).parents[2]
+            )
+            self.assertEqual(
+                {
+                    "child_only_routing": "passed",
+                    "none_laundering": "passed",
+                    "universal_scrub": "passed",
+                    "exact_scope": "passed",
+                    "legacy_projection": "passed",
+                    "one_preview_relay": "passed",
+                    "json_metadata_only": "passed",
+                },
+                smoke["checks"],
+            )
+            self.assertEqual(
+                {
+                    "child_only_routing": "visual media task requires an isolated child agent",
+                    "none_laundering": "visual media task cannot declare operation none",
+                    "universal_scrub": "visual media result must not contain an image payload or other media payload",
+                    "exact_scope": "visual media task requires exactly one scene-contract scope and no neighbor",
+                },
+                smoke["stable_errors"],
+            )
+            self.assertTrue(verified["ok"], verified)
+            self.assertEqual(smoke["checks"], verified["visual_media_smoke"]["checks"])
 
     def test_verifier_does_not_treat_marketplace_registration_as_host_installation(self):
         """Catches an available catalog source being reported as installed and active."""
@@ -1786,6 +2711,10 @@ class RetirementSafetyTests(unittest.TestCase):
                     "raise RuntimeError('broken installed orchestrator')\n",
                     encoding="utf-8",
                 )
+                manifest_path = root / ".codex-plugin" / "plugin.json"
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                manifest["release_fingerprint"] = _release_fingerprint(root)
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
             with self.assertRaisesRegex(RuntimeError, "installed"):
                 retire_legacy_skill(

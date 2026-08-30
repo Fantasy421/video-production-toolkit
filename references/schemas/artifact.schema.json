@@ -4,17 +4,125 @@
   "type": "object",
   "required": ["artifact_id", "type", "version", "status", "parents", "path"],
   "properties": {
-    "artifact_id": {"type": "string", "minLength": 1},
-    "type": {"type": "string", "minLength": 1},
+    "artifact_id": {"$ref": "#/$defs/safeId"},
+    "type": {"$ref": "#/$defs/safeId"},
     "version": {"type": "integer", "minimum": 1},
     "status": {"enum": ["draft", "approved", "stale", "superseded", "invalid"]},
-    "parents": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
-    "path": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^(?!/)(?![A-Za-z]:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"
-    },
-    "output_contract": {"type": "string", "minLength": 1}
+    "parents": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
+    "path": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"},
+    "output_contract": {"type": "string", "minLength": 1, "maxLength": 128},
+    "media_kind": {"enum": ["audio", "data", "document", "image", "video"]},
+    "mime_type": {"type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"},
+    "format": {"type": "string", "minLength": 1, "maxLength": 64},
+    "historical": {"type": "boolean"},
+    "checksum": {"type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[A-Fa-f0-9]{8,128}$"},
+    "width": {"type": "integer", "minimum": 1, "maximum": 16384},
+    "height": {"type": "integer", "minimum": 1, "maximum": 16384},
+    "duration_ms": {"type": "integer", "minimum": 0, "maximum": 36000000},
+    "fps": {"type": "number", "exclusiveMinimum": 0, "maximum": 240},
+    "file_size": {"type": "integer", "minimum": 0, "maximum": 1099511627776},
+    "size_bytes": {"type": "integer", "minimum": 0, "maximum": 1099511627776},
+    "readiness": {"type": "string", "minLength": 1, "maxLength": 64},
+    "approval_id": {"$ref": "#/$defs/safeId"},
+    "approved": {"type": "boolean"},
+    "character_ids": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
+    "character_pack_id": {"$ref": "#/$defs/safeId"},
+    "consent_provenance": {"$ref": "#/$defs/text500"},
+    "decision": {"$ref": "#/$defs/token64"},
+    "decision_provenance": {"$ref": "#/$defs/text500"},
+    "emotion": {"type": "string", "minLength": 1, "maxLength": 128},
+    "identity_provenance": {"$ref": "#/$defs/text500"},
+    "language": {"$ref": "#/$defs/token64"},
+    "license": {"$ref": "#/$defs/licenseMetadata"},
+    "media_format": {"$ref": "#/$defs/token64"},
+    "media_path": {"$ref": "#/$defs/projectPath"},
+    "mode": {"$ref": "#/$defs/token64"},
+    "narration_id": {"$ref": "#/$defs/safeId"},
+    "notes": {"type": "string", "maxLength": 2000},
+    "profile_id": {"$ref": "#/$defs/safeId"},
+    "profile_provenance": {"$ref": "#/$defs/text500"},
+    "promotion": {"$ref": "#/$defs/promotionMetadata"},
+    "pronunciations": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/text500"}, "uniqueItems": true},
+    "provenance": {"$ref": "#/$defs/text500"},
+    "provider": {"type": "string", "minLength": 1, "maxLength": 128},
+    "scene_id": {"$ref": "#/$defs/safeId"},
+    "scope": {"type": "string", "minLength": 1, "maxLength": 128},
+    "keyword_anchors": {"type": "array", "maxItems": 512, "uniqueItems": true, "items": {"$ref": "#/$defs/keywordAnchor"}},
+    "segments": {"type": "array", "maxItems": 512, "items": {"$ref": "#/$defs/timingSegment"}},
+    "source_decision_id": {"$ref": "#/$defs/safeId"},
+    "speaking_rate": {"type": "number", "exclusiveMinimum": 0, "maximum": 4},
+    "target_id": {"$ref": "#/$defs/safeId"},
+    "text": {"type": "string", "minLength": 1, "maxLength": 8192},
+    "timing_kind": {"$ref": "#/$defs/token64"},
+    "timing_validation": {"$ref": "timing-validation.schema.json"},
+    "uploaded_audio_id": {"$ref": "#/$defs/safeId"},
+    "voice_id": {"$ref": "#/$defs/safeId"},
+    "voice_timing_id": {"$ref": "#/$defs/safeId", "deprecated": true, "readOnly": true},
+    "voiceover_id": {"$ref": "#/$defs/safeId"}
   },
-  "additionalProperties": true
+  "additionalProperties": false,
+  "$defs": {
+    "safeId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"},
+    "projectPath": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"},
+    "token64": {"type": "string", "minLength": 1, "maxLength": 64},
+    "text500": {"type": "string", "minLength": 1, "maxLength": 500},
+    "promotionText": {"type": "string", "maxLength": 500},
+    "emptyObject": {"type": "object", "maxProperties": 0, "additionalProperties": false},
+    "timingSegment": {
+      "type": "object",
+      "required": ["start_ms", "end_ms", "text"],
+      "properties": {
+        "start_ms": {"type": "integer", "minimum": 0, "maximum": 35999999},
+        "end_ms": {"type": "integer", "minimum": 1, "maximum": 36000000},
+        "text": {"type": "string", "minLength": 1, "maxLength": 1000}
+      },
+      "additionalProperties": false
+    },
+    "keywordAnchor": {
+      "type": "object",
+      "required": ["beat_id", "keyword", "start_ms", "end_ms"],
+      "properties": {
+        "beat_id": {"$ref": "#/$defs/safeId"},
+        "keyword": {"type": "string", "minLength": 1, "maxLength": 256},
+        "start_ms": {"type": "integer", "minimum": 0, "maximum": 35999999},
+        "end_ms": {"type": "integer", "minimum": 1, "maximum": 36000000}
+      },
+      "additionalProperties": false
+    },
+    "licenseMetadata": {
+      "type": "object",
+      "required": ["owner"],
+      "properties": {
+        "owner": {"$ref": "#/$defs/text500"},
+        "territories": {"type": "array", "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 128}, "uniqueItems": true},
+        "expires": {"anyOf": [{"type": "null"}, {"type": "string", "minLength": 1, "maxLength": 128}]}
+      },
+      "additionalProperties": false
+    },
+    "promotionMetadata": {
+      "type": "object",
+      "properties": {
+        "action": {"$ref": "#/$defs/promotionText"},
+        "alpha": {"$ref": "#/$defs/promotionText"},
+        "applicability": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/promotionText"}, "uniqueItems": true},
+        "asset_kind": {"$ref": "#/$defs/promotionText"},
+        "orientation": {"$ref": "#/$defs/promotionText"},
+        "ownership": {"$ref": "#/$defs/promotionText"},
+        "provenance": {
+          "type": "object",
+          "properties": {
+            "artifact_id": {"$ref": "#/$defs/safeId"},
+            "project_id": {"$ref": "#/$defs/safeId"}
+          },
+          "additionalProperties": false
+        },
+        "scene": {"$ref": "#/$defs/promotionText"},
+        "scope": {"$ref": "#/$defs/promotionText"},
+        "source_or_license": {"$ref": "#/$defs/promotionText"},
+        "subject": {"$ref": "#/$defs/promotionText"},
+        "validation_evidence": {"type": "array", "maxItems": 64, "items": {"anyOf": [{"$ref": "#/$defs/promotionText"}, {"$ref": "#/$defs/emptyObject"}]}, "uniqueItems": true}
+      },
+      "additionalProperties": false
+    }
+  }
 }

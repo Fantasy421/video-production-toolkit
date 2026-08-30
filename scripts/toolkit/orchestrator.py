@@ -7,6 +7,7 @@ from typing import Any, Optional, Union
 from scripts.toolkit.artifacts import (
     _artifact_paths_by_id,
     _read_valid_artifact,
+    coordinator_safe_artifact_projection,
     read_approval,
 )
 from scripts.toolkit.invalidation import (
@@ -15,6 +16,7 @@ from scripts.toolkit.invalidation import (
 )
 from scripts.toolkit.project_state import (
     PHASES,
+    V3_PHASES,
     append_event,
     project_recovery_view,
     replay_events,
@@ -22,10 +24,18 @@ from scripts.toolkit.project_state import (
 from scripts.toolkit.runtime_paths import project_path, project_root
 from scripts.toolkit.tasks import (
     _read_envelope,
-    _validate_envelope,
     active_claim_task_ids,
-    voice_timing_input_is_current,
+    authorize_declared_visual_media_task,
+    validate_current_task_envelope,
+    validate_persisted_task_envelope,
+    timing_contract_inputs_are_current,
 )
+from scripts.toolkit.timing_validation import (
+    build_compact_timing_rows,
+    validate_timing_rows,
+    validate_timing_validation_result,
+)
+from scripts.toolkit.visual_media_context import SAFE_ID_RE
 
 
 GATES = (
@@ -49,7 +59,7 @@ _BASE_GATES = {
     "structure.validate": "storyboard-and-cost",
     "review.package": "storyboard-and-cost",
 }
-_UNGATED_CAPABILITIES = {"project.manage"}
+_UNGATED_CAPABILITIES = {"project.manage", "timing-repair"}
 _EXPANSION_SCOPES = {"full-production", "final-draft", "handoff", "export"}
 _VALID_DECISIONS = {"approved", "delegated", "skipped"}
 _GATE_TARGET_TYPES = {
@@ -76,6 +86,7 @@ _CAPABILITY_PHASES = {
     "representative-slice.produce": {"storyboard_ready"},
     "structure.validate": {"assembled"},
     "review.package": {"review_ready"},
+    "timing-repair": {"storyboard_timed", "production_ready"},
     "project.manage": set(PHASES),
 }
 
@@ -94,10 +105,30 @@ def calculate_ready_tasks(
     live task locks are checked before deterministic task-ID ordering selects a
     single action slice.
     """
+    ready, _ = _calculate_ready_tasks(
+        state,
+        artifacts,
+        approvals,
+        root=root,
+        validator=validate_current_task_envelope,
+        recover=False,
+    )
+    return ready
+
+
+def _calculate_ready_tasks(
+    state: Mapping[str, Any],
+    artifacts: Union[Iterable[Mapping[str, Any]], Mapping[str, Mapping[str, Any]]],
+    approvals: Iterable[Mapping[str, Any]],
+    *,
+    root: Optional[Path],
+    validator: Any,
+    recover: bool,
+) -> tuple[list[str], list[dict[str, str]]]:
     if not isinstance(state, Mapping):
         raise ValueError("state must be a mapping")
     phase = state.get("phase")
-    if phase is not None and phase not in PHASES:
+    if phase is not None and phase not in {*PHASES, *V3_PHASES}:
         raise ValueError("project phase is not recognized")
     candidates = state.get("candidate_tasks", [])
     if not isinstance(candidates, list):
@@ -108,11 +139,21 @@ def calculate_ready_tasks(
     normalized_approvals = _normalize_approvals(approvals)
 
     ready: list[dict[str, Any]] = []
+    recovery_issues: list[dict[str, str]] = []
     seen_task_ids: set[str] = set()
     for candidate in candidates:
         if not isinstance(candidate, dict):
+            if recover:
+                recovery_issues.append({"code": "visual-media-context-invalid"})
+                continue
             raise ValueError("candidate task must be an object")
-        _validate_envelope(candidate)
+        try:
+            validator(candidate)
+        except (PermissionError, TypeError, ValueError) as error:
+            if not recover:
+                raise
+            recovery_issues.append(_visual_recovery_issue(candidate, error))
+            continue
         task_id = candidate["task_id"]
         if task_id in seen_task_ids:
             raise ValueError(f"candidate task ID is duplicated: {task_id}")
@@ -123,19 +164,197 @@ def calculate_ready_tasks(
             continue
         if not _parents_are_current(candidate["inputs"], by_id):
             continue
-        if not voice_timing_input_is_current(candidate, by_id, root=root):
+        if not timing_contract_inputs_are_current(candidate, by_id, root=root):
+            continue
+        v3_project = (
+            state.get("schema_version") == 3
+            or phase in set(V3_PHASES) - {"production_ready"}
+            or "timing_validation_id" in candidate["constraints"]
+        )
+        if not _timing_route_is_current(candidate, by_id, phase, v3_project, root):
             continue
         gate = _required_gate(candidate)
         if gate is not None and not _has_gate_approval(
             candidate, gate, by_id, normalized_approvals
         ):
             continue
+        try:
+            authorize_declared_visual_media_task(candidate, by_id)
+        except (PermissionError, TypeError, ValueError) as error:
+            if not recover:
+                raise
+            recovery_issues.append(_visual_recovery_issue(candidate, error))
+            continue
         ready.append(candidate)
 
     if not ready:
-        return []
-    selected = min(ready, key=lambda item: item["task_id"])
-    return [_action_name(selected)]
+        return [], recovery_issues
+    repairs = [item for item in ready if item["capability"] == "timing-repair"]
+    selected = min(repairs or ready, key=lambda item: item["task_id"])
+    return [_action_name(selected)], recovery_issues
+
+
+def _timing_route_is_current(
+    candidate: Mapping[str, Any],
+    artifacts: Mapping[str, Mapping[str, Any]],
+    phase: Optional[str],
+    v3_project: bool,
+    root: Optional[Path],
+) -> bool:
+    """Gate v3 visual work on the worker's compact current validation result."""
+    capability = candidate["capability"]
+    current = _current_timing_validation(candidate, artifacts, root=root)
+    if capability == "timing-repair":
+        return current is not None and current["timing_validation"]["status"] == "blocked"
+    if (
+        not v3_project
+        or phase not in V3_PHASES
+        or V3_PHASES.index(phase) < V3_PHASES.index("storyboard_timed")
+        or capability
+        not in {
+            "scene.produce",
+            "motion.preview",
+            "motion.produce",
+            "timeline.assemble",
+            "captions.produce",
+            "representative-slice.produce",
+        }
+    ):
+        return True
+    return current is not None and current["timing_validation"]["status"] == "passed"
+
+
+def _current_timing_validation(
+    candidate: Mapping[str, Any],
+    artifacts: Mapping[str, Mapping[str, Any]],
+    *,
+    root: Optional[Path] = None,
+) -> Optional[dict[str, Any]]:
+    """Resolve validation only on the declared authoritative narration DAG."""
+    constraints = candidate.get("constraints", {})
+    validation_id = constraints.get("timing_validation_id")
+    voice_id = constraints.get("voice_timing_id")
+    timed_id = constraints.get("timed_semantic_beats_id")
+    scene_id = constraints.get("scene_timing_contracts_id")
+    inputs = candidate.get("inputs")
+    if (
+        any(
+            not isinstance(value, str) or SAFE_ID_RE.fullmatch(value) is None
+            for value in (validation_id, voice_id, timed_id, scene_id)
+        )
+        or not isinstance(inputs, list)
+        or not {validation_id, voice_id, timed_id, scene_id}.issubset(set(inputs))
+    ):
+        return None
+
+    def latest(records: list[Mapping[str, Any]]) -> Optional[dict[str, Any]]:
+        if not records:
+            return None
+        return max(
+            (dict(record) for record in records),
+            key=lambda record: (
+                record.get("version")
+                if isinstance(record.get("version"), int)
+                and not isinstance(record.get("version"), bool)
+                else -1,
+                record.get("artifact_id")
+                if isinstance(record.get("artifact_id"), str)
+                else "",
+            ),
+        )
+
+    voice = artifacts.get(voice_id)
+    timed = artifacts.get(timed_id)
+    scene = artifacts.get(scene_id)
+    semantic_id = timed.get("semantic_beats_id") if isinstance(timed, Mapping) else None
+    semantic = artifacts.get(semantic_id) if isinstance(semantic_id, str) else None
+    if not all(isinstance(value, Mapping) for value in (voice, timed, scene, semantic)):
+        return None
+    from scripts.toolkit.timed_semantic_beats import (
+        validate_timed_semantic_beats_artifact,
+    )
+    from scripts.toolkit.voice import (
+        validate_authoritative_voice_bundle,
+        validate_project_authoritative_voice_bundle,
+    )
+
+    bundle = (
+        validate_project_authoritative_voice_bundle(root, artifacts.values())
+        if root is not None
+        else validate_authoritative_voice_bundle(artifacts.values())
+    )
+    if (
+        not bundle.get("ok")
+        or bundle.get("voice_timing_id") != voice_id
+        or bundle.get("narration_id") != semantic.get("narration_id")
+        or scene.get("type") != "scene-timing-contracts"
+        or scene.get("status") != "approved"
+        or scene.get("timed_semantic_beats_id") != timed_id
+        or scene.get("parents") != [timed_id]
+    ):
+        return None
+    try:
+        validate_timed_semantic_beats_artifact(timed, semantic, voice)
+    except ValueError:
+        return None
+
+    candidates: list[dict[str, Any]] = []
+    for item in artifacts.values():
+        if (
+            item.get("type") != "timing-validation"
+            or item.get("status") != "approved"
+            or item.get("parents") != [scene_id]
+        ):
+            continue
+        candidates.append(dict(item))
+    current = latest(candidates)
+    if current is None or current.get("artifact_id") != validation_id:
+        return None
+    try:
+        current["timing_validation"] = validate_timing_validation_result(
+            current["timing_validation"]
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    try:
+        rows = build_compact_timing_rows(
+            scene,
+            timed,
+            current_voice_timing_id=voice_id,
+            current_timed_semantic_beats_id=timed_id,
+        )
+        expected = validate_timing_rows(
+            rows,
+            minimum_readable_duration_ms=(
+                constraints.get("minimum_readable_duration_ms", 500)
+                if candidate.get("capability") == "timing-repair"
+                else 500
+            ),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    if current["timing_validation"] != expected:
+        return None
+    # Keep the exact chain selected above attached to the validated result so
+    # callers do not have to reconstruct authority from generic Artifact data.
+    current["lineage"] = {
+        "voice_timing_id": voice_id,
+        "timed_semantic_beats_id": timed_id,
+        "scene_timing_contracts_id": scene_id,
+    }
+    if candidate.get("capability") == "timing-repair":
+        compact = current["timing_validation"]
+        if (
+            constraints.get("issue_counts") != compact.get("issue_counts")
+            or constraints.get("examples") != compact.get("examples")
+            or not set(
+                beat_id
+                for ids in compact.get("examples", {}).values()
+                for beat_id in ids
+            ).issubset(set(constraints.get("affected_beat_ids", [])))
+        ):
+            return None
+    return current
 
 
 def _capability_is_legal_in_phase(candidate: Mapping[str, Any], phase: str) -> bool:
@@ -144,6 +363,31 @@ def _capability_is_legal_in_phase(candidate: Mapping[str, Any], phase: str) -> b
     if allowed is None:
         raise ValueError(f"unknown coordinator capability: {capability}")
     scope = candidate["constraints"].get("production_scope")
+    if phase in V3_PHASES:
+        v3_allowed = {
+            "narration.plan": {"script_confirmed"},
+            "visual.preview": {"semantic_beats_confirmed", "visual_direction_previewed"},
+            "voice.prepare": {"semantic_beats_confirmed", "visual_direction_previewed"},
+            "storyboard.plan": {"timing_bound"},
+            "representative-slice.produce": {"storyboard_timed"},
+            "motion.preview": {"storyboard_timed"},
+            "scene.produce": {"storyboard_timed", "production_ready"},
+            "motion.produce": {"storyboard_timed", "production_ready"},
+            "timeline.assemble": {"storyboard_timed", "production_ready"},
+            "captions.produce": {"storyboard_timed", "production_ready"},
+            "structure.validate": set(),
+            "review.package": set(),
+            "timing-repair": {"storyboard_timed", "production_ready"},
+            "project.manage": set(V3_PHASES),
+        }
+        allowed_v3 = v3_allowed.get(capability)
+        if allowed_v3 is None:
+            raise ValueError(f"unknown coordinator capability: {capability}")
+        scope = candidate["constraints"].get("production_scope")
+        if capability in {"scene.produce", "motion.produce", "timeline.assemble", "captions.produce"}:
+            return phase == "production_ready" if scope in _EXPANSION_SCOPES else phase == "storyboard_timed"
+        return phase in allowed_v3
+
     if capability in {
         "scene.produce",
         "motion.produce",
@@ -189,7 +433,7 @@ def resume_project(root: Path) -> dict[str, Any]:
         for item in artifacts
     ]
     state = project_recovery_view(root, effective_artifacts)
-    candidate_tasks = _load_candidate_tasks(root)
+    candidate_tasks, load_issues = _load_candidate_tasks(root)
     locked = active_claim_task_ids(root)
     completed = sorted(
         set(_task_ids(root, Path("tasks") / "results", ".json"))
@@ -202,17 +446,87 @@ def resume_project(root: Path) -> dict[str, Any]:
         "locked_task_ids": locked,
         "completed_task_ids": completed,
     }
-    ready = calculate_ready_tasks(
-        coordinator_state, effective_artifacts, approvals, root=root
+    ready, authority_issues = _calculate_ready_tasks(
+        coordinator_state,
+        effective_artifacts,
+        approvals,
+        root=root,
+        validator=validate_persisted_task_envelope,
+        recover=True,
     )
+    from scripts.toolkit.validation import validate_project
+
+    persisted = validate_project(root)
+    blocking_codes = {
+        "invalid-artifact-metadata",
+        "legacy-visual-task-blocked",
+        "visual-media-context-invalid",
+        "visual-media-input-forbidden",
+        "visual-media-isolation-required",
+        "visual-media-result-invalid",
+        "voice-timing-required",
+        "timed-semantic-beats-required",
+        "scene-timing-contracts-required",
+        "timing-validation-required",
+    }
+    persisted_issues = [
+        {
+            key: value
+            for key, value in issue.items()
+            if key in {"code", "task_id", "artifact_id", "path"}
+        }
+        for issue in persisted["errors"]
+        if issue.get("code") in blocking_codes
+    ]
+    state_recovery_issues = [
+        {"code": code}
+        for code in state.get("migration_requirement", {}).get("issues", [])
+        if isinstance(code, str)
+    ]
+    recovery_issues = _deduplicate_recovery_issues(
+        [*state_recovery_issues, *load_issues, *authority_issues, *persisted_issues]
+    )
+    if recovery_issues:
+        recorded_phase = state.get("migration_requirement", {}).get(
+            "recorded_phase", state["phase"]
+        )
+        recovery_floor = (
+            "semantic_beats_confirmed"
+            if state.get("schema_version") == 3
+            else "direction_ready"
+        )
+        safe_phase = (
+            recovery_floor
+            if _phase_position(recorded_phase) > _phase_position(recovery_floor)
+            else recorded_phase
+        )
+        state = {
+            **state,
+            "phase": safe_phase,
+            "migration_requirement": {
+                "code": "visual-media-recovery-blocked",
+                "recorded_phase": recorded_phase,
+                **({"issues": [item["code"] for item in recovery_issues if "code" in item]}
+                   if state.get("schema_version") == 3 else {}),
+            },
+        }
+        candidate_tasks = []
+        ready = []
     return {
         **state,
-        "artifacts": effective_artifacts,
-        "approvals": approvals,
-        "candidate_tasks": candidate_tasks,
+        "artifacts": [
+            coordinator_safe_artifact_projection(item)
+            for item in effective_artifacts
+        ],
+        "approvals": [_coordinator_safe_approval_projection(item) for item in approvals],
+        "candidate_tasks": [
+            _coordinator_safe_task_projection(item, effective_artifacts)
+            for item in candidate_tasks
+        ],
         "locked_task_ids": locked,
         "completed_task_ids": completed,
         "ready_tasks": ready,
+        **({"recovery_issues": recovery_issues} if recovery_issues else {}),
     }
 
 
@@ -233,6 +547,98 @@ def _required_gate(candidate: Mapping[str, Any]) -> Optional[str]:
             f"task {candidate['task_id']} declares gate {declared!r}; expected {expected!r}"
         )
     return expected
+
+
+_SAFE_COORDINATOR_CONSTRAINTS = frozenset(
+    {
+        "visual_media_operation",
+        "required_gate",
+        "gate_target_id",
+        "production_scope",
+        "scene_id",
+        "voice_timing_id",
+        "timed_semantic_beats_id",
+        "scene_timing_contracts_id",
+        "timing_validation_id",
+        "affected_beat_ids",
+        "issue_counts",
+        "examples",
+    }
+)
+
+
+def _coordinator_safe_task_projection(
+    task: Mapping[str, Any],
+    artifacts: Optional[Iterable[Mapping[str, Any]]] = None,
+) -> dict[str, Any]:
+    """Project persisted task authority without forwarding worker payloads."""
+    constraints = task.get("constraints", {})
+    legacy_keys = {"image_operation", "image_context"}
+    if set(constraints) <= legacy_keys and constraints:
+        # Preserve the historical read-only view for old callers; persisted
+        # current authority always takes the compact projection below.
+        legacy_projection = dict(task)
+        output_contract = legacy_projection.get("output_contract")
+        if not (
+            isinstance(output_contract, str)
+            and len(output_contract) <= 128
+            and SAFE_ID_RE.fullmatch(output_contract) is not None
+        ):
+            legacy_projection.pop("output_contract", None)
+        return legacy_projection
+    projected_constraints = {
+        key: constraints[key]
+        for key in _SAFE_COORDINATOR_CONSTRAINTS
+        if key in constraints
+    }
+    current_timing_validation = None
+    if task.get("capability") == "timing-repair" and artifacts is not None:
+        try:
+            current_timing_validation = _current_timing_validation(
+                task, _normalize_artifacts(artifacts)
+            )
+        except (TypeError, ValueError):
+            current_timing_validation = None
+    if current_timing_validation is not None:
+        compact = current_timing_validation["timing_validation"]
+        projected_constraints.update(
+            {
+                "issue_counts": compact.get("issue_counts", {}),
+                "examples": compact.get("examples", {}),
+                "affected_beat_ids": sorted(
+                    {
+                        beat_id
+                        for ids in compact.get("examples", {}).values()
+                        for beat_id in ids
+                    }
+                ),
+            }
+        )
+    else:
+        for key in ("affected_beat_ids", "issue_counts", "examples"):
+            projected_constraints.pop(key, None)
+    output_contract = task.get("output_contract")
+    return {
+        "task_id": task["task_id"],
+        "capability": task["capability"],
+        "inputs": list(task["inputs"]),
+        "constraints": projected_constraints,
+        **(
+            {"output_contract": output_contract}
+            if isinstance(output_contract, str)
+            and len(output_contract) <= 128
+            and SAFE_ID_RE.fullmatch(output_contract) is not None
+            else {}
+        ),
+    }
+
+
+def _coordinator_safe_approval_projection(approval: Mapping[str, Any]) -> dict[str, str]:
+    return {
+        key: approval[key]
+        for key in ("approval_id", "target_id", "scope", "decision")
+        if isinstance(approval.get(key), str)
+    }
 
 
 def _has_gate_approval(
@@ -357,14 +763,63 @@ def _load_artifacts(root: Path) -> list[dict[str, Any]]:
     return artifacts
 
 
-def _load_candidate_tasks(root: Path) -> list[dict[str, Any]]:
+def _load_candidate_tasks(
+    root: Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     tasks = []
+    issues: list[dict[str, str]] = []
     tasks_root = project_path(root, "tasks")
     if not tasks_root.is_dir():
-        return tasks
+        return tasks, issues
     for path in sorted(tasks_root.glob("*.json")):
-        tasks.append(_read_envelope(root, path.stem))
-    return tasks
+        try:
+            tasks.append(_read_envelope(root, path.stem))
+        except (OSError, PermissionError, TypeError, ValueError):
+            issues.append(
+                {
+                    "code": "visual-media-context-invalid",
+                    "task_id": path.stem,
+                }
+            )
+    return tasks, issues
+
+
+def _visual_recovery_issue(
+    candidate: Mapping[str, Any], error: BaseException
+) -> dict[str, str]:
+    message = str(error).casefold()
+    if "isolated child" in message:
+        code = "visual-media-isolation-required"
+    elif isinstance(error, PermissionError):
+        code = "visual-media-input-forbidden"
+    elif "legacy" in message and "visual" in message:
+        code = "legacy-visual-task-blocked"
+    else:
+        code = "visual-media-context-invalid"
+    issue = {"code": code}
+    task_id = candidate.get("task_id")
+    if isinstance(task_id, str):
+        issue["task_id"] = task_id
+    return issue
+
+
+def _deduplicate_recovery_issues(
+    issues: Iterable[Mapping[str, Any]],
+) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    for issue in issues:
+        compact = {
+            key: value
+            for key, value in issue.items()
+            if key in {"code", "task_id", "artifact_id", "path"}
+            and isinstance(value, str)
+        }
+        identity = tuple(sorted(compact.items()))
+        if compact and identity not in seen:
+            seen.add(identity)
+            normalized.append(compact)
+    return sorted(normalized, key=lambda item: tuple(sorted(item.items())))
 
 
 def _load_approvals(root: Path) -> list[dict[str, Any]]:
@@ -391,3 +846,12 @@ def _string_set(value: Any, label: str) -> set[str]:
     if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
         raise ValueError(f"{label} must be a string list")
     return set(value)
+
+
+def _phase_position(phase: str) -> int:
+    """Return a comparable position across historical and v3 recovery views."""
+    if phase in V3_PHASES:
+        return V3_PHASES.index(phase)
+    if phase in PHASES:
+        return PHASES.index(phase)
+    return -1

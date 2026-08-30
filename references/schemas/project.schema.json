@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Video Production Toolkit Project",
-  "description": "Version-one snapshots remain readable with their historical phase order. Newly initialized version-two projects require voice_ready before storyboard_ready. Recovery may expose a non-persisted compatibility projection at direction_ready when a recorded post-direction phase lacks current voice artifacts; event history is never rewritten.",
+  "description": "Version-one and version-two snapshots remain readable with their historical phase orders. Version-three projects use the voice-timed phase order; recovery projections never rewrite event history.",
   "oneOf": [
     {
       "description": "Legacy version-one snapshot; retained only for immutable historical project recovery.",
@@ -47,6 +47,30 @@
             "assembled",
             "review_ready",
             "handoff_ready"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Current version-three voice-timed workflow snapshot.",
+      "type": "object",
+      "required": ["schema_version", "project_id", "workflow", "phase"],
+      "properties": {
+        "schema_version": {"const": 3},
+        "project_id": {"type": "string", "minLength": 1},
+        "workflow": {"type": "string", "minLength": 1},
+        "active_timeline_id": {"type": "string", "minLength": 1},
+        "phase": {
+          "enum": [
+            "script_confirmed",
+            "semantic_beats_confirmed",
+            "visual_direction_previewed",
+            "voiceover_ready",
+            "timing_bound",
+            "storyboard_timed",
+            "representative_scene_ready",
+            "production_ready"
           ]
         }
       },

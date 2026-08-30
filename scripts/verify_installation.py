@@ -2,9 +2,12 @@
 """Verify plugin packaging, personal discovery, adapters, and recovery smoke."""
 
 import argparse
+import inspect
 import json
+import os
 import re
 import struct
+import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -17,6 +20,8 @@ from scripts.migration_audit import audit_legacy
 from scripts.plan_representative_slice import select_representative_slice
 from scripts.toolkit.artifacts import approve_artifact, create_artifact
 from scripts.toolkit.orchestrator import (
+    _capability_is_legal_in_phase,
+    _has_gate_approval,
     calculate_ready_tasks,
     invalidate_artifact_descendants,
     resume_project,
@@ -24,11 +29,22 @@ from scripts.toolkit.orchestrator import (
 from scripts.toolkit.project_state import append_event, initialize_project
 from scripts.toolkit.tasks import create_task
 from scripts.toolkit.validation import validate_project
+from scripts.toolkit.visual_media_context import (
+    compact_visual_media_result,
+    project_legacy_image_context,
+    validate_result_envelope,
+)
 from scripts.toolkit.voice import (
     validate_authoritative_voice_bundle,
     validate_project_authoritative_voice_bundle,
 )
-from scripts.validate_package import validate_package
+from scripts.toolkit.semantic_beats import (
+    freeze_semantic_beats,
+    project_legacy_timed_beats,
+)
+from scripts.toolkit.timed_semantic_beats import bind_semantic_beats
+from scripts.toolkit.timing_validation import validate_timing_rows
+from scripts.validate_package import PLUGIN_VERSION, validate_package
 
 
 PLUGIN_ID = "video-production-toolkit"
@@ -101,9 +117,10 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
 
     pre_revision = resumed["pre_timing_revision"]
     records = pre_revision["artifacts"]
+    voice_records = pre_revision["voice_artifacts"]
     voice_source = [
         item
-        for item in records
+        for item in voice_records
         if item.get("type") == "voice-source-decision"
         and item.get("status") == "approved"
         and item.get("mode") in {"tts", "uploaded-voice"}
@@ -119,7 +136,7 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
             },
         }
     checks["voice_source_decision"] = "passed"
-    bundle = validate_authoritative_voice_bundle(records)
+    bundle = validate_authoritative_voice_bundle(voice_records)
     validation_issues = resumed["voice_timing_revision"]["voice_validation_issue_codes"]
     if (
         not bundle["ok"]
@@ -157,7 +174,8 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
     revision = resumed["voice_timing_revision"]
     if (
         revision["invalidated_artifact_ids"] != revision["declared_descendant_ids"]
-        or revision["preserved_artifact_ids"] != ["style-v1", "voice-timing-v2"]
+        or revision["preserved_artifact_ids"]
+        != ["semantic-beats-v1", "style-v1", "voice-timing-v2"]
         or revision["current_voice_timing_id"] != "voice-timing-v2"
         or revision["style_status"] != "approved"
         or revision["stale_descendant_ids"] != revision["declared_descendant_ids"]
@@ -172,7 +190,11 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
     contracts_path = root / "tests" / "fixtures" / "knowledge-video-minimal" / "scene-contracts.json"
     try:
         contracts = json.loads(contracts_path.read_text(encoding="utf-8"))
-        selected_slice = select_representative_slice(contracts, records)
+        selected_slice = select_representative_slice(
+            contracts,
+            voice_records,
+            allow_legacy_unresolved_timing=True,
+        )
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
         return {
             "ok": False,
@@ -252,6 +274,589 @@ def run_smoke(root: Path, *, legacy_root: Optional[Path] = None) -> dict[str, An
     }
 
 
+def run_installed_visual_media_smoke(root: Path) -> dict[str, Any]:
+    """Run the installed copy's public metadata runtime in an isolated process."""
+    root = Path(root).resolve()
+    verifier = root / "scripts" / "verify_installation.py"
+    if not verifier.is_file():
+        return {
+            "ok": False,
+            "blocker": {
+                "code": "installed-visual-smoke-missing",
+                "detail": str(verifier),
+            },
+        }
+    environment = dict(os.environ)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            str(verifier),
+            "--visual-media-smoke-root",
+            str(root),
+        ],
+        cwd=root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    try:
+        result = json.loads(completed.stdout)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {
+            "ok": False,
+            "blocker": {
+                "code": "installed-visual-smoke-invalid-output",
+                "detail": completed.stderr.strip() or completed.stdout.strip(),
+            },
+        }
+    if not isinstance(result, dict):
+        return {
+            "ok": False,
+            "blocker": {
+                "code": "installed-visual-smoke-invalid-output",
+                "detail": "smoke result must be an object",
+            },
+        }
+    if completed.returncode and result.get("ok"):
+        result = {
+            "ok": False,
+            "blocker": {
+                "code": "installed-visual-smoke-process-failed",
+                "detail": completed.stderr.strip(),
+            },
+        }
+    return result
+
+
+def run_installed_timing_smoke(root: Path) -> dict[str, Any]:
+    """Run the installed timing runtime in a clean Python process.
+
+    The child receives only the installed cache path.  It exercises compact
+    timing metadata and never opens audio or visual payloads, so repository
+    imports cannot mask a broken installed package.
+    """
+    root = Path(root).resolve()
+    verifier = root / "scripts" / "verify_installation.py"
+    if not verifier.is_file():
+        return {
+            "ok": False,
+            "blocker": {
+                "code": "installed-timing-smoke-missing",
+                "detail": str(verifier),
+            },
+        }
+    environment = dict(os.environ)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            str(verifier),
+            "--timing-smoke-root",
+            str(root),
+        ],
+        cwd=root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    try:
+        result = json.loads(completed.stdout)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {
+            "ok": False,
+            "blocker": {
+                "code": "installed-timing-smoke-invalid-output",
+                "detail": completed.stderr.strip() or completed.stdout.strip(),
+            },
+        }
+    if not isinstance(result, dict):
+        return {
+            "ok": False,
+            "blocker": {
+                "code": "installed-timing-smoke-invalid-output",
+                "detail": "smoke result must be an object",
+            },
+        }
+    if completed.returncode and result.get("ok"):
+        return {
+            "ok": False,
+            "blocker": {
+                "code": "installed-timing-smoke-process-failed",
+                "detail": completed.stderr.strip(),
+            },
+        }
+    return result
+
+
+def _run_timing_smoke_in_process(root: Path) -> dict[str, Any]:
+    """Exercise the installed timing APIs using JSON-shaped metadata only."""
+    root = Path(root).resolve()
+    checks = {
+        "installed_module": "not-run",
+        "frozen_semantic_beats": "not-run",
+        "real_timing_binding": "not-run",
+        "storyboard_gate": "not-run",
+        "compact_validation": "not-run",
+        "stale_timing_recovery": "not-run",
+        "v2_compatibility": "not-run",
+        "json_metadata_only": "not-run",
+    }
+    try:
+        manifest = json.loads(
+            (root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+        plugin_version = manifest.get("version") if isinstance(manifest, dict) else None
+        if plugin_version != PLUGIN_VERSION:
+            raise ValueError(
+                f"installed timing smoke requires plugin version {PLUGIN_VERSION}"
+            )
+        module_paths = {
+            Path(inspect.getfile(freeze_semantic_beats)).resolve(),
+            Path(inspect.getfile(bind_semantic_beats)).resolve(),
+            Path(inspect.getfile(validate_timing_rows)).resolve(),
+        }
+        expected_root = (root / "scripts" / "toolkit").resolve()
+        if not module_paths or any(path.parent != expected_root for path in module_paths):
+            raise ValueError("timing runtime was not loaded from the installed cache")
+        checks["installed_module"] = "passed"
+
+        candidates = [
+            {
+                "beat_id": "B01",
+                "text_ref": "narration-v1:S01:L1",
+                "keyword": "timing",
+                "intent": "core-concept-emphasis",
+                "priority": "primary",
+                "preferred_carrier": "motion-graphics",
+            }
+        ]
+        semantic = freeze_semantic_beats(
+            "narration-v1",
+            candidates,
+            {
+                "decision": "approved",
+                "provenance": "user:timing-smoke-v1",
+                "keywords": ["timing"],
+            },
+        )
+        if (
+            semantic.get("narration_id") != "narration-v1"
+            or "voice_timing_id" in semantic
+            or "keyword_start_ms" in json.dumps(semantic)
+        ):
+            raise ValueError("semantic beat freeze was not untimed and compact")
+        checks["frozen_semantic_beats"] = "passed"
+
+        anchor = {
+            "beat_id": "B01",
+            "keyword": "timing",
+            "start_ms": 1_200,
+            "end_ms": 1_500,
+        }
+        timing = _artifact(
+            "voice-timing-v1",
+            "voice-timing",
+            parents=["voiceover-v1"],
+            voiceover_id="voiceover-v1",
+            timing_kind="real",
+            duration_ms=2_400,
+            segments=[{"start_ms": 0, "end_ms": 2_400, "text": "segment"}],
+            keyword_anchors=[anchor],
+        )
+        timed = bind_semantic_beats(semantic, timing, [anchor])
+        if timed.get("timing_kind") != "real" or timed.get("voice_timing_id") != timing[
+            "artifact_id"
+        ]:
+            raise ValueError("real timing binding did not preserve authoritative lineage")
+        checks["real_timing_binding"] = "passed"
+
+        # Test the storyboard gate directly against compact coordinator inputs;
+        # routing this check through a project would require an audio file.
+        storyboard = _candidate(
+            "timing-smoke-storyboard",
+            "storyboard.plan",
+            ["style-v1", "voice-timing-v1"],
+            "visual-direction",
+            "style-v1",
+        )
+        gate_artifacts = {
+            "style-v1": _artifact("style-v1", "style-pack"),
+            "voice-timing-v1": timing,
+            "smoke-routing-scene-contract-v1": _artifact(
+                "smoke-routing-scene-contract-v1", "scene-contract"
+            ),
+        }
+        if not _capability_is_legal_in_phase(storyboard, "timing_bound"):
+            raise ValueError("storyboard gate is not legal at timing_bound")
+        if _has_gate_approval(
+            storyboard, "visual-direction", gate_artifacts, []
+        ) or not _has_gate_approval(
+            storyboard,
+            "visual-direction",
+            gate_artifacts,
+            [{"target_id": "style-v1", "scope": "visual-direction", "decision": "approved"}],
+        ):
+            raise ValueError("storyboard gate did not require exact approval")
+        checks["storyboard_gate"] = "passed"
+
+        valid_row = {
+            "beat_id": "B01",
+            "scene_id": "S01",
+            "keyword_anchor_ms": [1_200, 1_500],
+            "visual_window_ms": [1_080, 1_700],
+            "scene_window_ms": [0, 2_400],
+            "primary_carrier": "motion-graphics",
+            "support_layer": "caption-emphasis",
+            "timing_kind": "real",
+            "voice_timing_id": "voice-timing-v1",
+            "current_voice_timing_id": "voice-timing-v1",
+        }
+        compact = validate_timing_rows([valid_row], minimum_readable_duration_ms=500)
+        if compact.get("status") != "passed" or set(compact) != {"status", "checks_run"}:
+            raise ValueError("compact timing validation did not pass")
+        checks["compact_validation"] = "passed"
+
+        stale = dict(valid_row)
+        stale["voice_timing_status"] = "stale"
+        stale_result = validate_timing_rows([stale], minimum_readable_duration_ms=500)
+        if (
+            stale_result.get("status") != "blocked"
+            or stale_result.get("issue_counts", {}).get("STALE_VOICE_TIMING") != 1
+        ):
+            raise ValueError("stale timing was not blocked during recovery")
+        checks["stale_timing_recovery"] = "passed"
+
+        legacy = {
+            "artifact_id": "semantic-beats-v0",
+            "type": "semantic-beats",
+            "version": 1,
+            "status": "approved",
+            "parents": ["voice-timing-v0"],
+            "path": "metadata/semantic-beats-v0.json",
+            "voice_timing_id": "voice-timing-v0",
+        }
+        if project_legacy_timed_beats(legacy) != legacy:
+            raise ValueError("v2 semantic timing projection was not preserved")
+        checks["v2_compatibility"] = "passed"
+
+        with TemporaryDirectory() as folder:
+            metadata_root = Path(folder) / "metadata-only"
+            initialize_project(metadata_root, "timing-smoke", "knowledge-video")
+            suffixes = {
+                ".aac", ".avi", ".flac", ".jpg", ".m4a", ".mkv", ".mov",
+                ".mp3", ".mp4", ".png", ".wav", ".webm",
+            }
+            created = sorted(
+                path.relative_to(metadata_root).as_posix()
+                for path in metadata_root.rglob("*")
+                if path.is_file() and path.suffix.lower() in suffixes
+            )
+            if created:
+                raise ValueError(f"timing smoke created media files: {created}")
+        checks["json_metadata_only"] = "passed"
+    except (OSError, TypeError, ValueError, RuntimeError) as error:
+        return {
+            "ok": False,
+            "plugin_version": locals().get("plugin_version"),
+            "runtime_module_path": str(sorted(module_paths)[0])
+            if "module_paths" in locals()
+            else "",
+            "checks": checks,
+            "blocker": {
+                "code": "timing-smoke-failed",
+                "detail": str(error),
+            },
+        }
+    return {
+        "ok": True,
+        "plugin_version": plugin_version,
+        "runtime_module_path": str(sorted(module_paths)[0]),
+        "checks": checks,
+    }
+
+
+def _run_visual_media_smoke_in_process(root: Path) -> dict[str, Any]:
+    """Exercise only JSON-shaped public runtime boundaries from this package copy."""
+    root = Path(root).resolve()
+    checks = {
+        "child_only_routing": "not-run",
+        "none_laundering": "not-run",
+        "universal_scrub": "not-run",
+        "exact_scope": "not-run",
+        "legacy_projection": "not-run",
+        "one_preview_relay": "not-run",
+        "json_metadata_only": "not-run",
+    }
+    stable_errors: dict[str, str] = {}
+    try:
+        manifest = json.loads(
+            (root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+        plugin_version = manifest.get("version") if isinstance(manifest, dict) else None
+        if plugin_version != PLUGIN_VERSION:
+            raise ValueError(
+                f"installed visual smoke requires plugin version {PLUGIN_VERSION}"
+            )
+        module_path = Path(inspect.getfile(validate_result_envelope)).resolve()
+        expected_module = (
+            root / "scripts" / "toolkit" / "visual_media_context.py"
+        ).resolve()
+        if module_path != expected_module:
+            raise ValueError("visual media runtime was not loaded from the installed cache")
+
+        def capture_error(name: str, action: Any, expected: str) -> None:
+            try:
+                action()
+            except (PermissionError, ValueError) as error:
+                stable_errors[name] = str(error)
+            else:
+                raise RuntimeError(f"{name} malformed record was accepted")
+            if stable_errors[name] != expected:
+                raise RuntimeError(
+                    f"{name} returned unstable error: {stable_errors[name]}"
+                )
+            checks[name] = "passed"
+
+        with TemporaryDirectory() as folder:
+            project = Path(folder) / "metadata-smoke"
+            initialize_project(project, "visual-isolation-smoke", "knowledge-video")
+
+            def artifact_record(
+                artifact_id: str, artifact_type: str, **metadata: Any
+            ) -> dict[str, Any]:
+                return json.loads(
+                    json.dumps(
+                        {
+                            "artifact_id": artifact_id,
+                            "type": artifact_type,
+                            "version": 1,
+                            "status": "approved",
+                            "parents": [],
+                            "path": f"metadata/{artifact_id}.json",
+                            **metadata,
+                        }
+                    )
+                )
+
+            for record in (
+                artifact_record("scene-one", "scene-contract"),
+                artifact_record("scene-two", "scene-contract"),
+                artifact_record(
+                    "current-frame",
+                    "scene-image",
+                    historical=False,
+                    path="metadata/current-frame",
+                ),
+            ):
+                create_artifact(project, record)
+
+            context = {
+                "scope_identity": {"kind": "scene-contract", "id": "scene-one"},
+                "allowed_artifact_ids": [],
+                "historical_access": "character-only",
+                "continuity_exception": None,
+                "max_review_previews": 1,
+                "context_budget_bytes": 32768,
+            }
+
+            def envelope(
+                task_id: str,
+                capability: str,
+                inputs: list[str],
+                operation: str,
+                *,
+                child: bool = False,
+                visual_context: Optional[dict[str, Any]] = None,
+            ) -> dict[str, Any]:
+                constraints: dict[str, Any] = {
+                    "visual_media_operation": operation
+                }
+                if child:
+                    constraints["execution_context"] = "isolated-child-agent"
+                if visual_context is not None:
+                    constraints["visual_media_context"] = visual_context
+                return json.loads(
+                    json.dumps(
+                        {
+                            "task_id": task_id,
+                            "capability": capability,
+                            "inputs": inputs,
+                            "adapter_preferences": ["chatcut"],
+                            "output_contract": "task-result-v1",
+                            "constraints": constraints,
+                        }
+                    )
+                )
+
+            valid = envelope(
+                "visual-child",
+                "visual.preview",
+                ["scene-one"],
+                "image-generate",
+                child=True,
+                visual_context=context,
+            )
+            create_task(project, valid)
+
+            capture_error(
+                "child_only_routing",
+                lambda: create_task(
+                    project,
+                    envelope(
+                        "visual-primary",
+                        "visual.preview",
+                        ["scene-one"],
+                        "image-generate",
+                        visual_context=context,
+                    ),
+                ),
+                "visual media task requires an isolated child agent",
+            )
+            capture_error(
+                "none_laundering",
+                lambda: create_task(
+                    project,
+                    envelope(
+                        "laundered-none",
+                        "project.manage",
+                        ["current-frame"],
+                        "none",
+                    ),
+                ),
+                "visual media task cannot declare operation none",
+            )
+            capture_error(
+                "exact_scope",
+                lambda: create_task(
+                    project,
+                    envelope(
+                        "neighboring-scene",
+                        "visual.preview",
+                        ["scene-one", "scene-two"],
+                        "image-generate",
+                        child=True,
+                        visual_context=context,
+                    ),
+                ),
+                "visual media task requires exactly one scene-contract scope and no neighbor",
+            )
+            capture_error(
+                "universal_scrub",
+                lambda: validate_result_envelope(
+                    {"task_id": "scrubbed", "checks": {"nested": {"payload": "x"}}}
+                ),
+                "visual media result must not contain an image payload or other media payload",
+            )
+
+            legacy = project_legacy_image_context(
+                {
+                    "constraints": {
+                        "image_operation": "image-inspect",
+                        "image_context": {
+                            "scope_identity": {
+                                "kind": "scene-contract",
+                                "id": "scene-one",
+                            },
+                            "allowed_image_artifact_ids": [],
+                            "allowed_character_pack_ids": [],
+                            "forbidden_scene_image_access": True,
+                            "max_review_previews": 1,
+                            "context_budget": 32768,
+                        },
+                    }
+                }
+            )
+            if legacy != context:
+                raise RuntimeError("legacy image authority projection changed")
+            checks["legacy_projection"] = "passed"
+
+            compact = compact_visual_media_result(
+                context,
+                {
+                    "artifact_ids": ["scene-output"],
+                    "paths": ["media/scene-output.json"],
+                    "media": {
+                        "kind": "video",
+                        "format": "metadata-only",
+                        "mime_type": "video/mp4",
+                        "width": 1920,
+                        "height": 1080,
+                        "duration_ms": 1000,
+                        "fps": 24,
+                        "readiness": "user-review",
+                        "checksum": "0123456789abcdef",
+                    },
+                    "checks": ["structure-only"],
+                    "issues": [],
+                    "summary": "metadata relay",
+                    "review_preview_path": "previews/scene-output.html",
+                },
+            )
+            if compact["review_preview_path"] != "previews/scene-output.html":
+                raise RuntimeError("one review preview was not relayed exactly")
+            checks["one_preview_relay"] = "passed"
+
+            visual_suffixes = {
+                ".apng",
+                ".avif",
+                ".avi",
+                ".bmp",
+                ".gif",
+                ".heic",
+                ".heif",
+                ".jpeg",
+                ".jpg",
+                ".m4v",
+                ".mkv",
+                ".mov",
+                ".mp4",
+                ".mpeg",
+                ".mpg",
+                ".png",
+                ".svg",
+                ".tif",
+                ".tiff",
+                ".webm",
+                ".webp",
+            }
+            created_visual_files = sorted(
+                path.relative_to(project).as_posix()
+                for path in project.rglob("*")
+                if path.is_file() and path.suffix.lower() in visual_suffixes
+            )
+            if created_visual_files:
+                raise RuntimeError(
+                    f"visual smoke created visual files: {created_visual_files}"
+                )
+            checks["json_metadata_only"] = "passed"
+    except (OSError, TypeError, ValueError, RuntimeError) as error:
+        return {
+            "ok": False,
+            "plugin_version": locals().get("plugin_version"),
+            "runtime_module_path": str(locals().get("module_path", "")),
+            "checks": checks,
+            "stable_errors": stable_errors,
+            "blocker": {
+                "code": "visual-media-isolation-smoke-failed",
+                "detail": str(error),
+            },
+        }
+    return {
+        "ok": True,
+        "plugin_version": plugin_version,
+        "runtime_module_path": str(module_path),
+        "checks": checks,
+        "stable_errors": stable_errors,
+    }
+
+
 def verify_installation(
     *,
     repo: Optional[Path] = None,
@@ -260,6 +865,8 @@ def verify_installation(
     forbid_skill: Optional[str] = None,
     check_external_skills: bool = False,
     require_resume_smoke: bool = False,
+    require_visual_media_smoke: bool = False,
+    require_timing_smoke: bool = False,
     legacy_root: Optional[Path] = None,
 ) -> dict[str, Any]:
     """Return structured package, discovery, external, and smoke status."""
@@ -346,6 +953,23 @@ def verify_installation(
         if not smoke["ok"]:
             errors.append(f"resume smoke failed: {smoke.get('blocker')}")
 
+    visual_media_smoke: Optional[dict[str, Any]] = None
+    if require_visual_media_smoke:
+        visual_media_smoke = run_installed_visual_media_smoke(plugin_root)
+        if not visual_media_smoke["ok"]:
+            errors.append(
+                "visual media isolation smoke failed: "
+                f"{visual_media_smoke.get('blocker')}"
+            )
+
+    timing_smoke: Optional[dict[str, Any]] = None
+    if require_timing_smoke:
+        timing_smoke = run_installed_timing_smoke(plugin_root)
+        if not timing_smoke["ok"]:
+            errors.append(
+                "timing smoke failed: " f"{timing_smoke.get('blocker')}"
+            )
+
     return {
         "ok": not errors,
         "plugin": {
@@ -357,6 +981,8 @@ def verify_installation(
         },
         "external_adapters": external,
         "resume_smoke": smoke,
+        "visual_media_smoke": visual_media_smoke,
+        "timing_smoke": timing_smoke,
         "warnings": warnings,
         "errors": errors,
     }
@@ -440,7 +1066,11 @@ def _check_four_gates() -> bool:
         media.parent.mkdir(parents=True)
         media.write_bytes(_voice_fixture_wav(duration_ms=15_000))
         for index, (capability, gate, target_type, extra) in enumerate(cases, 1):
-            target_id = f"gate-{index}"
+            target_id = (
+                f"storyboard-gate-{index}"
+                if target_type == "storyboard"
+                else f"gate-{index}"
+            )
             task = _candidate(
                 f"gate-task-{index}", capability, [target_id], gate, target_id, **extra
             )
@@ -458,14 +1088,27 @@ def _check_four_gates() -> bool:
                 }
                 else []
             )
-            artifacts = [_artifact(target_id, target_type), *gate_voice]
+            routing_scope = (
+                [_artifact("smoke-routing-scene-contract-v1", "scene-contract")]
+                if "smoke-routing-scene-contract-v1" in task["inputs"]
+                else []
+            )
+            artifacts = [
+                _artifact(target_id, target_type),
+                *routing_scope,
+                *gate_voice,
+            ]
             state = {"candidate_tasks": [task], "locked_task_ids": []}
             if calculate_ready_tasks(state, artifacts, [], root=routing_root):
                 return False
             approval = {"target_id": target_id, "scope": gate, "decision": "approved"}
             if calculate_ready_tasks(
                 state,
-                [_artifact(target_id, "unrelated-review-artifact"), *gate_voice],
+                [
+                    _artifact(target_id, "unrelated-review-artifact"),
+                    *routing_scope,
+                    *gate_voice,
+                ],
                 [approval],
                 root=routing_root,
             ):
@@ -474,7 +1117,11 @@ def _check_four_gates() -> bool:
                 state, artifacts, [approval], root=routing_root
             ) != [capability]:
                 return False
-            descendant_id = f"gate-input-{index}"
+            descendant_id = (
+                f"storyboard-input-{index}"
+                if target_type == "storyboard"
+                else f"gate-input-{index}"
+            )
             unrelated_task = _candidate(
                 f"unrelated-gate-task-{index}",
                 capability,
@@ -489,14 +1136,27 @@ def _check_four_gates() -> bool:
             }
             if calculate_ready_tasks(
                 unrelated_state,
-                [artifacts[0], _artifact(descendant_id, "task-input"), *gate_voice],
+                [
+                    artifacts[0],
+                    _artifact(
+                        descendant_id,
+                        "storyboard" if target_type == "storyboard" else "task-input",
+                    ),
+                    *routing_scope,
+                    *gate_voice,
+                ],
                 [approval],
                 root=routing_root,
             ):
                 return False
             related_artifacts = [
                 artifacts[0],
-                _artifact(descendant_id, "task-input", parents=[target_id]),
+                _artifact(
+                    descendant_id,
+                    "storyboard" if target_type == "storyboard" else "task-input",
+                    parents=[target_id],
+                ),
+                *routing_scope,
                 *gate_voice,
             ]
             if calculate_ready_tasks(
@@ -533,13 +1193,42 @@ def _run_resume_scenario(
         )
         for item in voice_artifacts:
             create_artifact(project, item)
+        semantic_record = {
+            "narration_id": "narration-v1",
+            "beats": [
+                {
+                    "beat_id": "B01",
+                    "text_ref": "narration-v1:S01:L1",
+                    "keyword": "timing",
+                    "intent": "core-concept-emphasis",
+                    "priority": "primary",
+                    "preferred_carrier": "motion-graphics",
+                    "approval_provenance": "user:smoke-keyword-review-v1",
+                }
+            ],
+        }
         create_artifact(
             project,
             _artifact(
                 "semantic-beats-v1",
                 "semantic-beats",
-                parents=["voice-timing-v1"],
-                voice_timing_id="voice-timing-v1",
+                parents=["narration-v1"],
+                **semantic_record,
+            ),
+        )
+        exact_timed = bind_semantic_beats(
+            semantic_record,
+            voice_artifacts[-1],
+            voice_artifacts[-1]["keyword_anchors"],
+        )
+        create_artifact(
+            project,
+            _artifact(
+                "timed-semantic-beats-v1",
+                "timed-semantic-beats",
+                parents=["semantic-beats-v1", "voice-timing-v1"],
+                semantic_beats_id="semantic-beats-v1",
+                **exact_timed,
             ),
         )
         approve_artifact(
@@ -636,6 +1325,21 @@ def _run_resume_scenario(
                     "storyboard-v1",
                     production_scope="representative-slice",
                     scene_id="S02",
+                    visual_media_context={
+                        "scope_identity": {
+                            "kind": "scene-contract",
+                            "id": "contract-S02-v2",
+                        },
+                        "allowed_artifact_ids": [],
+                        "historical_access": "character-only",
+                        "continuity_exception": {
+                            "artifact_id": "storyboard-v1",
+                            "user_requested": True,
+                            "reason": "Use this exact current storyboard input.",
+                        },
+                        "max_review_previews": 0,
+                        "context_budget_bytes": 32_768,
+                    },
                 ),
             )
         append_event(project, {"event": "project.phase_changed", "phase": "storyboard_ready"})
@@ -652,28 +1356,34 @@ def _run_resume_scenario(
         second = resume_project(project)
         if first != second:
             raise RuntimeError("resume is not deterministic")
-        create_artifact(
-            project,
-            _artifact(
-                "voice-timing-v2",
-                "voice-timing",
-                version=2,
-                parents=["voiceover-v1"],
-                voiceover_id="voiceover-v1",
-                timing_kind="real",
-                duration_ms=voice_timing_duration_ms,
-                segments=_timing_segments(voice_timing_duration_ms),
-            ),
+        voice_timing_v2 = _artifact(
+            "voice-timing-v2",
+            "voice-timing",
+            version=2,
+            parents=["voiceover-v1"],
+            voiceover_id="voiceover-v1",
+            timing_kind="real",
+            duration_ms=voice_timing_duration_ms,
+            segments=_timing_segments(voice_timing_duration_ms),
+            keyword_anchors=[
+                {
+                    "beat_id": "B01", "keyword": "timing",
+                    "start_ms": 1000, "end_ms": 2000,
+                }
+            ],
         )
-        declared_descendants = [
-            "contract-S01-v1",
-            "contract-S02-v1",
-            "contract-S02-v2",
-            "scene-S01-v1",
-            "scene-S02-v1",
-            "semantic-beats-v1",
-            "storyboard-v1",
-        ]
+        create_artifact(project, voice_timing_v2)
+        declared_descendants = sorted(
+            [
+                "contract-S01-v1",
+                "contract-S02-v1",
+                "contract-S02-v2",
+                "scene-S01-v1",
+                "scene-S02-v1",
+                "timed-semantic-beats-v1",
+                "storyboard-v1",
+            ]
+        )
         invalidated = invalidate_artifact_descendants(
             project,
             "voice-timing-v1",
@@ -687,7 +1397,9 @@ def _run_resume_scenario(
         post_artifacts = {
             item["artifact_id"]: item for item in post_revision["artifacts"]
         }
-        post_bundle = validate_authoritative_voice_bundle(post_artifacts.values())
+        post_bundle = validate_authoritative_voice_bundle(
+            [*voice_artifacts, voice_timing_v2]
+        )
         structural = validate_project(project)
         voice_validation_issue_codes = sorted(
             {
@@ -705,6 +1417,7 @@ def _run_resume_scenario(
             **post_revision,
             "pre_timing_revision": {
                 "artifacts": first["artifacts"],
+                "voice_artifacts": voice_artifacts,
                 "ready_tasks": first["ready_tasks"],
             },
             "direction_ready_actions": direction_ready_actions,
@@ -715,7 +1428,11 @@ def _run_resume_scenario(
                 "declared_descendant_ids": declared_descendants,
                 "preserved_artifact_ids": sorted(
                     artifact_id
-                    for artifact_id in ("style-v1", "voice-timing-v2")
+                    for artifact_id in (
+                        "semantic-beats-v1",
+                        "style-v1",
+                        "voice-timing-v2",
+                    )
                     if artifact_id not in invalidated
                 ),
                 "stale_descendant_ids": sorted(
@@ -991,13 +1708,20 @@ def _artifact(
     if artifact_type == "media":
         metadata.setdefault("media_kind", "video")
         metadata.setdefault("mime_type", "video/mp4")
+    if artifact_type in {"media", "storyboard"}:
+        metadata.setdefault("historical", False)
+    default_path = (
+        f"metadata/{artifact_id}"
+        if artifact_type in {"media", "storyboard"}
+        else f"metadata/{artifact_id}.json"
+    )
     return {
         "artifact_id": artifact_id,
         "type": artifact_type,
         "version": version,
         "status": "approved",
         "parents": list(parents or []),
-        "path": f"metadata/{artifact_id}.json",
+        "path": default_path,
         **metadata,
     }
 
@@ -1011,8 +1735,65 @@ def _candidate(
     **constraints: Any,
 ) -> dict[str, Any]:
     inputs = list(inputs)
-    if capability == "scene.produce":
-        constraints.setdefault("visual_operation", "non-image")
+    visual_operation = {
+        "visual.preview": "image-generate",
+        "scene.produce": "video-generate",
+        "motion.preview": "video-generate",
+        "motion.produce": "video-render",
+        "timeline.assemble": "video-edit",
+        "review.package": "video-inspect",
+    }.get(capability)
+    if visual_operation is None:
+        constraints.setdefault("visual_media_operation", "none")
+    else:
+        constraints.setdefault("visual_media_operation", visual_operation)
+        constraints.setdefault("execution_context", "isolated-child-agent")
+        if "visual_media_context" not in constraints:
+            scope_id = next(
+                (
+                    artifact_id
+                    for artifact_id in inputs
+                    if "contract" in artifact_id.casefold()
+                ),
+                "smoke-routing-scene-contract-v1",
+            )
+            if scope_id not in inputs:
+                inputs.append(scope_id)
+            continuity_id = next(
+                (
+                    artifact_id
+                    for artifact_id in inputs
+                    if artifact_id != scope_id
+                    and any(
+                        marker in artifact_id.casefold()
+                        for marker in (
+                            "storyboard",
+                            "scene-",
+                            "preview",
+                            "image",
+                            "video",
+                            "screen",
+                        )
+                    )
+                ),
+                None,
+            )
+            constraints["visual_media_context"] = {
+                "scope_identity": {"kind": "scene-contract", "id": scope_id},
+                "allowed_artifact_ids": [],
+                "historical_access": "character-only",
+                "continuity_exception": (
+                    {
+                        "artifact_id": continuity_id,
+                        "user_requested": True,
+                        "reason": "Use this exact current visual production input.",
+                    }
+                    if continuity_id is not None
+                    else None
+                ),
+                "max_review_previews": 1,
+                "context_budget_bytes": 32_768,
+            }
     if capability in {
         "storyboard.plan",
         "scene.produce",
@@ -1062,7 +1843,7 @@ def _voice_bundle(
             narration_id="narration-v1",
             mode="tts",
             decision="approved",
-            decision_provenance="smoke:user-source-v1",
+            decision_provenance="user:smoke-source-v1",
         ),
         _artifact(
             "voice-profile-v1",
@@ -1078,8 +1859,8 @@ def _voice_bundle(
             emotion="calm",
             pronunciations=[],
             approved=True,
-            consent_provenance="smoke:user-consent-v1",
-            profile_provenance="smoke:user-profile-v1",
+            consent_provenance="user:smoke-consent-v1",
+            profile_provenance="user:smoke-profile-v1",
         ),
         _artifact(
             "voiceover-v1",
@@ -1102,6 +1883,12 @@ def _voice_bundle(
             timing_kind="real",
             duration_ms=voice_timing_duration_ms,
             segments=_timing_segments(voice_timing_duration_ms),
+            keyword_anchors=[
+                {
+                    "beat_id": "B01", "keyword": "timing",
+                    "start_ms": 1000, "end_ms": 2000,
+                }
+            ],
         ),
     ]
 
@@ -1115,7 +1902,21 @@ def main() -> int:
     parser.add_argument("--forbid-skill")
     parser.add_argument("--check-external-skills", action="store_true")
     parser.add_argument("--require-resume-smoke", action="store_true")
+    parser.add_argument("--require-visual-media-smoke", action="store_true")
+    parser.add_argument("--require-timing-smoke", action="store_true")
+    parser.add_argument(
+        "--visual-media-smoke-root", type=Path, help=argparse.SUPPRESS
+    )
+    parser.add_argument("--timing-smoke-root", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.visual_media_smoke_root is not None:
+        result = _run_visual_media_smoke_in_process(args.visual_media_smoke_root)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ok"] else 1
+    if args.timing_smoke_root is not None:
+        result = _run_timing_smoke_in_process(args.timing_smoke_root)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ok"] else 1
     result = verify_installation(
         repo=args.repo,
         home=args.home,
@@ -1123,6 +1924,8 @@ def main() -> int:
         forbid_skill=args.forbid_skill,
         check_external_skills=args.check_external_skills,
         require_resume_smoke=args.require_resume_smoke,
+        require_visual_media_smoke=args.require_visual_media_smoke,
+        require_timing_smoke=args.require_timing_smoke,
         legacy_root=args.legacy_root,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))

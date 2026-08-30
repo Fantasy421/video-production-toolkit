@@ -14,7 +14,7 @@
     "status": {"enum": ["draft", "approved", "stale", "superseded", "invalid"]},
     "parents": {"$ref": "#/$defs/parents"},
     "path": {"$ref": "#/$defs/projectPath"},
-    "output_contract": {"type": "string", "minLength": 1},
+    "output_contract": {"type": "string", "minLength": 1, "maxLength": 128},
     "narration_id": {"$ref": "#/$defs/safeId"},
     "source_decision_id": {"$ref": "#/$defs/safeId"},
     "mode": {"enum": ["uploaded-voice", "tts"]},
@@ -22,7 +22,7 @@
     "uploaded_audio_id": {"$ref": "#/$defs/safeId"},
     "media_path": {"$ref": "#/$defs/projectPath"},
     "media_format": {"enum": ["wav", "mp3", "m4a", "aac", "flac"]},
-    "duration_ms": {"type": "integer", "minimum": 1},
+    "duration_ms": {"type": "integer", "minimum": 1, "maximum": 36000000},
     "provenance": {"$ref": "#/$defs/nonEmptyText"}
   },
   "allOf": [
@@ -37,9 +37,9 @@
   ],
   "additionalProperties": false,
   "$defs": {
-    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"},
-    "parents": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
-    "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"},
+    "safeId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"},
+    "parents": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
+    "projectPath": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"},
     "nonEmptyText": {"type": "string", "minLength": 1, "maxLength": 500}
   }
 }

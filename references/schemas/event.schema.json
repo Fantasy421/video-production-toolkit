@@ -16,6 +16,18 @@
       "additionalProperties": false
     },
     {
+      "type": "object",
+      "description": "Current version-three initialization for the voice-timed workflow.",
+      "required": ["event", "schema_version", "project_id", "workflow"],
+      "properties": {
+        "event": {"const": "project.initialized"},
+        "schema_version": {"const": 3},
+        "project_id": {"type": "string", "minLength": 1},
+        "workflow": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    {
       "description": "Current version-two initialization for newly created projects.",
       "type": "object",
       "required": ["event", "schema_version", "project_id", "workflow"],
@@ -45,7 +57,9 @@
         "phase": {
           "enum": [
             "content_ready", "direction_ready", "voice_ready", "storyboard_ready",
-            "production_ready", "assembled", "review_ready", "handoff_ready"
+            "production_ready", "assembled", "review_ready", "handoff_ready",
+            "script_confirmed", "semantic_beats_confirmed", "visual_direction_previewed",
+            "voiceover_ready", "timing_bound", "storyboard_timed", "representative_scene_ready"
           ]
         }
       },

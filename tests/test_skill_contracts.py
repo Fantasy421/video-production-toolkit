@@ -54,12 +54,28 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("tts", text)
         self.assertIn("voiceover", text)
         self.assertIn("real voice-timing", text)
-        self.assertIn("timing-linked semantic-beats", text)
+        self.assertIn("`timed-semantic-beats`", text)
+        self.assertIn("`semantic_beats_id`", text)
         self.assertIn("waiting_user", text)
         self.assertIn("waiting_external", text)
         self.assertIn("silently change voice/profile/provider", text)
         self.assertIn("task-envelope.schema.json", text)
         self.assertIn("task-result.schema.json", text)
+
+    def test_narration_planner_freezes_user_approved_untimed_semantic_beats(self):
+        """Catches narration planning fabricating formal timing before voice evidence exists."""
+        text = (ROOT / "skills/narration-planner/SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+
+        for requirement in (
+            "extracts candidates",
+            "asks the user alongside script approval",
+            "freezes Stage A beats",
+            "never fabricates final milliseconds",
+            "never publishes formal storyboard timing",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, normalized)
 
     def test_voice_contract_documents_supported_formats_and_fail_closed_probing(self):
         """Catches adapters promising formats the readiness verifier cannot prove."""
@@ -113,56 +129,206 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("representative-slice `captions.produce`", text)
         self.assertIn("full-production `captions.produce`", text)
 
-    def test_video_director_never_handles_image_or_non_audio_media_payloads(self):
-        """Catches image work or direct media handling leaking into the coordinator."""
+    def test_video_director_never_handles_visual_media_payloads(self):
+        """Catches visual-media work or direct payload handling leaking into routing."""
         text = (ROOT / "skills/video-director/SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
 
-        self.assertIn(
-            "must never generate, edit, open, import, analyze, or visually inspect image payloads",
-            text,
-        )
-        self.assertIn("must never directly handle non-audio media", text)
+        self.assertIn("must never directly handle image or video payloads", normalized)
         self.assertIn(
             "only route compact artifact IDs, paths, summaries, and contract results",
-            text,
+            normalized,
         )
         self.assertIn(
-            "delegate image generation and inspection to isolated child tasks",
-            text,
+            "delegate visual-media execution to one isolated child agent",
+            normalized,
         )
-        self.assertIn("must never invoke image tools", text)
-        self.assertIn("may relay the single declared review-preview path", text)
-        self.assertIn("must never open, dereference, or visually inspect it", text)
+        self.assertIn("must never invoke visual-media tools", normalized)
+        self.assertIn("may relay the single declared review-preview path", normalized)
+        self.assertIn("must never dereference it", normalized)
 
-    def test_image_workers_use_one_bounded_scope_and_return_compact_metadata(self):
-        """Catches generation or inspection escaping its one-contract child context."""
+    def test_video_director_makes_visual_media_isolation_its_highest_priority_rule(self):
+        """Catches routing or adapter use preceding coordinator visual-media isolation."""
+        text = (ROOT / "skills/video-director/SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+
+        isolation = text.index("## Highest-priority visual-media isolation")
+        routing = text.index("## Routing")
+        self.assertLess(isolation, routing)
+        for prohibition in (
+            "must never generate, edit, open, play, decode, render, screenshot",
+            "frame-extract, display, or perceptually inspect image or video",
+            "must never dereference a preview path",
+            "exactly one isolated child agent",
+            "compact metadata relay",
+        ):
+            with self.subTest(prohibition=prohibition):
+                self.assertIn(prohibition, normalized)
+
+    def test_video_director_enforces_v3_timing_gate_and_compact_repair_routing(self):
+        """Catches formal storyboard work bypassing real voice timing or leaking diagnostics."""
+        text = (ROOT / "skills/video-director/SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+
+        gate = text.index("## Voice-timed production gate")
+        routing = text.index("## Routing")
+        self.assertLess(gate, routing)
+        for requirement in (
+            "formal `storyboard.plan` is legal only at `timing_bound`",
+            "untimed `visual.preview`",
+            "never load `timing-validation` detail paths",
+            "at most three Beat IDs per issue code",
+            "one `timing-repair` task",
+            "affected Beat IDs",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, normalized)
+
+    def test_structural_validator_accepts_the_delegated_timing_repair_envelope(self):
+        """Catches the director dispatching a capability its selected child rejects."""
+        text = (ROOT / "skills/structural-validator/SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+
+        self.assertEqual(1, text.count("Owned capability:"))
+        for requirement in (
+            "also accepts the coordinator's `timing-repair` envelope",
+            "declare `timing_validation_id` in `inputs`",
+            "name the exact `voice_timing_id`, `timed_semantic_beats_id`, and `scene_timing_contracts_id` lineage",
+            "output_contract: timing-validation-v1",
+            "`minimum_readable_duration_ms`, `affected_beat_ids`, `issue_counts`, and `examples` constraint fields",
+            "compact blocked result",
+            "freshly derived rows from that exact lineage",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, normalized)
+
+    def test_project_manager_preserves_v3_timing_artifact_states_and_compact_surface(self):
+        """Catches recovery documentation falling back to legacy timing or verbose payloads."""
+        text = (ROOT / "skills/video-project-manager/SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+        for token in (
+            "`semantic-beats`",
+            "`timed-semantic-beats`",
+            "`scene-timing-contracts`",
+            "`timing-validation`",
+            "`timing_bound`",
+            "`storyboard_timed`",
+            "`production_ready`",
+            "at most three Beat IDs per issue code",
+            "never load detailed timing diagnostics",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, normalized)
+
+    def test_narration_coverage_policy_defines_compact_timing_coordinator_boundary(self):
+        """Catches workers estimating timing, rewriting keywords, or exposing full inputs."""
+        text = (ROOT / "references/policies/narration-and-coverage.md").read_text(
+            encoding="utf-8"
+        )
+        normalized = " ".join(text.split())
+        for requirement in (
+            "## Coordinator timing boundary",
+            "never estimate timing",
+            "never change approved keywords",
+            "never read full narration",
+            "never expand detailed diagnostics",
+            "one timing-repair task",
+            "at most three Beat IDs per issue code",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, normalized)
+
+    def test_all_visual_workers_require_isolated_child_execution(self):
+        """Catches a visual worker escaping its one immutable media scope."""
+        workers = (
+            "visual-system-designer",
+            "storyboard-director",
+            "scene-producer",
+            "motion-director",
+            "structural-validator",
+            "timeline-assembler",
+            "video-review-packager",
+        )
+        for worker in workers:
+            text = (ROOT / "skills" / worker / "SKILL.md").read_text(encoding="utf-8")
+            with self.subTest(worker=worker):
+                self.assertIn("isolated child agent only", text)
+                self.assertIn("one exact `scope_identity`", text)
+                self.assertIn("must not crawl the project", text)
+                self.assertRegex(
+                    text, r"must not crawl the project or discover neighboring\s+scenes"
+                )
+                self.assertIn("visual_media_handoff", text)
+                self.assertIn("visual-media-task-context.schema.json", text)
+
+    def test_visual_adapters_are_limited_to_the_isolated_child_boundary(self):
+        """Catches primary-context routing gaining a visual adapter execution path."""
+        policy = (ROOT / "references/policies/visual-media-isolation.md").read_text(
+            encoding="utf-8"
+        )
+        boundary = policy.index("## Child-only visual adapters")
+        self.assertIn("Only the isolated child agent may route to or invoke", policy[boundary:])
+        for adapter in ("HyperFrames", "VideoShotCraft", "Remotion", "ChatCut"):
+            with self.subTest(adapter=adapter):
+                self.assertIn(adapter, policy[boundary:])
+
+    def test_policy_preserves_audio_exclusion_user_authority_and_recursive_scrub(self):
+        """Catches isolation leaking into audio or trusting an automated visual judgment."""
+        text = (ROOT / "references/policies/visual-media-isolation.md").read_text(
+            encoding="utf-8"
+        )
+        normalized = " ".join(text.split())
+
+        for contract in (
+            "Audio-only preparation is outside this policy",
+            "Recursively scrub",
+            "every result field",
+            "subjective acceptance remains the user's decision",
+            "structure-only",
+            "same output scrub",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, normalized)
+
+    def test_canonical_visual_workers_relegate_legacy_image_fields_to_persisted_compatibility(self):
+        """Catches new scene or validation tasks authoring deprecated image-only fields."""
         scene = (ROOT / "skills/scene-producer/SKILL.md").read_text(encoding="utf-8")
         validator = (ROOT / "skills/structural-validator/SKILL.md").read_text(
             encoding="utf-8"
         )
 
         for text in (scene, validator):
-            self.assertIn("image-task-context.schema.json", text)
-            self.assertIn("exactly one Scene Contract or one character-asset batch", text)
-            self.assertIn("scope_identity", text)
-            self.assertIn("allowed_image_artifact_ids", text)
-            self.assertIn("at most 16", text)
-            self.assertIn("at most 8", text)
-            self.assertIn("32,768", text)
-            self.assertIn("max_review_previews", text)
-            self.assertIn("must not discover or load undeclared images", text)
-            self.assertIn("must not return image bytes", text)
-            self.assertIn("compact image handoff", text)
-            self.assertIn("call `authorize_image_access`", text)
-        self.assertIn("image generation", scene)
-        self.assertIn("continuity_exception", scene)
-        self.assertIn("must not appear in the ordinary image allowlist", scene)
-        self.assertIn("trimmed non-empty reason", scene)
-        self.assertIn("image inspection", validator)
-        self.assertIn("`image_operation: structure-only`", validator)
-        self.assertIn("`image_operation: image-inspect`", validator)
-        self.assertIn("image-inspect` requires the closed `image_context`", validator)
-        self.assertIn("Aesthetic acceptance remains a user decision", validator)
+            normalized = " ".join(text.split())
+            self.assertIn("visual_media_operation", normalized)
+            self.assertIn("visual_media_context", normalized)
+            self.assertIn("allowed_artifact_ids", normalized)
+            self.assertIn("visual_media_handoff", normalized)
+            self.assertIn("must not return image or video payloads", normalized)
+            self.assertIn(
+                "persisted legacy runtime compatibility; workers MUST NOT author/use for new tasks",
+                normalized,
+            )
+            for legacy_field in (
+                "image_operation",
+                "image_context",
+                "allowed_image_artifact_ids",
+                "allowed_character_pack_ids",
+            ):
+                with self.subTest(legacy_field=legacy_field):
+                    self.assertEqual(1, text.count(legacy_field))
+
+    def test_motion_and_review_delegate_visual_execution_to_isolated_children(self):
+        """Catches a worker directly invoking a visual adapter or building a review preview."""
+        motion = (ROOT / "skills/motion-director/SKILL.md").read_text(encoding="utf-8")
+        review = (ROOT / "skills/video-review-packager/SKILL.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "isolated child agent must route to and invoke the selected adapter",
+            " ".join(motion.split()),
+        )
+        self.assertIn("through an isolated child agent", " ".join(review.split()))
 
     def test_visual_carrier_policy_has_all_carriers_and_density_limit(self):
         """Catches storyboard rules losing the visual hierarchy invariant."""

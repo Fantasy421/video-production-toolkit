@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Video Production Toolkit Scene Timing Contracts Artifact",
+  "$comment": "Timing windows retain the established [start_ms, end_ms] interface. Draft 2020-12 cannot compare tuple elements; strict start_ms < end_ms ordering is authoritative in scripts/toolkit/artifacts.py and scripts/toolkit/scene_timing.py, so this schema is structural and not sufficient alone.",
+  "type": "object",
+  "required": ["artifact_id", "type", "version", "status", "parents", "path", "timed_semantic_beats_id", "scenes"],
+  "properties": {
+    "artifact_id": {"$ref": "#/$defs/safeId"},
+    "type": {"const": "scene-timing-contracts"},
+    "version": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["draft", "approved", "stale", "superseded", "invalid"]},
+    "parents": {"$ref": "#/$defs/parents"},
+    "path": {"$ref": "#/$defs/projectPath"},
+    "output_contract": {"type": "string", "minLength": 1, "maxLength": 128},
+    "timed_semantic_beats_id": {"$ref": "#/$defs/safeId"},
+    "scenes": {"type": "array", "minItems": 1, "maxItems": 512, "items": {"$ref": "#/$defs/scene"}, "uniqueItems": true}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "safeId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"},
+    "parents": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
+    "projectPath": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"},
+    "milliseconds": {"type": "integer", "minimum": 0, "maximum": 36000000},
+    "window": {"type": "array", "prefixItems": [{"$ref": "#/$defs/milliseconds"}, {"$ref": "#/$defs/milliseconds"}], "items": false, "minItems": 2, "maxItems": 2},
+    "carrier": {"type": "string", "minLength": 1, "enum": ["a-roll", "b-roll", "scene", "demo", "motion-graphics", "evidence"]},
+    "supportLayer": {"type": ["string", "null"], "enum": [null, "annotation", "callout", "caption-emphasis", "connection", "label", "number-animation", "progress-state", "subtitle-emphasis"]},
+    "scene": {
+      "type": "object",
+      "required": ["scene_id", "scene_window_ms", "beat_ids", "primary_carrier", "support_layer", "visual_window_ms"],
+      "properties": {
+        "scene_id": {"$ref": "#/$defs/safeId"},
+        "scene_window_ms": {"$ref": "#/$defs/window"},
+        "beat_ids": {"type": "array", "minItems": 1, "maxItems": 512, "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
+        "primary_carrier": {"$ref": "#/$defs/carrier", "minLength": 1},
+        "support_layer": {"$ref": "#/$defs/supportLayer"},
+        "visual_window_ms": {"$ref": "#/$defs/window"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

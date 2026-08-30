@@ -1,10 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Video Production Toolkit Task Envelope",
+  "$comment": "The runtime validators are normative for cross-field equality, including timing_validation_id membership in inputs, compact relay equality, and examples-key subset checks; Draft 2020-12 expresses only the structural subset.",
   "type": "object",
   "required": ["task_id", "capability", "inputs", "adapter_preferences", "output_contract", "constraints"],
   "properties": {
-    "task_id": {"type": "string", "minLength": 1},
+    "task_id": {"$ref": "#/$defs/safeId"},
     "capability": {
       "enum": [
         "project.manage",
@@ -19,18 +20,47 @@
         "structure.validate",
         "review.package",
         "captions.produce",
-        "representative-slice.produce"
+        "representative-slice.produce",
+        "timing-repair"
       ]
     },
-    "inputs": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "inputs": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
     "adapter_preferences": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
-    "output_contract": {"type": "string", "minLength": 1},
+    "output_contract": {"$ref": "#/$defs/safeId"},
     "constraints": {
       "type": "object",
       "properties": {
-        "image_operation": {"enum": ["generate", "structure-only", "image-inspect"]},
-        "image_context": {"$ref": "image-task-context.schema.json"},
-        "visual_operation": {"enum": ["image-generation", "non-image"]}
+        "image_operation": {
+          "enum": ["generate", "structure-only", "image-inspect"],
+          "deprecated": true,
+          "readOnly": true
+        },
+        "image_context": {
+          "$ref": "image-task-context.schema.json",
+          "deprecated": true,
+          "readOnly": true
+        },
+        "visual_media_operation": {
+          "enum": [
+            "none",
+            "image-generate",
+            "image-edit",
+            "image-inspect",
+            "video-generate",
+            "video-edit",
+            "video-render",
+            "video-inspect",
+            "frame-extract",
+            "contact-sheet"
+          ]
+        },
+        "visual_media_context": {"$ref": "visual-media-task-context.schema.json"},
+        "execution_context": {"const": "isolated-child-agent"},
+        "visual_operation": {
+          "enum": ["image-generation", "non-image"],
+          "deprecated": true,
+          "readOnly": true
+        }
       },
       "allOf": [
         {
@@ -53,6 +83,60 @@
         },
         {
           "if": {
+            "properties": {"visual_media_operation": {"const": "none"}},
+            "required": ["visual_media_operation"]
+          },
+          "then": {"not": {"required": ["visual_media_context"]}}
+        },
+        {
+          "if": {
+            "properties": {
+              "visual_media_operation": {
+                "enum": [
+                  "image-generate",
+                  "image-edit",
+                  "image-inspect",
+                  "video-generate",
+                  "video-edit",
+                  "video-render",
+                  "video-inspect",
+                  "frame-extract",
+                  "contact-sheet"
+                ]
+              }
+            },
+            "required": ["visual_media_operation"]
+          },
+          "then": {
+            "required": ["visual_media_context", "execution_context"],
+            "properties": {
+              "execution_context": {"const": "isolated-child-agent"}
+            }
+          }
+        },
+        {
+          "if": {"required": ["visual_media_context"]},
+          "then": {"required": ["visual_media_operation"]}
+        },
+        {
+          "if": {
+            "anyOf": [
+              {"required": ["visual_media_operation"]},
+              {"required": ["visual_media_context"]}
+            ]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {"required": ["visual_operation"]},
+                {"required": ["image_operation"]},
+                {"required": ["image_context"]}
+              ]
+            }
+          }
+        },
+        {
+          "if": {
             "properties": {"visual_operation": {"const": "image-generation"}},
             "required": ["visual_operation"]
           },
@@ -65,6 +149,35 @@
       "additionalProperties": true
     }
   },
+  "$defs": {
+    "safeId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"},
+    "timingRepairConstraints": {
+      "type": "object",
+      "required": ["visual_media_operation", "timing_validation_id", "voice_timing_id", "timed_semantic_beats_id", "scene_timing_contracts_id", "minimum_readable_duration_ms", "affected_beat_ids", "issue_counts", "examples"],
+      "properties": {
+        "visual_media_operation": {"const": "none"},
+        "timing_validation_id": {"$ref": "#/$defs/safeId"},
+        "voice_timing_id": {"$ref": "#/$defs/safeId"},
+        "timed_semantic_beats_id": {"$ref": "#/$defs/safeId"},
+        "scene_timing_contracts_id": {"$ref": "#/$defs/safeId"},
+        "minimum_readable_duration_ms": {"type": "integer", "minimum": 0, "maximum": 36000000},
+        "affected_beat_ids": {"type": "array", "minItems": 1, "maxItems": 512, "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
+        "issue_counts": {
+          "type": "object",
+          "propertyNames": {"enum": ["VOICE_TIMING_REQUIRED", "KEYWORD_ANCHOR_MISSING", "VISUAL_BEFORE_ALLOWED_WINDOW", "VISUAL_AFTER_ALLOWED_WINDOW", "BEAT_OUTSIDE_SCENE", "MULTIPLE_PRIMARY_CARRIERS", "SUPPORT_LAYER_OVERFLOW", "KEYWORD_EVENTS_TOO_CLOSE", "SCENE_TOO_SHORT", "STALE_VOICE_TIMING"]},
+          "additionalProperties": {"type": "integer", "minimum": 1, "maximum": 1000000},
+          "minProperties": 1
+        },
+        "examples": {
+          "type": "object",
+          "propertyNames": {"enum": ["VOICE_TIMING_REQUIRED", "KEYWORD_ANCHOR_MISSING", "VISUAL_BEFORE_ALLOWED_WINDOW", "VISUAL_AFTER_ALLOWED_WINDOW", "BEAT_OUTSIDE_SCENE", "MULTIPLE_PRIMARY_CARRIERS", "SUPPORT_LAYER_OVERFLOW", "KEYWORD_EVENTS_TOO_CLOSE", "SCENE_TOO_SHORT", "STALE_VOICE_TIMING"]},
+          "additionalProperties": {"type": "array", "maxItems": 3, "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
+          "minProperties": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
   "allOf": [
     {
       "if": {
@@ -72,7 +185,52 @@
         "required": ["capability"]
       },
       "then": {
-        "properties": {"constraints": {"required": ["visual_operation"]}}
+        "properties": {
+          "constraints": {
+            "oneOf": [
+              {
+                "required": ["visual_media_operation"],
+                "properties": {
+                  "visual_media_operation": {
+                    "enum": [
+                      "none",
+                      "image-generate",
+                      "image-edit",
+                      "image-inspect",
+                      "video-generate",
+                      "video-edit",
+                      "video-render",
+                      "video-inspect",
+                      "frame-extract",
+                      "contact-sheet"
+                    ]
+                  }
+                },
+                "not": {
+                  "anyOf": [
+                    {"required": ["visual_operation"]},
+                    {"required": ["image_operation"]},
+                    {"required": ["image_context"]}
+                  ]
+                }
+              },
+              {
+                "required": ["visual_operation"],
+                "properties": {
+                  "visual_operation": {
+                    "enum": ["image-generation", "non-image"]
+                  }
+                },
+                "not": {
+                  "anyOf": [
+                    {"required": ["visual_media_operation"]},
+                    {"required": ["visual_media_context"]}
+                  ]
+                }
+              }
+            ]
+          }
+        }
       }
     },
     {
@@ -83,11 +241,46 @@
       "then": {
         "properties": {
           "constraints": {
-            "required": ["image_operation"],
-            "properties": {
-              "image_operation": {"enum": ["structure-only", "image-inspect"]}
-            }
+            "oneOf": [
+              {
+                "required": ["visual_media_operation"],
+                "properties": {
+                  "visual_media_operation": {"enum": ["none", "image-inspect"]}
+                },
+                "not": {
+                  "anyOf": [
+                    {"required": ["image_operation"]},
+                    {"required": ["image_context"]}
+                  ]
+                }
+              },
+              {
+                "required": ["image_operation"],
+                "properties": {
+                  "image_operation": {"enum": ["structure-only", "image-inspect"]}
+                },
+                "not": {
+                  "anyOf": [
+                    {"required": ["visual_media_operation"]},
+                    {"required": ["visual_media_context"]}
+                  ]
+                }
+              }
+            ]
           }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"capability": {"const": "timing-repair"}},
+        "required": ["capability"]
+      },
+      "then": {
+        "properties": {
+          "output_contract": {"const": "timing-validation-v1"},
+          "inputs": {"minItems": 1},
+          "constraints": {"$ref": "#/$defs/timingRepairConstraints"}
         }
       }
     }

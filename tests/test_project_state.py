@@ -9,6 +9,11 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from scripts.toolkit.artifacts import create_artifact
+from scripts.toolkit.timed_semantic_beats import _anchor_commitment, bind_semantic_beats
+from scripts.toolkit.timing_validation import (
+    build_compact_timing_rows,
+    validate_timing_rows,
+)
 from scripts.toolkit.project_state import (
     append_event,
     initialize_project,
@@ -87,7 +92,7 @@ class ProjectStateTests(unittest.TestCase):
         self.event_log = event_log
         self.original_events = event_log.read_bytes()
 
-    def seed_voice_bundle(self, *, write_audio=True):
+    def seed_voice_bundle(self, *, write_audio=True, keyword_anchors=None):
         records = (
             {
                 "artifact_id": "narration-v1", "type": "narration", "version": 1,
@@ -126,6 +131,7 @@ class ProjectStateTests(unittest.TestCase):
                 "path": "metadata/voice-timing-v1.json", "voiceover_id": "voiceover-v1",
                 "timing_kind": "real", "duration_ms": 1_000,
                 "segments": [{"start_ms": 0, "end_ms": 1_000, "text": "voice"}],
+                "keyword_anchors": list(keyword_anchors or []),
             },
         )
         for record in records:
@@ -139,6 +145,70 @@ class ProjectStateTests(unittest.TestCase):
                 + struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, sample_rate * 2, 2, 16)
                 + b"data" + struct.pack("<I", len(audio)) + audio
             )
+        return records
+
+    def seed_v3_production_timing_graph(self):
+        anchor = {
+            "beat_id": "B01", "keyword": "timing", "start_ms": 300,
+            "end_ms": 600,
+        }
+        records = list(self.seed_voice_bundle(keyword_anchors=[anchor]))
+        semantic_record = {
+            "narration_id": "narration-v1",
+            "beats": [{
+                "beat_id": "B01", "text_ref": "narration-v1:S01:L1",
+                "keyword": "timing", "intent": "core-concept-emphasis",
+                "priority": "primary", "preferred_carrier": "motion-graphics",
+                "approval_provenance": "user:production-gate-v1",
+            }],
+        }
+        semantic = {
+            "artifact_id": "semantic-v1", "type": "semantic-beats", "version": 1,
+            "status": "approved", "parents": ["narration-v1"],
+            "path": "metadata/semantic-v1.json", **semantic_record,
+        }
+        create_artifact(self.root, semantic)
+        exact = bind_semantic_beats(semantic_record, records[-1], [anchor])
+        timed = {
+            "artifact_id": "timed-v1", "type": "timed-semantic-beats", "version": 1,
+            "status": "approved", "parents": ["semantic-v1", "voice-timing-v1"],
+            "path": "metadata/timed-v1.json", "semantic_beats_id": "semantic-v1",
+            **exact,
+        }
+        create_artifact(self.root, timed)
+        scene = {
+            "artifact_id": "scene-timing-v1", "type": "scene-timing-contracts",
+            "version": 1, "status": "approved", "parents": ["timed-v1"],
+            "path": "metadata/scene-timing-v1.json",
+            "timed_semantic_beats_id": "timed-v1",
+            "scenes": [{
+                "scene_id": "S01", "scene_window_ms": [0, 1000],
+                "beat_ids": ["B01"], "primary_carrier": "motion-graphics",
+                "support_layer": "caption-emphasis", "visual_window_ms": [180, 800],
+            }],
+        }
+        create_artifact(self.root, scene)
+        rows = build_compact_timing_rows(
+            scene, timed, current_voice_timing_id="voice-timing-v1",
+            current_timed_semantic_beats_id="timed-v1",
+        )
+        compact = validate_timing_rows(rows, minimum_readable_duration_ms=500)
+        validation = {
+            "artifact_id": "timing-validation-v1", "type": "timing-validation",
+            "version": 1, "status": "approved", "parents": ["scene-timing-v1"],
+            "path": "metadata/timing-validation-v1.json",
+            "timing_validation": compact,
+        }
+        create_artifact(self.root, validation)
+        return semantic_record
+
+    def advance_v3_to_representative_scene(self):
+        initialize_project(self.root, "kv-v3-authority", "knowledge-video", schema_version=3)
+        for phase in (
+            "semantic_beats_confirmed", "voiceover_ready", "timing_bound",
+            "storyboard_timed", "representative_scene_ready",
+        ):
+            append_event(self.root, {"event": "project.phase_changed", "phase": phase})
 
     def test_direction_advances_to_voice_before_storyboard(self):
         """Catches a new project jumping from direction directly to storyboarding."""
@@ -151,6 +221,205 @@ class ProjectStateTests(unittest.TestCase):
         )
 
         self.assertEqual("voice_ready", replay_events(self.root)["phase"])
+
+    def test_v3_projects_replay_the_voice_timed_phase_order(self):
+        """V3 starts at script confirmation and keeps preview optional."""
+        initialize_project(
+            self.root, "kv-v3", "knowledge-video", schema_version=3
+        )
+        for phase in (
+            "semantic_beats_confirmed",
+            "voiceover_ready",
+            "timing_bound",
+            "storyboard_timed",
+            "representative_scene_ready",
+        ):
+            append_event(
+                self.root, {"event": "project.phase_changed", "phase": phase}
+            )
+        self.assertEqual("representative_scene_ready", replay_events(self.root)["phase"])
+
+    def test_v3_visual_preview_cannot_skip_timing(self):
+        initialize_project(
+            self.root, "kv-v3-preview", "knowledge-video", schema_version=3
+        )
+        append_event(
+            self.root,
+            {"event": "project.phase_changed", "phase": "semantic_beats_confirmed"},
+        )
+        append_event(
+            self.root,
+            {"event": "project.phase_changed", "phase": "visual_direction_previewed"},
+        )
+        with self.assertRaisesRegex(ValueError, "illegal project phase transition"):
+            append_event(
+                self.root,
+                {"event": "project.phase_changed", "phase": "storyboard_timed"},
+            )
+
+    def test_v3_production_ready_requires_the_current_timing_chain(self):
+        initialize_project(
+            self.root, "kv-v3-production", "knowledge-video", schema_version=3
+        )
+        for phase in (
+            "semantic_beats_confirmed",
+            "voiceover_ready",
+            "timing_bound",
+            "storyboard_timed",
+            "representative_scene_ready",
+        ):
+            append_event(
+                self.root, {"event": "project.phase_changed", "phase": phase}
+            )
+        with self.assertRaisesRegex(ValueError, "current real voice timing"):
+            append_event(
+                self.root,
+                {"event": "project.phase_changed", "phase": "production_ready"},
+            )
+
+    def test_v3_production_gate_accepts_only_freshly_derived_timing_authority(self):
+        self.advance_v3_to_representative_scene()
+        self.seed_v3_production_timing_graph()
+
+        append_event(
+            self.root,
+            {"event": "project.phase_changed", "phase": "production_ready"},
+        )
+
+        self.assertEqual("production_ready", replay_events(self.root)["phase"])
+
+    def test_v3_production_gate_rejects_a_recommitted_invented_anchor(self):
+        self.advance_v3_to_representative_scene()
+        semantic_record = self.seed_v3_production_timing_graph()
+        path = self.root / "artifacts/timed-semantic-beats/timed-v1.json"
+        timed = json.loads(path.read_text(encoding="utf-8"))
+        timed["beats"][0].update(
+            keyword_start_ms=350,
+            keyword_end_ms=650,
+            emphasis_ms=500,
+            visual_window_ms=[230, 850],
+            approved_anchor_commitment=_anchor_commitment(
+                semantic_record, "B01", 350, 650
+            ),
+        )
+        path.write_text(json.dumps(timed), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "current timed semantic beats"):
+            append_event(
+                self.root,
+                {"event": "project.phase_changed", "phase": "production_ready"},
+            )
+
+    def test_v3_production_gate_rejects_an_arbitrary_passed_validation(self):
+        self.advance_v3_to_representative_scene()
+        self.seed_v3_production_timing_graph()
+        path = self.root / "artifacts/timing-validation/timing-validation-v1.json"
+        validation = json.loads(path.read_text(encoding="utf-8"))
+        validation["timing_validation"] = {"status": "passed", "checks_run": 1}
+        path.write_text(json.dumps(validation), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "passed timing validation"):
+            append_event(
+                self.root,
+                {"event": "project.phase_changed", "phase": "production_ready"},
+            )
+
+    def test_v3_gate_uses_authoritative_voice_timing_not_an_orphan_chain(self):
+        initialize_project(
+            self.root, "kv-v3-orphan", "knowledge-video", schema_version=3
+        )
+        for phase in (
+            "semantic_beats_confirmed",
+            "voiceover_ready",
+            "timing_bound",
+            "storyboard_timed",
+            "representative_scene_ready",
+        ):
+            append_event(self.root, {"event": "project.phase_changed", "phase": phase})
+
+        records = [
+            {"artifact_id": "voice-timing-v1", "type": "voice-timing", "status": "approved", "timing_kind": "real", "version": 1},
+            {"artifact_id": "voice-timing-v2-orphan", "type": "voice-timing", "status": "approved", "timing_kind": "real", "version": 2},
+            {"artifact_id": "timed-v2-orphan", "type": "timed-semantic-beats", "status": "approved", "version": 2, "voice_timing_id": "voice-timing-v2-orphan"},
+            {"artifact_id": "scene-v2-orphan", "type": "scene-timing-contracts", "status": "approved", "version": 2, "timed_semantic_beats_id": "timed-v2-orphan"},
+            {"artifact_id": "validation-v2-orphan", "type": "timing-validation", "status": "approved", "version": 2, "parents": ["scene-v2-orphan"], "path": "metadata/validation-v2-orphan.json"},
+        ]
+        (self.root / "metadata").mkdir()
+        (self.root / "metadata/validation-v2-orphan.json").write_text(
+            json.dumps({"status": "passed"}), encoding="utf-8"
+        )
+        with patch(
+            "scripts.toolkit.project_state._runtime_artifacts",
+            return_value=records,
+        ), patch(
+            "scripts.toolkit.project_state.validate_project_authoritative_voice_bundle",
+            return_value={"ok": True, "voice_timing_id": "voice-timing-v1"},
+        ):
+            with self.assertRaisesRegex(ValueError, "current timed semantic beats"):
+                append_event(
+                    self.root,
+                    {"event": "project.phase_changed", "phase": "production_ready"},
+                )
+            recovery = project_recovery_view(self.root, artifacts=records)
+            self.assertEqual(
+                ["TIMED_SEMANTIC_BEATS_REQUIRED"],
+                recovery["migration_requirement"]["issues"],
+            )
+
+    def test_v3_gate_fails_closed_on_malformed_persisted_artifact(self):
+        initialize_project(
+            self.root, "kv-v3-malformed", "knowledge-video", schema_version=3
+        )
+        for phase in (
+            "semantic_beats_confirmed",
+            "voiceover_ready",
+            "timing_bound",
+            "storyboard_timed",
+            "representative_scene_ready",
+        ):
+            append_event(self.root, {"event": "project.phase_changed", "phase": phase})
+        malformed = self.root / "artifacts" / "timed-semantic-beats" / "malformed.json"
+        malformed.parent.mkdir(parents=True, exist_ok=True)
+        malformed.write_text(
+            json.dumps({"artifact_id": "malformed", "type": "timed-semantic-beats"}),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "invalid artifact metadata"):
+            append_event(
+                self.root,
+                {"event": "project.phase_changed", "phase": "production_ready"},
+            )
+
+    def test_v3_recovery_is_read_only_and_reports_compact_timing_blocker(self):
+        event_log = self.root / "events" / "events.jsonl"
+        event_log.parent.mkdir(parents=True)
+        events = [
+            {
+                "event": "project.initialized",
+                "schema_version": 3,
+                "project_id": "kv-v3-recovery",
+                "workflow": "knowledge-video",
+            },
+            *(
+                {"event": "project.phase_changed", "phase": phase}
+                for phase in (
+                    "semantic_beats_confirmed",
+                    "voiceover_ready",
+                    "timing_bound",
+                    "storyboard_timed",
+                    "representative_scene_ready",
+                    "production_ready",
+                )
+            ),
+        ]
+        event_log.write_text(
+            "\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8"
+        )
+        original = event_log.read_bytes()
+        view = project_recovery_view(self.root, artifacts=[])
+        self.assertEqual("semantic_beats_confirmed", view["phase"])
+        self.assertEqual("timing-recovery-blocked", view["migration_requirement"]["code"])
+        self.assertEqual(original, event_log.read_bytes())
 
     def test_direction_cannot_skip_voice_ready(self):
         """Catches a new phase event using the pre-voice transition order."""
@@ -218,6 +487,16 @@ class ProjectStateTests(unittest.TestCase):
         self.assertEqual("direction_ready", view["phase"])
         self.assertEqual("voice-artifacts-required", view["migration_requirement"]["code"])
         self.assertEqual(self.original_events, self.event_log.read_bytes())
+
+    def test_legacy_voice_timing_project_recovery_remains_readable(self):
+        """Catches recovery demoting a valid persisted pre-anchor voice bundle."""
+        self.write_pre_voice_event_log(final_phase="production_ready")
+        records = self.seed_voice_bundle()
+        records[-1].pop("keyword_anchors")
+
+        view = project_recovery_view(self.root, artifacts=records)
+
+        self.assertEqual("production_ready", view["phase"])
 
     def test_legacy_direction_project_upgrades_by_appending_before_voice_ready(self):
         """Catches an old log producing a v2 snapshot without a replayable upgrade."""

@@ -11,6 +11,9 @@ from typing import Any, Iterable, Iterator, Mapping, Optional
 
 from .runtime_paths import project_path, project_root, storage_directory
 from .voice import validate_project_authoritative_voice_bundle
+from .invalidation import invalidated_artifact_ids
+from .artifacts import validate_artifact_record
+from .timing_validation import validate_authoritative_timing_chain
 
 
 PHASES = (
@@ -25,11 +28,27 @@ PHASES = (
     "handoff_ready",
 )
 
-LEGACY_PROJECT_SCHEMA_VERSION = 1
-CURRENT_PROJECT_SCHEMA_VERSION = 2
-PROJECT_SCHEMA_VERSIONS = frozenset(
-    {LEGACY_PROJECT_SCHEMA_VERSION, CURRENT_PROJECT_SCHEMA_VERSION}
+# The v3 workflow is deliberately kept separate from the historical phase
+# tuple.  A v1/v2 event log must replay with its original phase names and
+# ordering; a v3 log is never silently interpreted as one of those histories.
+V3_PHASES = (
+    "script_confirmed",
+    "semantic_beats_confirmed",
+    "visual_direction_previewed",
+    "voiceover_ready",
+    "timing_bound",
+    "storyboard_timed",
+    "representative_scene_ready",
+    "production_ready",
 )
+
+LEGACY_PROJECT_SCHEMA_VERSION = 1
+V2_PROJECT_SCHEMA_VERSION = 2
+CURRENT_PROJECT_SCHEMA_VERSION = 3
+PROJECT_SCHEMA_VERSIONS = frozenset(
+    {LEGACY_PROJECT_SCHEMA_VERSION, V2_PROJECT_SCHEMA_VERSION, CURRENT_PROJECT_SCHEMA_VERSION}
+)
+V3_PROJECT_SCHEMA_VERSION = 3
 
 # Version-one event logs predate ``voice_ready``.  They remain replayable only
 # through the replay compatibility path below; append_event always uses PHASES.
@@ -73,7 +92,13 @@ _EVENT_FIELDS = {
 }
 
 
-def initialize_project(target: Path, project_id: str, workflow: str) -> dict[str, Any]:
+def initialize_project(
+    target: Path,
+    project_id: str,
+    workflow: str,
+    *,
+    schema_version: int = V2_PROJECT_SCHEMA_VERSION,
+) -> dict[str, Any]:
     """Initialize *target* with an event-first, atomically derived snapshot."""
     raw_root = Path(target)
     if raw_root.is_symlink():
@@ -94,7 +119,7 @@ def initialize_project(target: Path, project_id: str, workflow: str) -> dict[str
             storage_directory(root, directory, create=True)
         event = {
             "event": "project.initialized",
-            "schema_version": CURRENT_PROJECT_SCHEMA_VERSION,
+            "schema_version": schema_version,
             "project_id": project_id,
             "workflow": workflow,
         }
@@ -103,6 +128,19 @@ def initialize_project(target: Path, project_id: str, workflow: str) -> dict[str
         state = _replay_events_unlocked(root)
         _write_project_atomically(root, state)
         return state
+
+
+def initialize_v3_project(target: Path, project_id: str, workflow: str) -> dict[str, Any]:
+    """Initialize the voice-timed v3 workflow explicitly.
+
+    ``initialize_project`` retains its v2 default for callers that create
+    historical-compatible fixtures.  New production callers should use this
+    named entry point (or pass ``schema_version=3``) so the workflow contract
+    is unambiguous.
+    """
+    return initialize_project(
+        target, project_id, workflow, schema_version=V3_PROJECT_SCHEMA_VERSION
+    )
 
 
 def append_event(root: Path, event: dict[str, Any]) -> None:
@@ -124,6 +162,11 @@ def append_event(root: Path, event: dict[str, Any]) -> None:
                     "voice_ready requires an authoritative header-verified "
                     f"voice bundle and readable audio: {codes}"
                 )
+        if (
+            event.get("event") == "project.phase_changed"
+            and state.get("schema_version") == V3_PROJECT_SCHEMA_VERSION
+        ):
+            _validate_v3_phase_gate(root, event["phase"])
         upgrade = _schema_upgrade_for(event, state)
         if upgrade is not None:
             _validate_event(upgrade, state)
@@ -167,6 +210,19 @@ def project_recovery_view(
     transition; callers cannot substitute a metadata-only predicate.
     """
     state = replay_events(root)
+    if state.get("schema_version") == V3_PROJECT_SCHEMA_VERSION:
+        issues = _v3_recovery_issues(root, artifacts)
+        if issues:
+            return {
+                **state,
+                "phase": "semantic_beats_confirmed",
+                "migration_requirement": {
+                    "code": "timing-recovery-blocked",
+                    "recorded_phase": state["phase"],
+                    "issues": issues,
+                },
+            }
+        return state
     if state["phase"] not in _VOICE_REQUIRED_RECOVERY_PHASES:
         return state
     if validate_project_authoritative_voice_bundle(root, artifacts)["ok"]:
@@ -179,6 +235,68 @@ def project_recovery_view(
             "recorded_phase": state["phase"],
         },
     }
+
+
+def _v3_recovery_issues(
+    root: Path, artifacts: Iterable[Mapping[str, Any]]
+) -> list[str]:
+    """Return stable compact blockers for a v3 persisted late-phase state."""
+    state = replay_events(root)
+    phase = state.get("phase")
+    if phase not in V3_PHASES or V3_PHASES.index(phase) < V3_PHASES.index("timing_bound"):
+        return []
+    records = [dict(item) for item in artifacts if isinstance(item, Mapping)]
+    approved = [item for item in records if item.get("status") == "approved"]
+    voice_bundle = validate_project_authoritative_voice_bundle(root, records)
+    voice_timing_id = voice_bundle.get("voice_timing_id")
+    voice_matches = [
+        item
+        for item in approved
+        if item.get("type") == "voice-timing"
+        and item.get("artifact_id") == voice_timing_id
+    ]
+    voice = voice_matches[0] if len(voice_matches) == 1 else None
+    issues: list[str] = []
+    if (
+        voice is None
+        or voice.get("timing_kind") != "real"
+        or not voice_bundle.get("ok")
+    ):
+        issues.append("VOICE_TIMING_REQUIRED")
+        return issues
+    narration_id = voice_bundle.get("narration_id")
+    try:
+        validate_authoritative_timing_chain(
+            records,
+            narration_id=narration_id,
+            voice_timing_id=voice_timing_id,
+            through="timed",
+        )
+    except (TypeError, ValueError):
+        issues.append("TIMED_SEMANTIC_BEATS_REQUIRED")
+        return issues
+    if V3_PHASES.index(phase) >= V3_PHASES.index("storyboard_timed"):
+        try:
+            validate_authoritative_timing_chain(
+                records,
+                narration_id=narration_id,
+                voice_timing_id=voice_timing_id,
+                through="scene",
+            )
+        except (TypeError, ValueError):
+            issues.append("SCENE_TIMING_CONTRACTS_REQUIRED")
+        else:
+            if phase == "production_ready":
+                try:
+                    validate_authoritative_timing_chain(
+                        records,
+                        narration_id=narration_id,
+                        voice_timing_id=voice_timing_id,
+                        through="validation",
+                    )
+                except (TypeError, ValueError):
+                    issues.append("TIMING_VALIDATION_REQUIRED")
+    return issues
 
 
 def _replay_events_unlocked(root: Path) -> dict[str, Any]:
@@ -202,7 +320,11 @@ def _replay_events_unlocked(root: Path) -> dict[str, Any]:
                 "schema_version": event["schema_version"],
                 "project_id": event["project_id"],
                 "workflow": event["workflow"],
-                "phase": "initialized",
+                "phase": (
+                    V3_PHASES[0]
+                    if event["schema_version"] == V3_PROJECT_SCHEMA_VERSION
+                    else "initialized"
+                ),
             }
         elif event["event"] == "project.schema_upgraded":
             state["schema_version"] = event["schema_version"]
@@ -228,7 +350,7 @@ def _validate_event(event: Any, state: dict[str, Any]) -> None:
     if not state:
         raise ValueError("project event log must begin with project.initialized")
     if event_name == "project.schema_upgraded":
-        if event["schema_version"] != CURRENT_PROJECT_SCHEMA_VERSION:
+        if event["schema_version"] != V2_PROJECT_SCHEMA_VERSION:
             raise ValueError("unsupported project schema upgrade version")
         if (
             state.get("schema_version") != LEGACY_PROJECT_SCHEMA_VERSION
@@ -238,14 +360,33 @@ def _validate_event(event: Any, state: dict[str, Any]) -> None:
     elif event_name == "project.phase_changed":
         phase = event["phase"]
         current = state.get("phase")
-        if phase not in PHASES:
+        schema_version = state.get("schema_version")
+        phase_order = (
+            V3_PHASES
+            if schema_version == V3_PROJECT_SCHEMA_VERSION
+            else PHASES
+        )
+        if phase not in phase_order:
             raise ValueError("project phase is not recognized")
         if (
-            state.get("schema_version") == LEGACY_PROJECT_SCHEMA_VERSION
+            schema_version == LEGACY_PROJECT_SCHEMA_VERSION
             and phase not in LEGACY_PHASES
         ):
             raise ValueError("project phase requires a schema upgrade")
-        if current not in PHASES or PHASES.index(phase) != PHASES.index(current) + 1:
+        if current not in phase_order:
+            raise ValueError(f"illegal project phase transition: {current!r} -> {phase!r}")
+        # The preview phase is optional: semantic_beats_confirmed may advance
+        # directly to voiceover_ready, but the preview may not jump over the
+        # voice/timing/storyboard checkpoints.
+        legal = (
+            phase_order.index(phase) == phase_order.index(current) + 1
+            or (
+                schema_version == V3_PROJECT_SCHEMA_VERSION
+                and current == "semantic_beats_confirmed"
+                and phase == "voiceover_ready"
+            )
+        )
+        if not legal:
             raise ValueError(f"illegal project phase transition: {current!r} -> {phase!r}")
     elif event_name == "project.active_timeline_changed":
         if not _safe_component(event["active_timeline_id"]):
@@ -307,9 +448,101 @@ def _schema_upgrade_for(event: Mapping[str, Any], state: Mapping[str, Any]) -> O
     ):
         return {
             "event": "project.schema_upgraded",
-            "schema_version": CURRENT_PROJECT_SCHEMA_VERSION,
+            "schema_version": V2_PROJECT_SCHEMA_VERSION,
         }
     return None
+
+
+def _validate_v3_phase_gate(root: Path, phase: str) -> None:
+    """Enforce the only state transition that can authorize full production.
+
+    Intermediate v3 phase events describe workflow progress and are therefore
+    replayable from metadata alone.  The production transition is different:
+    it is an authorization boundary and must prove the current real timing
+    chain plus a passed compact timing validation record.  No media payload is
+    read here; only Artifact JSON and the validator's compact result are used.
+    """
+    if phase != "production_ready":
+        return
+    records = _runtime_artifacts(root)
+    invalidated = invalidated_artifact_ids(root)
+    records = [
+        {**record, "status": "stale"}
+        if record.get("artifact_id") in invalidated
+        else record
+        for record in records
+    ]
+    voice_bundle = validate_project_authoritative_voice_bundle(root, records)
+    if not voice_bundle.get("ok"):
+        raise ValueError("production_ready requires current real voice timing")
+    voice_timing_id = voice_bundle.get("voice_timing_id")
+    voice_timing_matches = [
+        item
+        for item in records
+        if item.get("type") == "voice-timing"
+        and item.get("status") == "approved"
+        and item.get("artifact_id") == voice_timing_id
+    ]
+    voice_timing = voice_timing_matches[0] if len(voice_timing_matches) == 1 else None
+    if voice_timing is None or voice_timing.get("timing_kind") != "real":
+        raise ValueError("production_ready requires current real voice timing")
+    try:
+        validate_authoritative_timing_chain(
+            records,
+            narration_id=voice_bundle.get("narration_id"),
+            voice_timing_id=voice_timing_id,
+            through="timed",
+        )
+    except (TypeError, ValueError):
+        raise ValueError("production_ready requires current timed semantic beats")
+    try:
+        validate_authoritative_timing_chain(
+            records,
+            narration_id=voice_bundle.get("narration_id"),
+            voice_timing_id=voice_timing_id,
+            through="scene",
+        )
+    except (TypeError, ValueError):
+        raise ValueError("production_ready requires current scene timing contracts")
+    try:
+        validate_authoritative_timing_chain(
+            records,
+            narration_id=voice_bundle.get("narration_id"),
+            voice_timing_id=voice_timing_id,
+            through="validation",
+        )
+    except (TypeError, ValueError):
+        raise ValueError("production_ready requires passed timing validation")
+
+
+def _runtime_artifacts(root: Path) -> list[dict[str, Any]]:
+    """Read only strictly valid persisted Artifact records for a state gate."""
+    artifacts_root = project_path(root, "artifacts")
+    if not artifacts_root.is_dir() or artifacts_root.is_symlink():
+        return []
+    records: list[dict[str, Any]] = []
+    for type_directory in sorted(artifacts_root.iterdir()):
+        if type_directory.name == ".locks":
+            continue
+        if not type_directory.is_dir() or type_directory.is_symlink():
+            continue
+        for path in sorted(type_directory.glob("*.json")):
+            if path.is_symlink():
+                raise ValueError(f"invalid artifact metadata: {path}")
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+                raise ValueError(f"invalid artifact metadata: {path}") from error
+            if not isinstance(value, dict):
+                raise ValueError(f"invalid artifact metadata: {path}")
+            try:
+                validate_artifact_record(value)
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"invalid artifact metadata: {path}") from error
+            if path.name != f"{value.get('artifact_id')}.json":
+                raise ValueError(f"invalid artifact metadata: {path}")
+            records.append(value)
+    return records
 
 
 @contextmanager

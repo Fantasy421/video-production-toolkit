@@ -19,8 +19,8 @@ VOICE_SOURCE = "voice-source-decision"
 VOICE_PROFILE = "voice-profile"
 VOICEOVER = "voiceover"
 VOICE_TIMING = "voice-timing"
-SAFE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"
-PROJECT_PATH_PATTERN = r"^(?!/)(?![A-Za-z]:)(?!\.{1,2}(?:/|$))(?!.*\/\.{1,2}(?:/|$))[^\\]+$"
+SAFE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"
+PROJECT_PATH_PATTERN = r"^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\.{1,2}(?:/|$))(?!.*\/\.{1,2}(?:/|$))[^\\]+$"
 SAFE_ID_RE = re.compile(SAFE_ID_PATTERN)
 PROJECT_PATH_RE = re.compile(PROJECT_PATH_PATTERN)
 _VOICE_TYPES = frozenset({VOICE_SOURCE, VOICE_PROFILE, VOICEOVER, VOICE_TIMING})
@@ -77,6 +77,7 @@ _VOICE_ALLOWED_FIELDS = {
         if artifact_type == VOICEOVER
         else {"output_contract"}
     )
+    | ({"keyword_anchors"} if artifact_type == VOICE_TIMING else set())
     for artifact_type, required_fields in _VOICE_REQUIRED_FIELDS.items()
 }
 
@@ -434,6 +435,8 @@ def _valid_voice_record(record: Mapping[str, Any]) -> bool:
         return False
     if not set(record).issubset(_VOICE_ALLOWED_FIELDS[artifact_type]):
         return False
+    if not _within_shared_artifact_bounds(record, artifact_type):
+        return False
     if "output_contract" in record and not _nonempty_text(record["output_contract"]):
         return False
     if not _safe_id(record["artifact_id"]) or not _safe_id(record["type"]):
@@ -470,8 +473,137 @@ def _valid_voice_record(record: Mapping[str, Any]) -> bool:
     return True
 
 
+def _within_shared_artifact_bounds(
+    record: Mapping[str, Any], artifact_type: str
+) -> bool:
+    """Apply persisted Artifact size limits without preempting voice issue codes.
+
+    Voice bundle validation deliberately retains records with semantic defects so
+    its later validators can report stable, field-specific issues.  This helper
+    therefore enforces only the shared storage limits whose rejection does not
+    replace those diagnostics (for example, oversized text and durations).
+    Full Artifact validation remains the authority at persistence/read
+    boundaries.
+    """
+    if "output_contract" in record and not _bounded_text(
+        record["output_contract"], 128
+    ):
+        return False
+    if artifact_type == VOICE_SOURCE:
+        return _bounded_text(record["decision"], 64) and _bounded_text(
+            record["decision_provenance"], 500
+        )
+    if artifact_type == VOICE_PROFILE:
+        if not all(
+            _bounded_text(record[field], limit)
+            for field, limit in (
+                ("language", 64),
+                ("provider", 128),
+                ("emotion", 128),
+                ("consent_provenance", 500),
+                ("profile_provenance", 500),
+            )
+        ):
+            return False
+        if not _within_pronunciation_limits(record["pronunciations"]):
+            return False
+        rate = record["speaking_rate"]
+        return (
+            not isinstance(rate, bool)
+            and isinstance(rate, (int, float))
+            and math.isfinite(rate)
+            and 0 < rate <= 4
+        )
+    if artifact_type == VOICEOVER:
+        return (
+            _bounded_text(record["media_path"], 512)
+            and _bounded_text(record["media_format"], 64)
+            and _bounded_text(record["provenance"], 500)
+            and _within_duration_ceiling(record["duration_ms"])
+        )
+    if artifact_type == VOICE_TIMING:
+        return (
+            _bounded_text(record["timing_kind"], 64)
+            and _within_duration_ceiling(record["duration_ms"])
+            and _within_timing_segment_ceilings(record["segments"])
+            and (
+                "keyword_anchors" not in record
+                or _within_keyword_anchor_ceilings(record["keyword_anchors"])
+            )
+        )
+    return False
+
+
+def _bounded_text(value: Any, maximum: int) -> bool:
+    return isinstance(value, str) and bool(value.strip()) and len(value) <= maximum
+
+
+def _within_duration_ceiling(value: Any) -> bool:
+    return not isinstance(value, bool) and (
+        not isinstance(value, int) or value <= 36_000_000
+    )
+
+
+def _within_pronunciation_limits(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) <= 256
+        and all(_bounded_text(item, 500) for item in value)
+    )
+
+
+def _within_timing_segment_ceilings(value: Any) -> bool:
+    if not isinstance(value, list) or len(value) > 512:
+        return False
+    for segment in value:
+        if not isinstance(segment, Mapping):
+            continue
+        for field, maximum in (("start_ms", 35_999_999), ("end_ms", 36_000_000)):
+            candidate = segment.get(field)
+            if isinstance(candidate, bool) or (
+                isinstance(candidate, int) and candidate > maximum
+            ):
+                return False
+        text = segment.get("text")
+        if isinstance(text, str) and len(text) > 1_000:
+            return False
+    return True
+
+
+def _within_keyword_anchor_ceilings(value: Any) -> bool:
+    if not isinstance(value, list) or len(value) > 512:
+        return False
+    seen: set[str] = set()
+    for anchor in value:
+        if not isinstance(anchor, Mapping) or set(anchor) != {
+            "beat_id", "keyword", "start_ms", "end_ms"
+        }:
+            return False
+        beat_id = anchor["beat_id"]
+        keyword = anchor["keyword"]
+        start = anchor["start_ms"]
+        end = anchor["end_ms"]
+        if (
+            not _safe_id(beat_id)
+            or beat_id in seen
+            or not _bounded_text(keyword, 256)
+            or isinstance(start, bool)
+            or not isinstance(start, int)
+            or isinstance(end, bool)
+            or not isinstance(end, int)
+            or not 0 <= start < end <= 36_000_000
+        ):
+            return False
+        seen.add(beat_id)
+    return True
+
+
 def _safe_id_list(value: Any) -> bool:
-    if not isinstance(value, list) or not all(_safe_id(item) for item in value):
+    if (
+        not isinstance(value, list)
+        or len(value) > 256
+        or not all(_safe_id(item) for item in value)
+    ):
         return False
     return len(value) == len(set(value))
 
@@ -709,6 +841,8 @@ def _validate_timing(
     if voiceover is not None and duration != voiceover.get("duration_ms"):
         _add_issue(issues, "voice-timing-duration-mismatch", timing)
     _validate_segments(timing.get("segments"), duration, timing, issues)
+    if "keyword_anchors" in timing:
+        _validate_keyword_anchors(timing["keyword_anchors"], duration, timing, issues)
 
 
 def _validate_segments(
@@ -743,6 +877,19 @@ def _validate_segments(
             _add_issue(issues, "voice-timing-overlap", timing)
         previous_start = start
         previous_end = end
+
+
+def _validate_keyword_anchors(
+    anchors: Any,
+    duration_ms: int,
+    timing: Mapping[str, Any],
+    issues: list[dict[str, Any]],
+) -> None:
+    if not _within_keyword_anchor_ceilings(anchors):
+        _add_issue(issues, "invalid-voice-timing-anchor", timing)
+        return
+    if any(anchor["end_ms"] > duration_ms for anchor in anchors):
+        _add_issue(issues, "voice-timing-anchor-out-of-bounds", timing)
 
 
 def _valid_uploaded_audio(
@@ -799,11 +946,15 @@ def _load_effective_project_artifacts(root: Path) -> list[dict[str, Any]]:
 
 
 def _safe_project_relative_path(value: Any) -> bool:
-    return _nonempty_text(value) and PROJECT_PATH_RE.fullmatch(value) is not None
+    return (
+        _nonempty_text(value)
+        and len(value) <= 512
+        and PROJECT_PATH_RE.fullmatch(value) is not None
+    )
 
 
 def _safe_id(value: Any) -> bool:
-    return _nonempty_text(value) and SAFE_ID_RE.fullmatch(value) is not None
+    return _nonempty_text(value) and len(value) <= 128 and SAFE_ID_RE.fullmatch(value) is not None
 
 
 def _valid_mode(value: Any) -> bool:

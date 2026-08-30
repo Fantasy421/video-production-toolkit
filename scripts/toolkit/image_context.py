@@ -15,7 +15,7 @@ from pathlib import PurePosixPath
 from typing import Any, Optional
 
 
-SAFE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"
+SAFE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"
 SAFE_ID_RE = re.compile(SAFE_ID_PATTERN)
 
 CONTEXT_REQUIRED_FIELDS = frozenset(
@@ -32,7 +32,6 @@ CONTEXT_OPTIONAL_FIELDS = frozenset({"continuity_exception"})
 MAX_ALLOWED_IMAGE_ARTIFACT_IDS = 16
 MAX_ALLOWED_CHARACTER_PACK_IDS = 8
 MAX_CONTEXT_BUDGET_BYTES = 32_768
-MAX_PERSISTED_RESULT_BYTES = 32_768
 
 INDEPENDENT_CHARACTER_ASSET_TYPES = frozenset(
     {
@@ -351,21 +350,10 @@ def validate_image_result_envelope(
 
 
 def validate_result_envelope(result: Mapping[str, Any]) -> None:
-    """Reject payload leaks and oversized JSON in every persisted task result."""
-    if not isinstance(result, Mapping):
-        raise ValueError("task result must be an object")
-    _reject_leaking_content(result)
-    try:
-        serialized = json.dumps(
-            result,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
-    except (TypeError, ValueError) as error:
-        raise ValueError("task result must be bounded JSON metadata") from error
-    if len(serialized) > MAX_PERSISTED_RESULT_BYTES:
-        raise ValueError("task result exceeds the fixed result budget")
+    """Delegate the universal result boundary to the visual-media runtime."""
+    from .visual_media_context import validate_result_envelope as validate_shared
+
+    validate_shared(result)
 
 
 def validate_image_task_constraints(

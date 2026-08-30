@@ -106,6 +106,8 @@ def install_personal_plugin(
 
     return {
         "plugin_id": plugin_id,
+        "plugin_version": manifest["version"],
+        "release_fingerprint": manifest["release_fingerprint"],
         "plugin_path": str(target),
         "marketplace_path": str(marketplace_path),
         "mode": mode,

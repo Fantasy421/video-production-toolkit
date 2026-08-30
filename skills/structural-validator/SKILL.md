@@ -11,29 +11,61 @@ not perform extended subjective aesthetic critique.
 
 Owned capability: `structure.validate`
 
-Allowed inputs: accept only one claimed task-envelope with capability
-`structure.validate` and declared timeline, contract, and project references.
-Every envelope declares exactly one mode: `image_operation: structure-only`
-for metadata-only validation, or `image_operation: image-inspect` for bounded
-inspection. `image_operation: image-inspect` requires the closed `image_context`;
-`structure-only` must not include image context. The discriminator is never
-omitted or inferred from input paths or output contracts.
+Timing-repair relay: this same isolated child also accepts the coordinator's
+`timing-repair` envelope. This is a delegated timing-only operation, not a
+second owned capability. The envelope must declare `timing_validation_id` in
+`inputs`, name the exact `voice_timing_id`, `timed_semantic_beats_id`, and
+`scene_timing_contracts_id` lineage in both `inputs` and constraints, use
+`output_contract: timing-validation-v1`, and contain only the closed
+`visual_media_operation`, `timing_validation_id`, `voice_timing_id`,
+`timed_semantic_beats_id`, `scene_timing_contracts_id`,
+`minimum_readable_duration_ms`, `affected_beat_ids`, `issue_counts`, and
+`examples` constraint fields. The child validates the compact blocked result
+against freshly derived rows from that exact lineage, repairs timing
+assignments only, and returns a new scene-timing Artifact plus its recomputed
+compact timing-validation Artifact.
 
-All image inspection and image QA are isolated child operations. Each one handles exactly one Scene Contract or one character-asset batch with a closed
-`image_context`. Its closed `scope_identity` names that one scope. Enforce at most 16
-`allowed_image_artifact_ids` and at most 8 `allowed_character_pack_ids`, plus `forbidden_scene_image_access`,
-`max_review_previews`, and a maximum 32,768-byte `context_budget`; the worker must not discover or load undeclared images. Historical scene/storyboard/B-roll/Motion Graphics or
-scene-preview imagery remains forbidden even when it contains the same
-character. Aesthetic acceptance remains a user decision.
-Immediately before every image read or image-tool invocation, resolve the
-declared Artifact metadata and call `authorize_image_access`; a denial is a
-contract error and cannot broaden the context.
+The shipped Draft 2020-12 schemas express the bounded structural subset. The
+runtime task and timing validators are normative for cross-field equality:
+all four lineage IDs must be declared in `inputs`, the relay counts and
+examples must exactly match the selected current validation Artifact, the
+minimum duration must match the recomputation policy, and every example key
+must have a corresponding issue-count key.
+
+Allowed inputs: accept only one claimed task-envelope with capability
+`structure.validate`, or the exact delegated `timing-repair` envelope above,
+and declared timeline, contract, and project references.
+New tasks declare `visual_media_operation`: `none` for structure-only
+validation, or `image-inspect` with the closed `visual_media_context`. The
+active context has one exact `scope_identity` and exact `allowed_artifact_ids`;
+it is never inferred from input paths or output contracts. The image-only fields
+`image_operation`, `image_context`, `allowed_image_artifact_ids`, and
+`allowed_character_pack_ids` are persisted legacy runtime compatibility; workers
+MUST NOT author/use for new tasks.
+
+Visual-media boundary: visual execution is isolated child agent only. A child
+uses one claimed immutable envelope, one exact `scope_identity`, and its exact
+Artifact allowlist; it must not crawl the project or discover neighboring
+scenes. `visual_media_operation: none` is non-visual and needs no child, but
+its result is still scrubbed. Pixel
+inspection, preview dereference, rendering, screenshots, frame extraction,
+contact sheets, and media QA are child-only and return compact
+`visual_media_handoff`.
 
 Required output: Return a task-result envelope with validation artifact IDs,
 objective checks, compact warnings, and blockers or user decision requests.
-For image inspection, return only a compact image handoff of Artifact IDs,
-project-contained paths, structural metadata, stable issue codes, a short
-summary, decision status, and at most the declared review previews. It must not return image bytes, base64/data URLs, or prompt histories.
+For timing validation, read compact timing rows only (Beat IDs, timing
+windows, scene windows, and carrier/layer fields). Never read full narration,
+transcript arrays, audio, visual media, motion source, or prompt history for
+this check. Use the closed timing rule table and return only stable issue codes,
+aggregate counts, and at most three Beat IDs per issue code; do not relay
+verbose diagnostics or full inputs.
+For visual-media inspection, return only compact `visual_media_handoff`
+metadata: Artifact IDs, project-contained paths, structural metadata, stable
+issue codes, a short summary, decision status, and at most the declared review
+previews. Inspection is report-only and must not register a new image or video
+Artifact. It must not return image or video payloads, bytes, base64/data URLs,
+or prompt histories. Aesthetic acceptance remains a user decision.
 
 Stopping conditions: do not mutate the timeline, repair source media, or clear
 a failed validation. Stop when an input is missing, stale, or malformed, and
@@ -41,5 +73,6 @@ return `blocked`; leave subjective findings for the review package.
 
 Follow `../../references/schemas/task-envelope.schema.json`,
 `../../references/schemas/task-result.schema.json`, and
-`../../references/schemas/image-task-context.schema.json`, and
-`../../references/policies/decision-gates.md`.
+`../../references/schemas/visual-media-task-context.schema.json`,
+`../../references/policies/decision-gates.md`, and
+`../../references/policies/visual-media-isolation.md`.

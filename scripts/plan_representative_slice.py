@@ -51,6 +51,8 @@ class RepresentativeSlice(list[str]):
 def select_representative_slice(
     scene_contracts: Sequence[Mapping[str, Any]],
     artifacts: Iterable[Mapping[str, Any]],
+    *,
+    allow_legacy_unresolved_timing: bool = False,
 ) -> RepresentativeSlice:
     """Choose one 10--20 second adjacent range, or an explicit composite sample.
 
@@ -64,7 +66,11 @@ def select_representative_slice(
     bundle = validate_authoritative_voice_bundle(records)
     if not bundle["ok"]:
         raise ValueError("representative slice requires the authoritative voice bundle")
-    contracts = _normalize_contracts(scene_contracts, records)
+    contracts = _normalize_contracts(
+        scene_contracts,
+        records,
+        allow_legacy_unresolved_timing=allow_legacy_unresolved_timing,
+    )
     voice_timing_id = bundle["voice_timing_id"]
     if not contracts:
         return RepresentativeSlice([], (), False, voice_timing_id)
@@ -79,6 +85,8 @@ def select_representative_slice(
 def _normalize_contracts(
     scene_contracts: Sequence[Mapping[str, Any]],
     artifacts: list[dict[str, Any]],
+    *,
+    allow_legacy_unresolved_timing: bool,
 ) -> list[dict[str, Any]]:
     if isinstance(scene_contracts, (str, bytes)) or not isinstance(scene_contracts, Sequence):
         raise ValueError("scene_contracts must be a sequence")
@@ -86,7 +94,11 @@ def _normalize_contracts(
     for contract in scene_contracts:
         if not isinstance(contract, Mapping):
             raise ValueError("scene contract must be a mapping")
-        contract = validate_scene_contract(contract, artifacts=artifacts)
+        contract = validate_scene_contract(
+            contract,
+            artifacts=artifacts,
+            allow_legacy_unresolved_timing=allow_legacy_unresolved_timing,
+        )
         scene_id = contract["scene_id"]
         start, end = contract.get("start_ms"), contract.get("end_ms")
         if isinstance(start, bool) or isinstance(end, bool) or not isinstance(start, int) or not isinstance(end, int) or start < 0 or end <= start:

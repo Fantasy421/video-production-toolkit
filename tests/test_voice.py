@@ -7,7 +7,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from scripts.toolkit import voice
+from jsonschema import Draft202012Validator
+
+from scripts.toolkit import artifacts, voice
 from scripts.toolkit.voice import (
     has_current_voice_lineage,
     probe_audio_duration_ms,
@@ -117,6 +119,7 @@ class VoiceBundleTests(unittest.TestCase):
                 "segments": [
                     {"start_ms": 0, "end_ms": duration_ms, "text": "旁白"}
                 ],
+                "keyword_anchors": [],
             },
         ]
 
@@ -265,6 +268,15 @@ class VoiceBundleTests(unittest.TestCase):
             },
             result,
         )
+
+    def test_legacy_voice_timing_bundle_remains_readable(self):
+        """Catches ordinary voice lineage reads rejecting a pre-anchor record."""
+        artifacts = self.bundle()
+        artifacts[3].pop("keyword_anchors")
+
+        result = validate_voice_bundle(artifacts, "narration-v2")
+
+        self.assertTrue(result["ok"], result)
         self.assertTrue(has_current_voice_lineage(self.bundle(), "narration-v2"))
 
     def test_authoritative_narration_walks_intermediate_artifact_types(self):
@@ -410,6 +422,24 @@ class VoiceBundleTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("invalid-voice-timing-segment", self.codes(result))
 
+    def test_malformed_keyword_anchors_cannot_satisfy_a_closed_contract(self):
+        """Catches timing evidence admitting a forged or ambiguous anchor."""
+        artifacts = self.bundle()
+        artifacts[3]["keyword_anchors"] = [
+            {
+                "beat_id": "B07",
+                "keyword": "旁白",
+                "start_ms": 200,
+                "end_ms": 500,
+                "unexpected": True,
+            }
+        ]
+
+        result = validate_voice_bundle(artifacts, "narration-v2")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("malformed-voice-artifact", self.codes(result))
+
     def test_schema_optional_output_contract_is_checked_at_runtime(self):
         artifacts = self.bundle()
         artifacts[2]["output_contract"] = ""
@@ -549,6 +579,18 @@ class VoiceSchemaTests(unittest.TestCase):
                 self.assertTrue(set(artifact).issubset(schema["properties"]))
                 self.assertEqual(artifact["type"], schema["properties"]["type"]["const"])
 
+    def test_voice_timing_schema_admits_a_readable_pre_anchor_record(self):
+        """Catches the published schema rejecting persisted legacy timing."""
+        timing = VoiceBundleTests().bundle()[-1]
+        timing.pop("keyword_anchors")
+        schema = json.loads(
+            (ROOT / "references/schemas/voice-timing.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertTrue(Draft202012Validator(schema).is_valid(timing))
+
     def test_runtime_patterns_are_the_schema_patterns(self):
         for artifact_type in self.REQUIRED:
             schema = json.loads(
@@ -562,6 +604,67 @@ class VoiceSchemaTests(unittest.TestCase):
                     voice.PROJECT_PATH_PATTERN,
                     schema["$defs"]["projectPath"]["pattern"],
                 )
+
+    def test_voice_and_artifact_boundaries_share_all_persisted_limits(self):
+        """Catches voice records accepted at their boundary but rejected by Artifact storage."""
+        records = VoiceBundleTests().bundle()
+        artifact_schema = json.loads(
+            (ROOT / "references/schemas/artifact.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        artifact_validator = Draft202012Validator(artifact_schema)
+        cases = (
+            (0, {}, True),
+            (1, {}, True),
+            (2, {}, True),
+            (3, {}, True),
+            (0, {"artifact_id": "v" * 129}, False),
+            (0, {"parents": [f"parent-{index}" for index in range(256)]}, True),
+            (0, {"parents": [f"parent-{index}" for index in range(257)]}, False),
+            (1, {"language": "界" * 65}, False),
+            (1, {"provider": "界" * 129}, False),
+            (1, {"emotion": "界" * 129}, False),
+            (1, {"speaking_rate": 4.1}, False),
+            (1, {"pronunciations": [f"读音{index}" for index in range(256)]}, True),
+            (1, {"pronunciations": ["界" * 501]}, False),
+            (1, {"pronunciations": [f"读音{index}" for index in range(257)]}, False),
+            (2, {"output_contract": "界" * 129}, False),
+            (2, {"path": "界" * 509 + ".wav"}, False),
+            (2, {"duration_ms": 36_000_001}, False),
+            (3, {"duration_ms": 36_000_001}, False),
+            (
+                3,
+                {
+                    "segments": [
+                        {
+                            "start_ms": 0,
+                            "end_ms": 36_000_001,
+                            "text": "Narration.",
+                        }
+                    ]
+                },
+                False,
+            ),
+        )
+        for index, updates, expected in cases:
+            record = {**records[index], **updates}
+            voice_schema = json.loads(
+                (ROOT / "references/schemas" / f"{record['type']}.schema.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            runtime_valid = voice._valid_voice_record(record)
+            artifact_runtime_valid = True
+            try:
+                artifacts.validate_artifact_record(record)
+            except ValueError:
+                artifact_runtime_valid = False
+            with self.subTest(type=record["type"], updates=updates):
+                self.assertEqual(expected, Draft202012Validator(voice_schema).is_valid(record))
+                self.assertEqual(expected, artifact_validator.is_valid(record))
+                self.assertEqual(expected, runtime_valid)
+                self.assertEqual(expected, artifact_runtime_valid)
 
 
 if __name__ == "__main__":

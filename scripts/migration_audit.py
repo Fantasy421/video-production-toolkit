@@ -116,9 +116,9 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
             "references/policies/project-assets.md",
         ],
         "rationale": (
-            "Safe paths, exact legacy filename checks, strict PNG structure and alpha "
-            "inspection, neutral action metadata, provenance, and promotion ownership "
-            "move to structural validation."
+            "Safe paths, exact legacy filename checks, neutral action metadata, "
+            "provenance, promotion ownership, and compact isolated image-inspection "
+            "evidence move to metadata-only structural validation."
         ),
     },
     "scripts/validate_router.py": {

@@ -9,6 +9,7 @@ from scripts.toolkit.image_context import (
     compact_image_result,
     validate_result_envelope,
 )
+from tests.encoding_boundary_cases import HARMLESS_PROSE_CONTROL
 
 
 ROOT = Path(__file__).parents[1]
@@ -243,7 +244,7 @@ class ImageContextTests(unittest.TestCase):
 
         harmless = {
             "checks": ["sha512=" + "0123456789abcdef" * 8],
-            "warnings": ["The exporter may mention base64 without embedding payloads."],
+            "warnings": [HARMLESS_PROSE_CONTROL],
         }
         validate_result_envelope(harmless)
 
@@ -318,7 +319,7 @@ class ImageContextTests(unittest.TestCase):
         """Catches hashes or harmless base64 prose being treated as media payloads."""
         cases = (
             {"metadata": {"sha512": "0123456789abcdef" * 8}},
-            {"summary": "The exporter may mention base64, but no payload is present."},
+            {"summary": HARMLESS_PROSE_CONTROL},
             {"metadata": {"digest": "QUJD" * 32}},
         )
         for raw in cases:
@@ -423,6 +424,7 @@ class ImageSchemaTests(unittest.TestCase):
                 "review.package",
                 "captions.produce",
                 "representative-slice.produce",
+                "timing-repair",
             },
             set(envelope["properties"]["capability"]["enum"]),
         )
@@ -456,9 +458,16 @@ class ImageSchemaTests(unittest.TestCase):
             if rule["if"]["properties"]["capability"].get("const")
             == "structure.validate"
         )
+        structure_branches = structure_rule["then"]["properties"]["constraints"][
+            "oneOf"
+        ]
         self.assertEqual(
-            ["image_operation"],
-            structure_rule["then"]["properties"]["constraints"]["required"],
+            {"none", "image-inspect"},
+            set(structure_branches[0]["properties"]["visual_media_operation"]["enum"]),
+        )
+        self.assertEqual(
+            {"structure-only", "image-inspect"},
+            set(structure_branches[1]["properties"]["image_operation"]["enum"]),
         )
         structure_only_rule = next(
             rule

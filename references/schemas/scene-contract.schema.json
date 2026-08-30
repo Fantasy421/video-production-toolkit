@@ -2,14 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Video Production Toolkit Scene Contract",
   "type": "object",
-  "required": ["scene_id", "voice_timing_id", "start_ms", "end_ms", "primary_carrier", "purpose"],
+  "required": ["scene_id", "voice_timing_id", "timed_semantic_beats_id", "scene_timing_contracts_id", "beat_ids", "start_ms", "end_ms", "primary_carrier", "purpose"],
   "properties": {
     "scene_id": {"$ref": "#/$defs/safeId"},
     "voice_timing_id": {"$ref": "#/$defs/safeId"},
+    "timed_semantic_beats_id": {"$ref": "#/$defs/safeId"},
+    "scene_timing_contracts_id": {"$ref": "#/$defs/safeId"},
+    "beat_ids": {"type": "array", "minItems": 1, "maxItems": 512, "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
     "start_ms": {"type": "integer", "minimum": 0},
     "end_ms": {"type": "integer", "minimum": 1},
     "primary_carrier": {"enum": ["a-roll", "b-roll", "scene", "demo", "motion-graphics", "evidence"]},
-    "secondary_layer": {"$ref": "#/$defs/nonEmptyString"},
+    "secondary_layer": {"$ref": "#/$defs/supportLayer"},
     "purpose": {"$ref": "#/$defs/nonEmptyString"},
     "new_character_baseline": {"type": "boolean"},
     "scene_image_generation": {"type": "boolean"},
@@ -19,6 +22,7 @@
   "additionalProperties": false,
   "$defs": {
     "nonEmptyString": {"type": "string", "minLength": 1},
-    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"}
+    "supportLayer": {"type": "string", "enum": ["annotation", "callout", "caption-emphasis", "connection", "label", "number-animation", "progress-state", "subtitle-emphasis"]},
+    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"}
   }
 }

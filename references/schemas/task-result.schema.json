@@ -4,17 +4,108 @@
   "type": "object",
   "required": ["task_id", "status", "inputs", "artifacts", "checks", "warnings", "worker_id", "claim_token"],
   "properties": {
-    "task_id": {"type": "string", "minLength": 1},
+    "task_id": {"$ref": "#/$defs/safeId"},
     "status": {"enum": ["blocked", "waiting_external", "waiting_user", "succeeded", "failed", "cancelled"]},
-    "inputs": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
-    "artifacts": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "inputs": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
+    "artifacts": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
     "checks": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
     "warnings": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
-    "worker_id": {"type": "string", "minLength": 1},
-    "claim_token": {"type": "string", "minLength": 1},
+    "worker_id": {"$ref": "#/$defs/safeId"},
+    "claim_token": {"$ref": "#/$defs/safeId"},
     "error": {"type": "string", "minLength": 1},
     "user_decision_request": {"type": "string", "minLength": 1},
+    "visual_media_handoff": {
+      "type": "object",
+      "required": [
+        "artifact_ids",
+        "paths",
+        "media",
+        "checks",
+        "issues",
+        "summary",
+        "review_preview_path"
+      ],
+      "properties": {
+        "artifact_ids": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/safeId", "maxLength": 128},
+          "uniqueItems": true,
+          "maxItems": 8
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifactPath",
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+          },
+          "uniqueItems": true,
+          "maxItems": 8
+        },
+        "media": {
+          "type": "object",
+          "properties": {
+            "kind": {"type": "string", "enum": ["image", "video", "visual"]},
+            "format": {"type": "string", "minLength": 1, "maxLength": 64},
+            "mime_type": {"type": "string", "minLength": 7, "maxLength": 128, "pattern": "^(?:image|video)/[a-z0-9][a-z0-9!#$&^_.+-]*$"},
+            "width": {"type": "integer", "minimum": 1, "maximum": 16384},
+            "height": {"type": "integer", "minimum": 1, "maximum": 16384},
+            "duration_ms": {"type": "integer", "minimum": 0, "maximum": 36000000},
+            "fps": {"type": "number", "exclusiveMinimum": 0, "maximum": 240},
+            "readiness": {"type": "string", "minLength": 1, "maxLength": 64},
+            "checksum": {"type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[A-Fa-f0-9]{8,128}$"}
+          },
+          "allOf": [
+            {
+              "if": {"properties": {"kind": {"const": "image"}}, "required": ["kind"]},
+              "then": {"properties": {"mime_type": {"pattern": "^image/"}}}
+            },
+            {
+              "if": {"properties": {"kind": {"const": "video"}}, "required": ["kind"]},
+              "then": {"properties": {"mime_type": {"pattern": "^video/"}}}
+            }
+          ],
+          "additionalProperties": false
+        },
+        "checks": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1, "maxLength": 64},
+          "uniqueItems": true,
+          "maxItems": 8
+        },
+        "issues": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": ["code"],
+            "properties": {
+              "code": {"$ref": "#/$defs/safeId", "maxLength": 128},
+              "artifact_id": {"$ref": "#/$defs/safeId", "maxLength": 128},
+              "message": {"type": "string", "minLength": 1, "maxLength": 64},
+              "severity": {"type": "string", "minLength": 1, "maxLength": 64}
+            },
+            "additionalProperties": false
+          }
+        },
+        "summary": {"type": "string", "minLength": 1, "maxLength": 64},
+        "review_preview_path": {
+          "anyOf": [
+            {"type": "null"},
+            {
+              "allOf": [
+                {"$ref": "#/$defs/previewPath"},
+                {"maxLength": 256, "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"}
+              ]
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "image_handoff": {
+      "deprecated": true,
+      "readOnly": true,
       "type": "object",
       "properties": {
         "artifact_ids": {"type": "array", "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
@@ -50,7 +141,7 @@
   ],
   "additionalProperties": false,
   "$defs": {
-    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_:-]*)*$"},
+    "safeId": {"type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"},
     "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\]+$"},
     "artifactPath": {"allOf": [{"$ref": "#/$defs/projectPath"}, {"pattern": "^(?:artifacts|media)/"}]},
     "previewPath": {"allOf": [{"$ref": "#/$defs/projectPath"}, {"pattern": "^previews/"}]},

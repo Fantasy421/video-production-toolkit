@@ -14,16 +14,29 @@ from scripts.toolkit.artifacts import _artifact_paths_by_id, _read_valid_artifac
 from scripts.toolkit.adapters import select_adapter
 from scripts.toolkit.invalidation import invalidated_artifact_ids
 from scripts.toolkit.image_context import (
-    artifact_is_image_bearing,
     compact_image_result,
-    validate_declared_image_inputs,
     validate_image_result_envelope,
     validate_image_task_constraints,
-    validate_media_artifact_metadata,
-    validate_result_envelope,
 )
-from scripts.toolkit.project_state import _state_lock
+from scripts.toolkit.project_state import (
+    V3_PROJECT_SCHEMA_VERSION,
+    _state_lock,
+    replay_events,
+)
 from scripts.toolkit.runtime_paths import project_path, project_root, storage_directory
+from scripts.toolkit.visual_media_context import (
+    SAFE_ID_RE,
+    VISUAL_MEDIA_OPERATIONS,
+    classify_visual_media_artifact,
+    classify_visual_media_task,
+    compact_visual_media_result,
+    project_legacy_image_context,
+    validate_declared_visual_media_inputs,
+    validate_result_envelope,
+    validate_visual_media_context,
+    validate_visual_media_result_envelope,
+    validate_visual_media_operation_outputs,
+)
 from scripts.toolkit.voice import validate_project_authoritative_voice_bundle
 
 
@@ -58,6 +71,7 @@ RESULT_KEYS = {
     "error",
     "user_decision_request",
     "image_handoff",
+    "visual_media_handoff",
 }
 TASK_CAPABILITIES = frozenset(
     {
@@ -74,6 +88,7 @@ TASK_CAPABILITIES = frozenset(
         "review.package",
         "captions.produce",
         "representative-slice.produce",
+        "timing-repair",
     }
 )
 VOICE_TIMING_CAPABILITIES = frozenset(
@@ -89,18 +104,64 @@ VOICE_TIMING_CAPABILITIES = frozenset(
 )
 
 
+def build_timing_repair_envelope(
+    task_id: str,
+    timing_validation_id: str,
+    affected_beat_ids: list[str],
+    validation_result: Mapping[str, Any],
+    *,
+    voice_timing_id: str,
+    timed_semantic_beats_id: str,
+    scene_timing_contracts_id: str,
+    minimum_readable_duration_ms: int = 500,
+) -> dict[str, Any]:
+    """Build the single bounded repair envelope from a compact worker result."""
+    from scripts.toolkit.timing_validation import validate_timing_validation_result
+
+    compact = validate_timing_validation_result(validation_result)
+    if compact["status"] != "blocked":
+        raise ValueError("timing repair requires a blocked timing validation")
+    envelope = {
+        "task_id": task_id,
+        "capability": "timing-repair",
+        "inputs": [
+            timing_validation_id,
+            scene_timing_contracts_id,
+            timed_semantic_beats_id,
+            voice_timing_id,
+        ],
+        "adapter_preferences": ["chatcut"],
+        "output_contract": "timing-validation-v1",
+        "constraints": {
+            "visual_media_operation": "none",
+            "timing_validation_id": timing_validation_id,
+            "voice_timing_id": voice_timing_id,
+            "timed_semantic_beats_id": timed_semantic_beats_id,
+            "scene_timing_contracts_id": scene_timing_contracts_id,
+            "minimum_readable_duration_ms": minimum_readable_duration_ms,
+            "affected_beat_ids": list(affected_beat_ids),
+            "issue_counts": compact["issue_counts"],
+            "examples": compact["examples"],
+        },
+    }
+    _validate_current_envelope(envelope)
+    return envelope
+
+
 def create_task(root: Path, envelope: dict[str, Any]) -> Path:
     """Persist one immutable, schema-shaped task envelope."""
-    _validate_envelope(envelope)
+    _validate_current_envelope(envelope)
     root = project_root(root)
     storage_directory(root, "events", create=True)
     with _state_lock(root, exclusive=False):
         artifacts = _effective_artifacts_by_id(root)
-        if not voice_timing_input_is_current(envelope, artifacts, root=root):
-            raise ValueError("task envelope requires the current real voice_timing_id")
+        if not timing_contract_inputs_are_current(envelope, artifacts, root=root):
+            raise ValueError(
+                "task envelope requires the current real voice_timing_id and timing contracts"
+            )
         if not _artifact_inputs_are_current(envelope, artifacts):
             raise ValueError("task envelope requires current approved inputs")
-        _authorize_declared_image_inputs(envelope, artifacts)
+        _authorize_declared_visual_media_inputs(envelope, artifacts)
         storage_directory(root, "tasks", create=True)
         destination = _task_path(root, envelope["task_id"])
         _publish_immutable_json(destination, _serialize_json(envelope))
@@ -116,7 +177,7 @@ def voice_timing_input_is_current(
     defects (missing, stale, estimated, or mismatched voice lineage) make the
     task ineligible instead of weakening the immutable input contract.
     """
-    _validate_envelope(envelope)
+    _validate_envelope_shape(envelope)
     if envelope["capability"] not in VOICE_TIMING_CAPABILITIES:
         return True
     if root is None:
@@ -139,6 +200,97 @@ def voice_timing_input_is_current(
     )
 
 
+def timing_contract_inputs_are_current(
+    envelope: dict[str, Any], artifacts: Any, *, root: Optional[Path] = None
+) -> bool:
+    """Check the complete timing lineage required by a v3 task.
+
+    V2 tasks retain their historical voice-timing-only contract. V3 formal
+    visual work additionally names the current timed-beat record, and scene,
+    motion, and assembly consumers name the current scene timing contract.
+    """
+    _validate_envelope_shape(envelope)
+    if envelope["capability"] == "timing-repair":
+        from scripts.toolkit.orchestrator import _current_timing_validation
+
+        records = _artifact_values(artifacts)
+        current = _current_timing_validation(
+            envelope,
+            {item["artifact_id"]: item for item in records},
+            root=root,
+        )
+        return (
+            current is not None
+            and current["timing_validation"]["status"] == "blocked"
+        )
+    if root is None or not _is_v3_project(root):
+        return voice_timing_input_is_current(envelope, artifacts, root=root)
+    capability = envelope["capability"]
+    if capability not in VOICE_TIMING_CAPABILITIES:
+        return True
+    records = _artifact_values(artifacts)
+    by_id = {record.get("artifact_id"): record for record in records}
+    if not voice_timing_input_is_current(envelope, records, root=root):
+        return False
+    voice_id = envelope["constraints"].get("voice_timing_id")
+    current_timed = _latest_current_timing(
+        records, "timed-semantic-beats", voice_timing_id=voice_id
+    )
+    timed_id = envelope["constraints"].get("timed_semantic_beats_id")
+    if current_timed is None or timed_id != current_timed.get("artifact_id"):
+        return False
+    if timed_id not in envelope["inputs"] or by_id.get(timed_id) is None:
+        return False
+    scene_consumers = {
+        "scene.produce",
+        "motion.preview",
+        "motion.produce",
+        "timeline.assemble",
+        "captions.produce",
+        "representative-slice.produce",
+    }
+    if capability in scene_consumers:
+        current_scene = _latest_current_timing(
+            records,
+            "scene-timing-contracts",
+            timed_semantic_beats_id=timed_id,
+        )
+        scene_id = envelope["constraints"].get(
+            "scene_timing_contracts_id",
+            envelope["constraints"].get("scene_timing_id"),
+        )
+        if current_scene is None or scene_id != current_scene.get("artifact_id"):
+            return False
+        if scene_id not in envelope["inputs"] or by_id.get(scene_id) is None:
+            return False
+    return True
+
+
+def _is_v3_project(root: Path) -> bool:
+    try:
+        return replay_events(root).get("schema_version") == V3_PROJECT_SCHEMA_VERSION
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _latest_current_timing(
+    records: list[dict[str, Any]], artifact_type: str, **lineage: Any
+) -> Optional[dict[str, Any]]:
+    candidates = [
+        record
+        for record in records
+        if record.get("type") == artifact_type
+        and record.get("status") == "approved"
+        and all(record.get(key) == value for key, value in lineage.items())
+    ]
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda record: (record.get("version", 0), record.get("artifact_id", "")),
+    )
+
+
 def _artifact_values(artifacts: Any) -> list[dict[str, Any]]:
     values = artifacts.values() if isinstance(artifacts, Mapping) else artifacts
     if isinstance(values, (str, bytes)):
@@ -157,7 +309,7 @@ def claim_task(root: Path, task_id: str, worker_id: str) -> dict[str, str]:
     root = project_root(root)
     storage_directory(root, "tasks", create=True)
     _require_safe_id(task_id, "task_id")
-    _require_nonempty_string(worker_id, "worker_id")
+    _require_safe_id(worker_id, "worker_id")
     if not _task_path(root, task_id).is_file():
         raise ValueError(f"task does not exist: {task_id}")
     if _result_path(root, task_id).exists() or _stale_result_path(root, task_id).exists():
@@ -202,17 +354,28 @@ def complete_task(root: Path, result: dict[str, Any]) -> str:
     """Atomically register a terminal success or resumable worker checkpoint."""
     root = project_root(root)
     storage_directory(root, "tasks")
-    _validate_result(result)
     validate_result_envelope(result)
+    _validate_result(result)
     task_id = result["task_id"]
     handle = _hold_claim(_claim_path(root, task_id))
     destination: Optional[Path] = None
     try:
         _require_current_claim(handle, result)
         envelope = _read_envelope(root, task_id)
-        produced_artifacts = _validate_result_artifacts(root, envelope, result)
-        _validate_conditional_image_result(
-            root, envelope, result, produced_artifacts
+        artifacts = _effective_artifacts_by_id(root)
+        declared_classification = _authorize_declared_visual_media_inputs(
+            envelope, artifacts
+        )
+        produced_artifacts = _validate_result_artifacts(envelope, result, artifacts)
+        _validate_timing_repair_completion(
+            root, envelope, result, produced_artifacts, artifacts
+        )
+        _validate_conditional_visual_media_result(
+            envelope,
+            result,
+            produced_artifacts,
+            artifacts,
+            declared_classification,
         )
         if not _is_current_result(root, envelope, result):
             destination = _stale_result_path(root, task_id)
@@ -319,7 +482,15 @@ def active_claim_task_ids(root: Path) -> list[str]:
 def _is_current_result(root: Path, envelope: dict[str, Any], result: dict[str, Any]) -> bool:
     if result["inputs"] != envelope["inputs"]:
         return False
-    return _task_inputs_are_current(root, envelope, _effective_artifacts_by_id(root))
+    artifacts = _effective_artifacts_by_id(root)
+    if envelope["capability"] == "timing-repair":
+        produced_ids = set(result.get("artifacts", []))
+        artifacts = {
+            artifact_id: artifact
+            for artifact_id, artifact in artifacts.items()
+            if artifact_id not in produced_ids
+        }
+    return _task_inputs_are_current(root, envelope, artifacts)
 
 
 def _task_inputs_are_current(
@@ -327,17 +498,37 @@ def _task_inputs_are_current(
     envelope: dict[str, Any],
     artifacts: dict[str, dict[str, Any]],
 ) -> bool:
-    return (
-        voice_timing_input_is_current(envelope, artifacts, root=root)
-        and _artifact_inputs_are_current(envelope, artifacts)
-        and _authorize_declared_image_inputs(envelope, artifacts)
-    )
+    if not timing_contract_inputs_are_current(envelope, artifacts, root=root):
+        return False
+    if not _artifact_inputs_are_current(envelope, artifacts):
+        return False
+    _authorize_declared_visual_media_inputs(envelope, artifacts)
+    return True
 
 
-def _authorize_declared_image_inputs(
+def _authorize_declared_visual_media_inputs(
     envelope: dict[str, Any], artifacts: dict[str, dict[str, Any]]
-) -> bool:
-    return validate_declared_image_inputs(envelope, artifacts)
+) -> str:
+    validate_declared_visual_media_inputs(envelope, artifacts)
+    classification = classify_visual_media_task(envelope, artifacts)
+    constraints = envelope["constraints"]
+    is_legacy = (
+        "image_operation" in constraints or "image_context" in constraints
+    )
+    if (
+        classification == "visual"
+        and not is_legacy
+        and constraints.get("execution_context") != "isolated-child-agent"
+    ):
+        raise ValueError("visual media task requires an isolated child agent")
+    return classification
+
+
+def authorize_declared_visual_media_task(
+    envelope: dict[str, Any], artifacts: dict[str, dict[str, Any]]
+) -> str:
+    """Public shared scope/isolation authorization for readiness and lifecycle."""
+    return _authorize_declared_visual_media_inputs(envelope, artifacts)
 
 
 def _artifact_inputs_are_current(
@@ -366,12 +557,13 @@ def _effective_artifacts_by_id(root: Path) -> dict[str, dict[str, Any]]:
 
 
 def _validate_result_artifacts(
-    root: Path, envelope: dict[str, Any], result: dict[str, Any]
+    envelope: dict[str, Any],
+    result: dict[str, Any],
+    artifacts: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Require every claimed output to be a persisted artifact of the declared contract."""
     if result["status"] == "succeeded" and not result["artifacts"]:
         raise ValueError("a succeeded task must return at least one artifact")
-    artifacts = _artifacts_by_id(root / "artifacts")
     returned: list[dict[str, Any]] = []
     for artifact_id in result["artifacts"]:
         artifact = artifacts.get(artifact_id)
@@ -382,9 +574,155 @@ def _validate_result_artifacts(
                 f"task result artifact {artifact_id} does not satisfy "
                 f"{envelope['output_contract']}"
             )
-        validate_media_artifact_metadata(artifact)
+        if result["status"] == "succeeded":
+            if artifact["status"] != "approved" or _has_newer_approved_lineage(
+                artifact, artifacts
+            ):
+                raise ValueError(
+                    f"task result artifact {artifact_id} must be current approved output"
+                )
+        elif artifact["status"] not in {"draft", "approved"}:
+            raise ValueError(
+                f"resumable task result artifact {artifact_id} must be draft or approved"
+            )
+        classify_visual_media_artifact(artifact)
         returned.append(artifact)
     return returned
+
+
+def _validate_timing_repair_completion(
+    root: Path,
+    envelope: dict[str, Any],
+    result: dict[str, Any],
+    produced_artifacts: list[dict[str, Any]],
+    artifacts: dict[str, dict[str, Any]],
+) -> None:
+    """Require immutable repaired timing authority and recomputed validation."""
+    if envelope["capability"] != "timing-repair" or result["status"] != "succeeded":
+        return
+    from scripts.toolkit.orchestrator import _current_timing_validation
+    from scripts.toolkit.timed_semantic_beats import (
+        validate_timed_semantic_beats_artifact,
+    )
+    from scripts.toolkit.timing_validation import (
+        build_compact_timing_rows,
+        validate_timing_rows,
+        validate_timing_validation_result,
+    )
+
+    produced_ids = {item.get("artifact_id") for item in produced_artifacts}
+    authority_artifacts = {
+        artifact_id: artifact
+        for artifact_id, artifact in artifacts.items()
+        if artifact_id not in produced_ids
+    }
+    current = _current_timing_validation(
+        envelope, authority_artifacts, root=root
+    )
+    if current is None or current["timing_validation"]["status"] != "blocked":
+        raise ValueError("timing-repair requires the current blocked timing validation")
+
+    validation_outputs = [
+        artifact for artifact in produced_artifacts
+        if artifact.get("type") == "timing-validation"
+    ]
+    scene_outputs = [
+        artifact for artifact in produced_artifacts
+        if artifact.get("type") == "scene-timing-contracts"
+    ]
+    timed_outputs = [
+        artifact for artifact in produced_artifacts
+        if artifact.get("type") == "timed-semantic-beats"
+    ]
+    if (
+        len(validation_outputs) != 1
+        or len(scene_outputs) != 1
+        or len(timed_outputs) > 1
+        or len(validation_outputs) + len(scene_outputs) + len(timed_outputs)
+        != len(produced_artifacts)
+    ):
+        raise ValueError(
+            "timing-repair must return one new scene-timing contract and one timing-validation artifact"
+        )
+
+    lineage = current.get("lineage")
+    if not isinstance(lineage, Mapping):
+        raise ValueError("timing-repair current lineage is invalid")
+    selected_scene_id = lineage.get("scene_timing_contracts_id")
+    selected_timed_id = lineage.get("timed_semantic_beats_id")
+    selected_voice_id = lineage.get("voice_timing_id")
+    old_scene = authority_artifacts.get(selected_scene_id)
+    old_timed = authority_artifacts.get(selected_timed_id)
+    voice = authority_artifacts.get(selected_voice_id)
+    semantic = (
+        authority_artifacts.get(old_timed.get("semantic_beats_id"))
+        if isinstance(old_timed, Mapping)
+        else None
+    )
+    if not all(
+        isinstance(value, Mapping)
+        for value in (old_scene, old_timed, voice, semantic)
+    ):
+        raise ValueError("timing-repair current lineage is incomplete")
+    validate_timed_semantic_beats_artifact(old_timed, semantic, voice)
+    minimum = envelope["constraints"]["minimum_readable_duration_ms"]
+    old_rows = build_compact_timing_rows(
+        old_scene,
+        old_timed,
+        current_voice_timing_id=selected_voice_id,
+        current_timed_semantic_beats_id=selected_timed_id,
+    )
+    expected_blocked = validate_timing_rows(
+        old_rows, minimum_readable_duration_ms=minimum
+    )
+    if expected_blocked != current["timing_validation"]:
+        raise ValueError("timing-repair input validation does not match derived current rows")
+
+    repaired_timed = old_timed
+    if timed_outputs:
+        repaired_timed = timed_outputs[0]
+        if (
+            repaired_timed.get("artifact_id") == selected_timed_id
+            or repaired_timed.get("version", 0) <= old_timed.get("version", 0)
+            or repaired_timed.get("semantic_beats_id") != semantic.get("artifact_id")
+            or repaired_timed.get("voice_timing_id") != selected_voice_id
+        ):
+            raise ValueError("timing-repair timed-beat output is not a new exact lineage")
+        validate_timed_semantic_beats_artifact(repaired_timed, semantic, voice)
+
+    repaired_scene = scene_outputs[0]
+    repaired_timed_id = repaired_timed.get("artifact_id")
+    if (
+        repaired_scene.get("artifact_id") == selected_scene_id
+        or repaired_scene.get("version", 0) <= old_scene.get("version", 0)
+        or repaired_scene.get("timed_semantic_beats_id") != repaired_timed_id
+        or repaired_scene.get("parents") != [repaired_timed_id]
+    ):
+        raise ValueError("timing-repair scene output is not a new immutable exact lineage")
+    repaired_rows = build_compact_timing_rows(
+        repaired_scene,
+        repaired_timed,
+        current_voice_timing_id=selected_voice_id,
+        current_timed_semantic_beats_id=repaired_timed_id,
+    )
+    expected_passed = validate_timing_rows(
+        repaired_rows, minimum_readable_duration_ms=minimum
+    )
+    validation = validation_outputs[0]
+    try:
+        compact = validate_timing_validation_result(validation["timing_validation"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("timing-repair output timing validation is invalid") from error
+    if (
+        validation.get("output_contract") != "timing-validation-v1"
+        or validation.get("parents") != [repaired_scene.get("artifact_id")]
+        or validation.get("version", 0) <= current.get("version", 0)
+        or compact != expected_passed
+        or compact.get("status") != "passed"
+    ):
+        raise ValueError(
+            "timing-repair passed validation must exactly match freshly derived repaired rows"
+        )
 
 
 def _compatible_retry_fallback(
@@ -485,7 +823,9 @@ def _read_envelope(root: Path, task_id: str) -> dict[str, Any]:
     if not path.is_file():
         raise ValueError(f"task does not exist: {task_id}")
     envelope = _read_json_object(path, "task envelope")
-    _validate_envelope(envelope)
+    _validate_persisted_envelope(envelope)
+    if envelope["task_id"] != task_id:
+        raise ValueError("persisted task_id does not match its requested task path")
     return envelope
 
 
@@ -681,23 +1021,156 @@ def _read_retry_ledger(path: Path, envelope: dict[str, Any]) -> dict[str, Any]:
     return ledger
 
 
-def _validate_envelope(envelope: dict[str, Any]) -> None:
+def _validate_envelope_shape(envelope: dict[str, Any]) -> None:
     if not isinstance(envelope, dict):
         raise ValueError("task envelope must be an object")
     _reject_unknown_keys(envelope, ENVELOPE_KEYS, "task envelope")
     _require_keys(envelope, ENVELOPE_KEYS, "task envelope")
     _require_safe_id(envelope["task_id"], "task_id")
-    for key in ("capability", "output_contract"):
-        _require_nonempty_string(envelope[key], key)
+    _require_nonempty_string(envelope["capability"], "capability")
+    _require_safe_id(envelope["output_contract"], "output_contract")
     if envelope["capability"] not in TASK_CAPABILITIES:
         raise ValueError("task envelope capability is not recognized")
     _validate_id_list(envelope["inputs"], "inputs")
     _validate_adapters(envelope["adapter_preferences"])
     if not isinstance(envelope["constraints"], dict):
         raise ValueError("constraints must be an object")
-    validate_image_task_constraints(
-        envelope["constraints"], capability=envelope["capability"]
+    if envelope["capability"] == "timing-repair":
+        if envelope["output_contract"] != "timing-validation-v1":
+            raise ValueError("timing-repair output_contract must be timing-validation-v1")
+        _validate_timing_repair_constraints(envelope["constraints"])
+        for field in (
+            "timing_validation_id",
+            "scene_timing_contracts_id",
+            "timed_semantic_beats_id",
+            "voice_timing_id",
+        ):
+            if envelope["constraints"][field] not in envelope["inputs"]:
+                raise ValueError(f"timing-repair must declare {field} as an input")
+
+
+def _validate_current_envelope(envelope: dict[str, Any]) -> None:
+    """Validate a newly minted envelope without granting deprecated authority."""
+    _validate_envelope_shape(envelope)
+    constraints = envelope["constraints"]
+    if "visual_operation" in constraints:
+        raise ValueError("legacy visual authority is read-only")
+    if {"image_operation", "image_context"} & constraints.keys():
+        raise ValueError("legacy image authority is read-only")
+    validate_image_task_constraints(constraints)
+    _validate_current_visual_operation_subset(envelope)
+
+
+def _validate_timing_repair_constraints(constraints: dict[str, Any]) -> None:
+    """Keep the repair relay closed to compact timing metadata only."""
+    from scripts.toolkit.timing_validation import validate_timing_validation_result
+
+    allowed = {
+        "visual_media_operation",
+        "timing_validation_id",
+        "voice_timing_id",
+        "timed_semantic_beats_id",
+        "scene_timing_contracts_id",
+        "minimum_readable_duration_ms",
+        "affected_beat_ids",
+        "issue_counts",
+        "examples",
+    }
+    if set(constraints) - allowed:
+        raise ValueError("timing-repair constraints must be compact and closed")
+    if constraints.get("visual_media_operation") != "none":
+        raise ValueError("timing-repair must be non-visual")
+    _require_safe_id(constraints.get("timing_validation_id"), "timing_validation_id")
+    for field in (
+        "voice_timing_id", "timed_semantic_beats_id", "scene_timing_contracts_id"
+    ):
+        _require_safe_id(constraints.get(field), field)
+    minimum = constraints.get("minimum_readable_duration_ms")
+    if (
+        isinstance(minimum, bool)
+        or not isinstance(minimum, int)
+        or not 0 <= minimum <= 36_000_000
+    ):
+        raise ValueError("timing-repair minimum readable duration is invalid")
+    beat_ids = constraints.get("affected_beat_ids")
+    if not isinstance(beat_ids, list) or not beat_ids or len(beat_ids) > 512:
+        raise ValueError("timing-repair affected Beat IDs are invalid")
+    for beat_id in beat_ids:
+        _require_safe_id(beat_id, "affected_beat_ids")
+    if len(set(beat_ids)) != len(beat_ids):
+        raise ValueError("timing-repair affected Beat IDs must be unique")
+    compact = {
+        "status": "blocked",
+        "checks_run": 0,
+        "issue_counts": constraints.get("issue_counts"),
+        "examples": constraints.get("examples"),
+    }
+    validate_timing_validation_result(compact)
+    for code, ids in compact["examples"].items():
+        if not set(ids).issubset(set(beat_ids)):
+            raise ValueError(f"timing-repair examples must be affected Beat IDs: {code}")
+
+
+def validate_current_task_envelope(envelope: dict[str, Any]) -> None:
+    """Validate one current in-memory candidate without legacy compatibility."""
+    _validate_current_envelope(envelope)
+
+
+def validate_persisted_task_envelope(envelope: dict[str, Any]) -> None:
+    """Validate immutable current or explicitly supported legacy task authority."""
+    _validate_persisted_envelope(envelope)
+
+
+def _validate_persisted_envelope(envelope: dict[str, Any]) -> None:
+    """Validate current records or project already-persisted legacy image records."""
+    _validate_envelope_shape(envelope)
+    constraints = envelope["constraints"]
+    has_current = bool(
+        {"visual_media_operation", "visual_media_context"} & constraints.keys()
     )
+    has_legacy = bool({"image_operation", "image_context"} & constraints.keys())
+    if has_current and (has_legacy or "visual_operation" in constraints):
+        raise ValueError("task must not mix visual media and legacy image authority")
+    if has_current:
+        _validate_current_visual_operation_subset(envelope)
+    validate_image_task_constraints(
+        constraints,
+        capability=(
+            envelope["capability"]
+            if has_legacy
+            or (envelope["capability"] == "structure.validate" and not has_current)
+            else None
+        ),
+    )
+
+
+def _validate_current_visual_operation_subset(envelope: dict[str, Any]) -> None:
+    constraints = envelope["constraints"]
+    operation = constraints.get("visual_media_operation")
+    if operation not in VISUAL_MEDIA_OPERATIONS:
+        raise ValueError("task requires a recognized visual_media_operation")
+    if operation == "none":
+        if "visual_media_context" in constraints:
+            raise ValueError("visual_media_operation none must not include context")
+        if (
+            "execution_context" in constraints
+            and constraints["execution_context"] != "isolated-child-agent"
+        ):
+            raise ValueError("execution_context is not recognized")
+    else:
+        if "visual_media_context" not in constraints:
+            raise ValueError("visual media operation requires visual_media_context")
+        validate_visual_media_context(constraints["visual_media_context"])
+        if constraints.get("execution_context") != "isolated-child-agent":
+            raise ValueError("visual media task requires an isolated child agent")
+    if (
+        envelope["capability"] == "structure.validate"
+        and operation
+        not in {"none", "image-inspect"}
+    ):
+        raise ValueError(
+            "structure.validate visual_media_operation must be none or image-inspect"
+        )
 
 
 def _validate_result(result: dict[str, Any]) -> None:
@@ -715,54 +1188,94 @@ def _validate_result(result: dict[str, Any]) -> None:
     for key in ("inputs", "artifacts", "checks", "warnings"):
         _validate_string_list(result[key], key)
     for key in ("worker_id", "claim_token"):
-        _require_nonempty_string(result[key], key)
+        _require_safe_id(result[key], key)
     for key in ("error", "user_decision_request"):
         if key in result:
             _require_nonempty_string(result[key], key)
 
 
-def _validate_conditional_image_result(
-    root: Path,
+def _validate_conditional_visual_media_result(
     envelope: dict[str, Any],
     result: dict[str, Any],
     produced_artifacts: list[dict[str, Any]],
+    artifacts: dict[str, dict[str, Any]],
+    declared_classification: str,
 ) -> None:
-    image_context = validate_image_task_constraints(
-        envelope["constraints"], capability=envelope["capability"]
+    constraints = envelope["constraints"]
+    has_legacy = "image_operation" in constraints or "image_context" in constraints
+    has_image_handoff = "image_handoff" in result
+    has_visual_handoff = "visual_media_handoff" in result
+    image_handoff = result.get("image_handoff")
+    visual_handoff = result.get("visual_media_handoff")
+    if has_image_handoff and has_visual_handoff:
+        raise ValueError("task result must not mix image_handoff and visual_media_handoff")
+
+    completed_classification = classify_visual_media_task(
+        envelope, artifacts, produced_artifacts
     )
-    operation = envelope["constraints"].get("image_operation")
-    image_artifact_ids = [
-        artifact["artifact_id"]
-        for artifact in produced_artifacts
-        if artifact_is_image_bearing(artifact)
+    if declared_classification == "non-visual" and completed_classification == "visual":
+        raise ValueError("non-visual task cannot return visual media artifacts")
+
+    registered_paths = [artifact["path"] for artifact in produced_artifacts]
+    produced_kinds = [
+        classify_visual_media_artifact(artifact) for artifact in produced_artifacts
     ]
-    if image_artifact_ids and operation not in {"generate", "image-inspect"}:
-        raise ValueError(
-            "image artifacts require a declared image operation and image_context"
+    if has_legacy:
+        image_context = project_legacy_image_context(envelope)
+        if image_context is None:
+            if any(kind != "non-visual" for kind in produced_kinds):
+                raise ValueError(
+                    "legacy non-image task cannot return visual media artifacts"
+                )
+            if has_image_handoff or has_visual_handoff:
+                raise ValueError("non-image legacy task result cannot contain a handoff")
+            return
+        if (
+            result["status"] == "succeeded"
+            and constraints.get("image_operation") == "generate"
+            and "image" not in produced_kinds
+        ):
+            raise ValueError("generate must return at least one image artifact")
+        if any(kind not in {"image", "non-visual"} for kind in produced_kinds):
+            raise ValueError("legacy image task cannot return non-image visual media")
+        if has_visual_handoff:
+            raise ValueError("legacy image task result must use image_handoff")
+        if not has_image_handoff:
+            raise ValueError("legacy image task result requires image_handoff")
+        legacy_context = validate_image_task_constraints(
+            constraints, capability=envelope["capability"]
         )
-    if (
-        result["status"] == "succeeded"
-        and operation == "generate"
-        and not image_artifact_ids
-    ):
-        raise ValueError("generate must return at least one image artifact")
-    handoff = result.get("image_handoff")
-    if image_context is None:
-        if handoff is not None:
-            raise ValueError("non-image task result cannot contain image_handoff")
+        if legacy_context is None:
+            raise ValueError("legacy visual task has no provable image context")
+        validate_image_result_envelope(legacy_context, result)
+        compact = compact_image_result(legacy_context, image_handoff)
+        if compact.get("artifact_ids", []) != result["artifacts"]:
+            raise ValueError("image_handoff artifact_ids must match result artifacts")
+        if "status" in compact and compact["status"] != result["status"]:
+            raise ValueError("image_handoff status must match task result status")
+        if compact.get("paths", []) != registered_paths:
+            raise ValueError("image_handoff contains an undeclared artifact path")
         return
-    if handoff is None:
-        raise ValueError("image task result requires image_handoff")
-    validate_image_result_envelope(image_context, result)
-    compact = compact_image_result(image_context, handoff)
-    if compact.get("artifact_ids", []) != result["artifacts"]:
-        raise ValueError("image_handoff artifact_ids must match result artifacts")
-    if "status" in compact and compact["status"] != result["status"]:
-        raise ValueError("image_handoff status must match task result status")
-    artifacts = _artifacts_by_id(root / "artifacts")
-    registered_paths = [artifacts[artifact_id]["path"] for artifact_id in result["artifacts"]]
-    if compact.get("paths", []) != registered_paths:
-        raise ValueError("image_handoff contains an undeclared artifact path")
+
+    if declared_classification == "non-visual":
+        if has_image_handoff or has_visual_handoff:
+            raise ValueError("non-visual task result cannot contain a visual media handoff")
+        return
+    if has_image_handoff:
+        raise ValueError("new visual media task result must use visual_media_handoff")
+    context = validate_visual_media_context(constraints.get("visual_media_context"))
+    validate_visual_media_result_envelope(context, result)
+    compact = compact_visual_media_result(context, visual_handoff)
+    validate_visual_media_operation_outputs(
+        constraints.get("visual_media_operation"),
+        produced_artifacts,
+        compact,
+        status=result["status"],
+    )
+    if compact["artifact_ids"] != result["artifacts"]:
+        raise ValueError("visual_media_handoff artifact_ids must match result artifacts")
+    if compact["paths"] != registered_paths:
+        raise ValueError("visual_media_handoff contains an undeclared artifact path")
 
 
 def _validate_retry_result(result: dict[str, Any]) -> None:
@@ -813,7 +1326,7 @@ def _require_nonempty_string(value: Any, label: str) -> None:
 
 def _require_safe_id(value: Any, label: str) -> None:
     _require_nonempty_string(value, label)
-    if value in {".", ".."} or "/" in value or "\\" in value:
+    if len(value) > 128 or SAFE_ID_RE.fullmatch(value) is None:
         raise ValueError(f"{label} must be a safe single path component")
 
 

@@ -21,6 +21,14 @@ carries canvas, normalized subject/information/subtitle/platform-safe regions,
 density, and media compatibility. Use the exact kind-specific schemas; a
 generic registry entry is not a substitute.
 
+Visual-media boundary: visual execution is isolated child agent only. A child
+uses one claimed immutable envelope, one exact `scope_identity`, and its exact
+Artifact allowlist; it must not crawl the project or discover neighboring
+scenes. Planning and metadata-only work are non-visual and need no child, but
+their result is still scrubbed. Any pixel inspection, preview dereference,
+render, screenshot, frame extraction, contact sheet, or media QA returns only
+compact `visual_media_handoff`, never media bytes or prompt history.
+
 Required output: Return a task-result envelope with preview and pack artifact
 IDs, objective checks, warnings, and the Visual direction decision request.
 
@@ -33,3 +41,5 @@ Follow `../../references/schemas/task-envelope.schema.json`,
 `../../references/schemas/style-pack.schema.json`,
 `../../references/schemas/layout-pack.schema.json`,
 `../../references/policies/decision-gates.md`, and the registry manifests.
+Follow `../../references/schemas/visual-media-task-context.schema.json` and
+`../../references/policies/visual-media-isolation.md` for visual execution.
