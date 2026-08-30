@@ -40,8 +40,11 @@ into upstream edits. After relaying the manifest, return `waiting_user`; stop
 when structural validation or required approval is missing and return
 `waiting_user` or `blocked` with compact references.
 
-Follow `../../references/schemas/task-envelope.schema.json`,
-`../../references/schemas/task-result.schema.json`, and
-`../../references/schemas/visual-media-task-context.schema.json`,
-`../../references/policies/decision-gates.md`, and
-`../../references/policies/visual-media-isolation.md`.
+## Deterministic contract boundary
+
+Run `python3 scripts/validate_task_packet.py build <envelope.json>` before
+reasoning. Read only emitted metadata and the already compact handoff; never
+open common Schemas, policy bodies, preview media, or full validation logs.
+Return no more than eight checks and warnings, then run
+`python3 scripts/validate_task_packet.py result <result.json>`. Runtime approval,
+path, immutable-result, and visual-isolation validators remain authoritative.

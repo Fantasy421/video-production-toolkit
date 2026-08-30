@@ -26,7 +26,7 @@ from .tasks import (
     _validate_conditional_visual_media_result,
     _validate_envelope_shape,
     _validate_persisted_envelope,
-    _validate_result,
+    _validate_persisted_result,
     _validate_result_artifacts,
 )
 from .timed_semantic_beats import validate_timed_semantic_beats_artifact
@@ -987,7 +987,7 @@ def _check_task_results(
         relative = _relative(root, path)
         try:
             validate_result_envelope(result)
-            _validate_result(result)
+            _validate_persisted_result(result)
             task_id = result["task_id"]
             if (
                 path.name != f"{task_id}.json"

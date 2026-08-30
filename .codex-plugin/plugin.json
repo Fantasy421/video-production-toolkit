@@ -1,8 +1,8 @@
 {
   "id": "video-production-toolkit",
   "name": "video-production-toolkit",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Recoverable, user-directed knowledge-video production workflows",
   "skills": "./skills/",
-  "release_fingerprint": "sha256:e2cbd8ba4577c642c717086051c2f1fca8b830d631e51f5ce06b76a898c24b86"
+  "release_fingerprint": "sha256:0dcec423c80f412a0bd1ae12cd308d535c9202e025297a0231ccc919b84d0b9c"
 }

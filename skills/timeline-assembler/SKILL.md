@@ -42,8 +42,12 @@ Stopping conditions: do not create or revise upstream content, add undeclared
 assets, or export by default. Stop if approved inputs, timing, or the
 Representative slice and final draft gate are missing; return `waiting_user`.
 
-Follow `../../references/schemas/task-envelope.schema.json`,
-`../../references/schemas/task-result.schema.json`, and
-`../../references/schemas/visual-media-task-context.schema.json`,
-`../../references/policies/decision-gates.md`, and
-`../../references/policies/visual-media-isolation.md`.
+## Deterministic contract boundary
+
+Run `python3 scripts/validate_task_packet.py build <envelope.json>` before
+reasoning. Assemble only the declared chapter batch or final compact assembly
+window; never import prior child-agent history. Read only emitted metadata and
+declared Artifact IDs, not common Schemas or policy bodies. Return no more than
+eight checks and warnings, then run
+`python3 scripts/validate_task_packet.py result <result.json>`. Runtime approval,
+timing, immutable-artifact, and visual-isolation validators remain authoritative.

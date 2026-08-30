@@ -40,7 +40,12 @@ Stopping conditions: stop on a missing, stale, conflicting, or unlocked input;
 do not overwrite artifacts or `project.json` directly. Stop at any required
 approval gate and return `waiting_user`.
 
-Follow `../../references/schemas/task-envelope.schema.json`,
-`../../references/schemas/task-result.schema.json`,
-`../../references/policies/decision-gates.md`, and
-`../../references/policies/invalidation.json`.
+## Deterministic contract boundary
+
+Run `python3 scripts/validate_task_packet.py build <envelope.json>` before
+reasoning. Read only the emitted packet and its declared Artifact IDs; do not
+open common Schemas, policy bodies, full histories, or bulk logs. Return no more
+than eight checks and eight warnings of 64 characters each, then run
+`python3 scripts/validate_task_packet.py result <result.json>` before handoff.
+Runtime validators remain authoritative for approvals, invalidation, immutable
+history, recovery, and current-lineage equality.

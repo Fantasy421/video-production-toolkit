@@ -2143,7 +2143,7 @@ class SmokeAndInstallationTests(unittest.TestCase):
 
             self.assertTrue(smoke["ok"], smoke)
             self.assertTrue(verified["ok"], verified)
-            self.assertEqual("0.2.0", smoke["plugin_version"])
+            self.assertEqual("0.3.0", smoke["plugin_version"])
             self.assertEqual(
                 cache.resolve(), Path(smoke["runtime_module_path"]).parents[2]
             )
@@ -2365,7 +2365,7 @@ class SmokeAndInstallationTests(unittest.TestCase):
 
             self.assertTrue(target.is_symlink())
             self.assertEqual(ROOT.resolve(), target.resolve())
-            self.assertEqual("0.2.0", installed.get("plugin_version"))
+            self.assertEqual("0.3.0", installed.get("plugin_version"))
             self.assertEqual(
                 manifest["release_fingerprint"], installed.get("release_fingerprint")
             )
@@ -2464,7 +2464,7 @@ class SmokeAndInstallationTests(unittest.TestCase):
             )
 
             self.assertTrue(smoke["ok"], smoke)
-            self.assertEqual("0.2.0", smoke["plugin_version"])
+            self.assertEqual("0.3.0", smoke["plugin_version"])
             self.assertEqual(
                 cache.resolve(), Path(smoke["runtime_module_path"]).parents[2]
             )

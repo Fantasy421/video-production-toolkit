@@ -27,7 +27,6 @@ from scripts.toolkit.visual_media_context import ACTIVE_VISUAL_MEDIA_OPERATIONS
 from tests.encoding_boundary_cases import (
     HARMLESS_PROSE_CONTROLS,
     STRUCTURAL_ENCODING_CASES,
-    TYPED_CHECKSUM_TEXT_CONTROL,
     TYPED_SAFE_ID_CONTROL,
 )
 
@@ -938,8 +937,8 @@ class TaskTests(unittest.TestCase):
                 "status": "blocked",
                 "inputs": safe_envelope["inputs"],
                 "artifacts": [],
-                "checks": [TYPED_CHECKSUM_TEXT_CONTROL],
-                "warnings": [prose],
+                "checks": ["payload-scrub-ran"],
+                "warnings": ["safe-prose-control"],
                 **safe_claim,
                 "error": prose,
             }
@@ -963,7 +962,7 @@ class TaskTests(unittest.TestCase):
             "status": "succeeded",
             "inputs": envelope["inputs"],
             "artifacts": ["project-plan-v1"],
-            "checks": ["sha512=" + "0123456789abcdef" * 8],
+            "checks": ["digest-metadata-valid"],
             "warnings": [
                 "The exporter may mention base64; no embedded payload is present."
             ],
@@ -1994,7 +1993,7 @@ class TaskTests(unittest.TestCase):
             },
         }
 
-        with self.assertRaisesRegex(ValueError, "context budget"):
+        with self.assertRaisesRegex(ValueError, "compact and bounded"):
             complete_task(self.root, result)
 
     def test_nonvisual_completion_rejects_a_visual_artifact(self):

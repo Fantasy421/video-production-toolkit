@@ -1,0 +1,19 @@
+{
+  "source_commit": "13b9402",
+  "estimator": "utf8-bytes-ceil-div-4-v1",
+  "common_reference_bytes": 21957,
+  "common_reference_estimated_tokens": 5490,
+  "skills": [
+    {"skill": "motion-director", "bytes": 35800, "estimated_tokens": 8950},
+    {"skill": "narration-planner", "bytes": 23809, "estimated_tokens": 5953},
+    {"skill": "scene-producer", "bytes": 33326, "estimated_tokens": 8332},
+    {"skill": "storyboard-director", "bytes": 33521, "estimated_tokens": 8381},
+    {"skill": "structural-validator", "bytes": 33904, "estimated_tokens": 8476},
+    {"skill": "timeline-assembler", "bytes": 31770, "estimated_tokens": 7943},
+    {"skill": "video-director", "bytes": 31073, "estimated_tokens": 7769},
+    {"skill": "video-project-manager", "bytes": 26918, "estimated_tokens": 6730},
+    {"skill": "video-review-packager", "bytes": 31895, "estimated_tokens": 7974},
+    {"skill": "visual-system-designer", "bytes": 35815, "estimated_tokens": 8954},
+    {"skill": "voiceover-producer", "bytes": 36647, "estimated_tokens": 9162}
+  ]
+}

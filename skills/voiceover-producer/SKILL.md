@@ -61,11 +61,12 @@ Success and result:
   Return `succeeded` only after all three output Artifacts are published and
   structurally valid; do not fabricate duration or estimated timing.
 
-Follow `../../references/schemas/task-envelope.schema.json`,
-`../../references/schemas/task-result.schema.json`,
-`../../references/schemas/voice-source-decision.schema.json`,
-`../../references/schemas/voice-profile.schema.json`,
-`../../references/schemas/voiceover.schema.json`,
-`../../references/schemas/voice-timing.schema.json`, and
-`../../references/schemas/timed-semantic-beats.schema.json`,
-`../../references/policies/decision-gates.md`.
+## Deterministic contract boundary
+
+Run `python3 scripts/validate_task_packet.py build <envelope.json>` before
+reasoning. Read only emitted metadata and exact declared voice Artifact IDs;
+never open common Schemas, policy bodies, unrelated narration, or historical
+audio. Return no more than eight checks and warnings, then run
+`python3 scripts/validate_task_packet.py result <result.json>`. Runtime consent,
+source/profile approval, duration, lineage, immutable-artifact, and real-timing
+validators remain authoritative.

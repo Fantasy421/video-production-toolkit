@@ -36,10 +36,11 @@ Stopping conditions: do not use unapproved content, generate full production
 media, or read recipe bodies or bulk logs. Stop after the preview until the
 Visual direction gate has a scoped approval; return `waiting_user`.
 
-Follow `../../references/schemas/task-envelope.schema.json`,
-`../../references/schemas/task-result.schema.json`,
-`../../references/schemas/style-pack.schema.json`,
-`../../references/schemas/layout-pack.schema.json`,
-`../../references/policies/decision-gates.md`, and the registry manifests.
-Follow `../../references/schemas/visual-media-task-context.schema.json` and
-`../../references/policies/visual-media-isolation.md` for visual execution.
+## Deterministic contract boundary
+
+Run `python3 scripts/validate_task_packet.py build <envelope.json>` before
+reasoning. Read only emitted metadata, declared compact registry entries, and
+exact visual authority; never open common Schemas, policy bodies, or unrelated
+recipe bodies. Return no more than eight checks and warnings, then run
+`python3 scripts/validate_task_packet.py result <result.json>`. Runtime approval,
+pack, registry, and visual-isolation validators remain authoritative.

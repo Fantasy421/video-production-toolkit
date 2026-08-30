@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 
-PLUGIN_VERSION = "0.2.0"
+PLUGIN_VERSION = "0.3.0"
 VOICE_MEDIA_FORMATS = ["wav", "mp3", "m4a", "aac", "flac"]
 VOICE_DURATION_PROBE = {
     "wav": "stdlib-wave-header",
@@ -26,6 +26,7 @@ VISUAL_MEDIA_OPERATIONS = [
 ]
 VISUAL_MEDIA_SCOPE_KINDS = [
     "scene-contract",
+    "scene-batch",
     "character-asset-batch",
     "review-batch",
 ]
@@ -151,6 +152,13 @@ STRUCTURE_VISUAL_AUTHORITY = {
 VISUAL_MEDIA_SCOPE_MAPPING = [
     {
         "if": {
+            "properties": {"kind": {"const": "scene-batch"}},
+            "required": ["kind"],
+        },
+        "then": {"properties": {"id": {"$ref": "#/$defs/sceneBatchIds"}}},
+    },
+    {
+        "if": {
             "properties": {
                 "kind": {"enum": ["scene-contract", "character-asset-batch"]}
             },
@@ -173,7 +181,9 @@ REQUIRED_FILES = (
     "assets/project-template/review-pack/index.html",
     "previews/styles/editorial-clean-v1.html",
     "previews/layouts/talking-head-left-explainer-right-v1.html",
+    "docs/migration/compact-task-packets-v0.3.0.md",
     "references/policies/decision-gates.md",
+    "references/policies/context-budget-baseline.json",
     "references/policies/invalidation.json",
     "references/policies/narration-and-coverage.md",
     "references/policies/project-assets.md",
@@ -201,14 +211,19 @@ REQUIRED_FILES = (
     "registries/styles/editorial-clean/v1/manifest.json",
     "registries/layouts/talking-head-left-explainer-right/v1/manifest.json",
     "scripts/build_review_pack.py",
+    "scripts/context_budget.py",
     "scripts/install_personal_plugin.py",
     "scripts/migration_audit.py",
     "scripts/plan_representative_slice.py",
+    "scripts/plan_scene_batches.py",
     "scripts/retire_legacy_skill.py",
     "scripts/validate_package.py",
+    "scripts/validate_media_batch.py",
+    "scripts/validate_task_packet.py",
     "scripts/verify_installation.py",
     "scripts/toolkit/adapters.py",
     "scripts/toolkit/artifacts.py",
+    "scripts/toolkit/batch_media_validation.py",
     "scripts/toolkit/contracts.py",
     "scripts/toolkit/coverage.py",
     "scripts/toolkit/image_context.py",
@@ -217,7 +232,9 @@ REQUIRED_FILES = (
     "scripts/toolkit/project_state.py",
     "scripts/toolkit/semantic_beats.py",
     "scripts/toolkit/scene_timing.py",
+    "scripts/toolkit/scene_batches.py",
     "scripts/toolkit/tasks.py",
+    "scripts/toolkit/task_packets.py",
     "scripts/toolkit/timed_semantic_beats.py",
     "scripts/toolkit/timing_validation.py",
     "scripts/toolkit/validation.py",
@@ -238,6 +255,8 @@ REQUIRED_FILES = (
     "tests/test_end_to_end.py",
     "tests/encoding_boundary_cases.py",
     "tests/test_artifacts.py",
+    "tests/test_batch_media_validation.py",
+    "tests/test_context_budget.py",
     "tests/test_image_context.py",
     "tests/test_invalidation.py",
     "tests/test_package.py",
@@ -247,7 +266,9 @@ REQUIRED_FILES = (
     "tests/test_semantic_beats.py",
     "tests/test_skill_contracts.py",
     "tests/test_scene_timing.py",
+    "tests/test_scene_batches.py",
     "tests/test_tasks.py",
+    "tests/test_task_packets.py",
     "tests/test_timed_semantic_beats.py",
     "tests/test_timing_validation.py",
     "tests/test_validation.py",
@@ -798,6 +819,14 @@ def _validate_visual_media_schema(
         "maxItems": 8,
     }:
         errors.append("invalid:visual-media-review-scope-limit")
+    if definitions.get("sceneBatchIds") != {
+        "type": "array",
+        "items": {"$ref": "#/$defs/safeId"},
+        "uniqueItems": True,
+        "minItems": 1,
+        "maxItems": 6,
+    }:
+        errors.append("invalid:visual-media-scene-batch-limit")
     if properties.get("historical_access") != {"const": "character-only"}:
         errors.append("invalid:visual-media-historical-access")
     if properties.get("max_review_previews") != {
@@ -929,6 +958,17 @@ def _validate_task_result_schema(
     schema: Mapping[str, Any], errors: list[str]
 ) -> None:
     properties = _mapping(schema.get("properties"))
+    bounded_summary = {
+        "type": "array",
+        "items": {"type": "string", "minLength": 1, "maxLength": 64},
+        "uniqueItems": True,
+        "maxItems": 8,
+    }
+    if (
+        properties.get("checks") != bounded_summary
+        or properties.get("warnings") != bounded_summary
+    ):
+        errors.append("invalid:task-result-summary-budget")
     handoff = _mapping(properties.get("visual_media_handoff"))
     handoff_properties = _mapping(handoff.get("properties"))
     media = _mapping(handoff_properties.get("media"))
