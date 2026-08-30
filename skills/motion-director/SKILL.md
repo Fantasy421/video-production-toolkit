@@ -40,6 +40,12 @@ Required output: Return a task-result envelope deterministically: preview return
 `succeeded`, `waiting_external`, `waiting_user`, `blocked`, or `failed`
 with delegated artifact IDs, checks, and compact warnings.
 
+Timing boundary: consume only assigned Beat IDs/windows: the Beat IDs and their contracted
+`visual_window_ms`/`scene_window_ms` values. Do not reread the narration,
+transcript, neighboring scenes, or detailed validation diagnostics; do not
+estimate, widen, or retime a voice window. A timing failure is returned as a
+compact issue code for the owning repair route.
+
 Stopping conditions: do not generate unrelated media, fan out a shot, or use an
 undeclared adapter. Stop when either operation lacks its stated approval and
 return `waiting_user`.

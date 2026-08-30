@@ -32,6 +32,12 @@ contact sheets, and media QA are child-only and return compact
 
 Required output: Return a task-result envelope with validation artifact IDs,
 objective checks, compact warnings, and blockers or user decision requests.
+For timing validation, read compact timing rows only (Beat IDs, timing
+windows, scene windows, and carrier/layer fields). Never read full narration,
+transcript arrays, audio, visual media, motion source, or prompt history for
+this check. Use the closed timing rule table and return only stable issue codes,
+aggregate counts, and at most three Beat IDs per issue code; do not relay
+verbose diagnostics or full inputs.
 For visual-media inspection, return only compact `visual_media_handoff`
 metadata: Artifact IDs, project-contained paths, structural metadata, stable
 issue codes, a short summary, decision status, and at most the declared review

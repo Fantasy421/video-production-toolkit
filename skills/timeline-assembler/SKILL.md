@@ -31,6 +31,13 @@ Required output: Return a task-result envelope with editable timeline artifact
 IDs, objective placement checks, warnings, and an explicit blocker or decision
 request.
 
+Timing boundary: assemble only the assigned Beat IDs and approved timing
+windows. Read compact timing-validation status, counts, and bounded examples;
+report its stable issue codes instead of retiming when a contract cannot be
+satisfied. Do not
+silently stretch narration, widen a visual window, or retime a scene to hide a
+timing conflict; timing repair belongs to the owning upstream task.
+
 Stopping conditions: do not create or revise upstream content, add undeclared
 assets, or export by default. Stop if approved inputs, timing, or the
 Representative slice and final draft gate are missing; return `waiting_user`.
