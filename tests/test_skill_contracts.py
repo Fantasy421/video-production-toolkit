@@ -165,6 +165,61 @@ class SkillContractTests(unittest.TestCase):
             with self.subTest(prohibition=prohibition):
                 self.assertIn(prohibition, normalized)
 
+    def test_video_director_enforces_v3_timing_gate_and_compact_repair_routing(self):
+        """Catches formal storyboard work bypassing real voice timing or leaking diagnostics."""
+        text = (ROOT / "skills/video-director/SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+
+        gate = text.index("## Voice-timed production gate")
+        routing = text.index("## Routing")
+        self.assertLess(gate, routing)
+        for requirement in (
+            "formal `storyboard.plan` is legal only at `timing_bound`",
+            "untimed `visual.preview`",
+            "never load `timing-validation` detail paths",
+            "at most three Beat IDs per issue code",
+            "one `timing-repair` task",
+            "affected Beat IDs",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, normalized)
+
+    def test_project_manager_preserves_v3_timing_artifact_states_and_compact_surface(self):
+        """Catches recovery documentation falling back to legacy timing or verbose payloads."""
+        text = (ROOT / "skills/video-project-manager/SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+        for token in (
+            "`semantic-beats`",
+            "`timed-semantic-beats`",
+            "`scene-timing-contracts`",
+            "`timing-validation`",
+            "`timing_bound`",
+            "`storyboard_timed`",
+            "`production_ready`",
+            "at most three Beat IDs per issue code",
+            "never load detailed timing diagnostics",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, normalized)
+
+    def test_narration_coverage_policy_defines_compact_timing_coordinator_boundary(self):
+        """Catches workers estimating timing, rewriting keywords, or exposing full inputs."""
+        text = (ROOT / "references/policies/narration-and-coverage.md").read_text(
+            encoding="utf-8"
+        )
+        normalized = " ".join(text.split())
+        for requirement in (
+            "## Coordinator timing boundary",
+            "never estimate timing",
+            "never change approved keywords",
+            "never read full narration",
+            "never expand detailed diagnostics",
+            "one timing-repair task",
+            "at most three Beat IDs per issue code",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, normalized)
+
     def test_all_visual_workers_require_isolated_child_execution(self):
         """Catches a visual worker escaping its one immutable media scope."""
         workers = (

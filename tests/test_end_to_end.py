@@ -20,10 +20,12 @@ from scripts.retire_legacy_skill import (
 )
 from scripts.toolkit.artifacts import approve_artifact, create_artifact
 from scripts.toolkit.orchestrator import (
+    _capability_is_legal_in_phase,
     calculate_ready_tasks,
     invalidate_artifact_descendants,
     resume_project,
 )
+from scripts.toolkit.invalidation import invalidate_descendants
 from scripts.toolkit.project_state import (
     LEGACY_PHASES,
     PHASES,
@@ -31,6 +33,7 @@ from scripts.toolkit.project_state import (
     initialize_project,
 )
 from scripts.toolkit.tasks import claim_task, complete_task, create_task
+from scripts.toolkit.timing_validation import validate_timing_rows
 from scripts.validate_package import _release_fingerprint
 from scripts.verify_installation import (
     _candidate as smoke_candidate,
@@ -553,6 +556,105 @@ class SmokeFixtureMetadataTests(unittest.TestCase):
                 [screenshot],
                 [],
             )
+
+
+class V3CoordinatorTimingTests(unittest.TestCase):
+    """Exercise the coordinator's metadata-only voice-timing boundaries."""
+
+    @staticmethod
+    def timing_row(beat_id, *, timing_kind="real", visual_window=None):
+        return {
+            "beat_id": beat_id,
+            "scene_id": "S01",
+            "keyword_anchor_ms": [1_000, 1_200],
+            "visual_window_ms": visual_window or [880, 1_400],
+            "scene_window_ms": [0, 2_000],
+            "primary_carrier": "motion-graphics",
+            "support_layer": "caption-emphasis",
+            "timing_kind": timing_kind,
+        }
+
+    def test_v3_workflow_blocks_estimated_storyboards_and_accepts_real_timing(self):
+        """Catches formal storyboard routing from estimates or a pre-timing phase."""
+        storyboard = candidate(
+            "storyboard-v3",
+            "storyboard.plan",
+            ["semantic-beats-v1", "timed-semantic-beats-v1"],
+            "visual-direction",
+            "style-v1",
+            voice_timing_id="voice-timing-v1",
+            timed_semantic_beats_id="timed-semantic-beats-v1",
+        )
+
+        self.assertFalse(_capability_is_legal_in_phase(storyboard, "voiceover_ready"))
+        self.assertTrue(_capability_is_legal_in_phase(storyboard, "timing_bound"))
+
+        estimated = validate_timing_rows(
+            [self.timing_row("B01", timing_kind="estimated")],
+            minimum_readable_duration_ms=500,
+        )
+        self.assertEqual("blocked", estimated["status"])
+        self.assertIn("VOICE_TIMING_REQUIRED", estimated["issue_counts"])
+
+        real = validate_timing_rows(
+            [self.timing_row("B01")], minimum_readable_duration_ms=500
+        )
+        self.assertEqual("passed", real["status"])
+
+    def test_changed_voice_timing_invalidates_all_downstream_contracts(self):
+        """Catches a voice revision leaving timed beats or scene contracts current."""
+        artifacts = [
+            {"artifact_id": "voice-timing-v1", "type": "voice-timing", "parents": []},
+            {
+                "artifact_id": "timed-semantic-beats-v1",
+                "type": "timed-semantic-beats",
+                "parents": ["voice-timing-v1"],
+            },
+            {
+                "artifact_id": "scene-timing-contracts-v1",
+                "type": "scene-timing-contracts",
+                "parents": ["timed-semantic-beats-v1"],
+            },
+            {
+                "artifact_id": "storyboard-v1",
+                "type": "storyboard",
+                "parents": ["scene-timing-contracts-v1"],
+            },
+            {
+                "artifact_id": "scene-contract-v1",
+                "type": "scene-contract",
+                "parents": ["storyboard-v1"],
+            },
+        ]
+        self.assertEqual(
+            {
+                "timed-semantic-beats-v1",
+                "scene-timing-contracts-v1",
+                "storyboard-v1",
+                "scene-contract-v1",
+            },
+            invalidate_descendants(artifacts, "voice-timing-v1", SHIPPED_INVALIDATION),
+        )
+
+    def test_compact_timing_review_exposes_three_examples_per_issue_code(self):
+        """Catches coordinator context growth from detailed timing diagnostics."""
+        rows = [
+            self.timing_row(
+                f"B{index:02d}", visual_window=[1_050, 1_400]
+            )
+            for index in range(1, 8)
+        ]
+        result = validate_timing_rows(rows, minimum_readable_duration_ms=500)
+
+        self.assertEqual("blocked", result["status"])
+        self.assertEqual(7, result["issue_counts"]["VISUAL_BEFORE_ALLOWED_WINDOW"])
+        self.assertEqual(
+            ["B01", "B02", "B03"],
+            result["examples"]["VISUAL_BEFORE_ALLOWED_WINDOW"],
+        )
+        self.assertTrue(
+            all(len(beat_ids) <= 3 for beat_ids in result["examples"].values())
+        )
 
 
 class CoordinatorTests(unittest.TestCase):

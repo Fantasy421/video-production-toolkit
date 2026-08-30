@@ -30,3 +30,16 @@ stable code, and repairable fields such as `beat_id` or an uncovered interval.
 It performs no file I/O and never changes artifact status. The structural
 validator or its task worker persists a new validation artifact and returns its
 ID through the task-result envelope.
+
+## Coordinator timing boundary
+
+The coordinator routes the v3 lineage through `timing_bound` and consumes only
+the compact `timing-validation` result. Downstream workers must never estimate
+timing, never change approved keywords, and never read full narration to
+validate a timing window. The coordinator must never expand detailed
+diagnostics or load their detail paths into context; it relays status,
+aggregate issue counts, and at most three Beat IDs per issue code. Missing
+keyword timing routes one timing-repair task for the affected Beat IDs, then
+stops until the current result is available. A timing revision invalidates
+downstream `timed-semantic-beats`, `scene-timing-contracts`, and production
+Artifacts without rewriting immutable history.

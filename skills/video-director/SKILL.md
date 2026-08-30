@@ -19,6 +19,19 @@ issue codes, summary, decision status, and one declared review-preview path.
 Audio-only work is excluded from this visual-media rule. Follow
 `../../references/policies/visual-media-isolation.md`.
 
+## Voice-timed production gate
+
+For schema-version-three projects, formal `storyboard.plan` is legal only at
+`timing_bound`, after the current real `voice-timing` and
+`timed-semantic-beats` are present. Before that gate, the only visual route is
+an untimed `visual.preview` at `semantic_beats_confirmed` or
+`visual_direction_previewed`; a preview never authorizes formal storyboard,
+scene, motion, or assembly work. The coordinator must never load
+`timing-validation` detail paths. Relay only compact status, aggregate counts,
+and at most three Beat IDs per issue code. If keyword timing is missing, route
+one `timing-repair` task for the affected Beat IDs and stop until its current
+result is available.
+
 ## Routing
 
 For a Chinese talking-head and tutorial knowledge-video request about a topic,
