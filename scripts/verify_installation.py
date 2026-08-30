@@ -1193,25 +1193,33 @@ def _run_resume_scenario(
         )
         for item in voice_artifacts:
             create_artifact(project, item)
+        semantic_record = {
+            "narration_id": "narration-v1",
+            "beats": [
+                {
+                    "beat_id": "B01",
+                    "text_ref": "narration-v1:S01:L1",
+                    "keyword": "timing",
+                    "intent": "core-concept-emphasis",
+                    "priority": "primary",
+                    "preferred_carrier": "motion-graphics",
+                    "approval_provenance": "user:smoke-keyword-review-v1",
+                }
+            ],
+        }
         create_artifact(
             project,
             _artifact(
                 "semantic-beats-v1",
                 "semantic-beats",
                 parents=["narration-v1"],
-                narration_id="narration-v1",
-                beats=[
-                    {
-                        "beat_id": "B01",
-                        "text_ref": "narration-v1:S01:L1",
-                        "keyword": "timing",
-                        "intent": "core-concept-emphasis",
-                        "priority": "primary",
-                        "preferred_carrier": "motion-graphics",
-                        "approval_provenance": "user:smoke-keyword-review-v1",
-                    }
-                ],
+                **semantic_record,
             ),
+        )
+        exact_timed = bind_semantic_beats(
+            semantic_record,
+            voice_artifacts[-1],
+            voice_artifacts[-1]["keyword_anchors"],
         )
         create_artifact(
             project,
@@ -1220,20 +1228,7 @@ def _run_resume_scenario(
                 "timed-semantic-beats",
                 parents=["semantic-beats-v1", "voice-timing-v1"],
                 semantic_beats_id="semantic-beats-v1",
-                voice_timing_id="voice-timing-v1",
-                timing_kind="real",
-                beats=[
-                    {
-                        "beat_id": "B01",
-                        "speech_start_ms": 0,
-                        "speech_end_ms": 5000,
-                        "keyword_start_ms": 1000,
-                        "keyword_end_ms": 2000,
-                        "emphasis_ms": 1500,
-                        "visual_window_ms": [800, 3000],
-                        "approved_anchor_commitment": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-                    }
-                ],
+                **exact_timed,
             ),
         )
         approve_artifact(
@@ -1370,7 +1365,12 @@ def _run_resume_scenario(
             timing_kind="real",
             duration_ms=voice_timing_duration_ms,
             segments=_timing_segments(voice_timing_duration_ms),
-            keyword_anchors=[],
+            keyword_anchors=[
+                {
+                    "beat_id": "B01", "keyword": "timing",
+                    "start_ms": 1000, "end_ms": 2000,
+                }
+            ],
         )
         create_artifact(project, voice_timing_v2)
         declared_descendants = sorted(
@@ -1883,7 +1883,12 @@ def _voice_bundle(
             timing_kind="real",
             duration_ms=voice_timing_duration_ms,
             segments=_timing_segments(voice_timing_duration_ms),
-            keyword_anchors=[],
+            keyword_anchors=[
+                {
+                    "beat_id": "B01", "keyword": "timing",
+                    "start_ms": 1000, "end_ms": 2000,
+                }
+            ],
         ),
     ]
 

@@ -12,7 +12,7 @@
     "start_ms": {"type": "integer", "minimum": 0},
     "end_ms": {"type": "integer", "minimum": 1},
     "primary_carrier": {"enum": ["a-roll", "b-roll", "scene", "demo", "motion-graphics", "evidence"]},
-    "secondary_layer": {"$ref": "#/$defs/nonEmptyString"},
+    "secondary_layer": {"$ref": "#/$defs/supportLayer"},
     "purpose": {"$ref": "#/$defs/nonEmptyString"},
     "new_character_baseline": {"type": "boolean"},
     "scene_image_generation": {"type": "boolean"},
@@ -22,6 +22,7 @@
   "additionalProperties": false,
   "$defs": {
     "nonEmptyString": {"type": "string", "minLength": 1},
+    "supportLayer": {"type": "string", "enum": ["annotation", "callout", "caption-emphasis", "connection", "label", "number-animation", "progress-state", "subtitle-emphasis"]},
     "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"}
   }
 }

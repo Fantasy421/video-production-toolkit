@@ -91,6 +91,7 @@ def validate_timed_semantic_beats(
     timing, segments = _current_real_timing(
         voice_timing, require_keyword_anchors=True
     )
+    anchors = _approved_anchors(timing["keyword_anchors"], semantic)
     if not isinstance(record, Mapping) or set(record) != _RECORD_FIELDS:
         raise ValueError("timed semantic beats must be a closed record")
     normalized = dict(record)
@@ -114,13 +115,81 @@ def validate_timed_semantic_beats(
         if not isinstance(beat_id, str) or beat_id not in by_id or beat_id in seen:
             raise ValueError("timed semantic beats must preserve frozen beat IDs")
         seen.add(beat_id)
-        _validate_beat(beat, semantic, segments, timing["duration_ms"])
+        _validate_beat(
+            beat,
+            semantic,
+            segments,
+            timing["duration_ms"],
+            anchors[beat_id],
+        )
         frozen.append(beat)
     return {
         "voice_timing_id": timing["artifact_id"],
         "timing_kind": "real",
         "beats": frozen,
     }
+
+
+def validate_timed_semantic_beats_artifact(
+    artifact: Mapping[str, Any],
+    semantic_artifact: Mapping[str, Any],
+    voice_timing: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate one persisted timed record against its exact authority DAG.
+
+    Structural commitments are not independent authority.  The canonical
+    record is recomputed from the frozen semantic Artifact and the exact
+    keyword anchors on its real voice-timing parent, then compared byte-for-
+    byte at the compact-record boundary.
+    """
+    if not all(isinstance(value, Mapping) for value in (
+        artifact,
+        semantic_artifact,
+        voice_timing,
+    )):
+        raise ValueError("timed semantic artifact authority requires mapping records")
+    timed = dict(artifact)
+    semantic = dict(semantic_artifact)
+    timing = dict(voice_timing)
+    for value in (timed, semantic, timing):
+        validate_artifact_record(value)
+    if (
+        timed.get("type") != "timed-semantic-beats"
+        or semantic.get("type") != "semantic-beats"
+        or semantic.get("status") != "approved"
+        or timing.get("type") != "voice-timing"
+        or timing.get("status") != "approved"
+        or timing.get("timing_kind") != "real"
+    ):
+        raise ValueError("timed semantic artifact requires approved semantic and real timing authority")
+    semantic_id = semantic.get("artifact_id")
+    voice_id = timing.get("artifact_id")
+    if (
+        timed.get("semantic_beats_id") != semantic_id
+        or timed.get("voice_timing_id") != voice_id
+        or timed.get("parents") != [semantic_id, voice_id]
+        or semantic.get("parents") != [semantic.get("narration_id")]
+        or timing.get("parents") != [timing.get("voiceover_id")]
+    ):
+        raise ValueError("timed semantic artifact parents must exactly match its authority DAG")
+    semantic_record = {
+        "narration_id": semantic["narration_id"],
+        "beats": semantic["beats"],
+    }
+    compact = {
+        "voice_timing_id": timed["voice_timing_id"],
+        "timing_kind": timed["timing_kind"],
+        "beats": timed["beats"],
+    }
+    validated = validate_timed_semantic_beats(compact, semantic_record, timing)
+    expected = bind_semantic_beats(
+        semantic_record,
+        timing,
+        timing["keyword_anchors"],
+    )
+    if validated != expected:
+        raise ValueError("timed semantic artifact must equal the recomputed authoritative record")
+    return timed
 
 
 def _current_real_timing(
@@ -193,6 +262,7 @@ def _validate_beat(
     semantic: dict[str, Any],
     segments: list[dict[str, Any]],
     duration_ms: int,
+    authoritative_anchor: dict[str, Any],
 ) -> None:
     for field in _BEAT_FIELDS - {"beat_id", "visual_window_ms", "approved_anchor_commitment"}:
         value = beat[field]
@@ -209,6 +279,12 @@ def _validate_beat(
     segment = _spoken_segment(
         {"start_ms": beat["keyword_start_ms"], "end_ms": beat["keyword_end_ms"]}, segments
     )
+    if (
+        authoritative_anchor["beat_id"] != beat["beat_id"]
+        or beat["keyword_start_ms"] != authoritative_anchor["start_ms"]
+        or beat["keyword_end_ms"] != authoritative_anchor["end_ms"]
+    ):
+        raise ValueError("timed semantic beat does not match its authoritative keyword anchor")
     if (
         beat["speech_start_ms"] != segment["start_ms"]
         or beat["speech_end_ms"] != segment["end_ms"]

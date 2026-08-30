@@ -40,7 +40,11 @@ from scripts.toolkit.tasks import (
     complete_task,
     create_task,
 )
-from scripts.toolkit.timing_validation import validate_timing_rows
+from scripts.toolkit.timed_semantic_beats import bind_semantic_beats
+from scripts.toolkit.timing_validation import (
+    build_compact_timing_rows,
+    validate_timing_rows,
+)
 from scripts.validate_package import _release_fingerprint
 from scripts.verify_installation import (
     _candidate as smoke_candidate,
@@ -437,6 +441,53 @@ def create_voice_bundle(project):
         create_artifact(project, record)
 
 
+def timing_repair_lineage(*, minimum_readable_duration_ms=900):
+    """Return one exact metadata-only authority DAG and its derived blocker."""
+    records = voice_bundle()
+    anchor = {
+        "beat_id": "B01", "keyword": "timing", "start_ms": 1200,
+        "end_ms": 1600,
+    }
+    records[-1]["keyword_anchors"] = [anchor]
+    semantic_record = {
+        "narration_id": "narration-v1",
+        "beats": [{
+            "beat_id": "B01", "text_ref": "narration-v1:S01:L1",
+            "keyword": "timing", "intent": "core-concept-emphasis",
+            "priority": "primary", "preferred_carrier": "motion-graphics",
+            "approval_provenance": "user:timing-repair-review-v1",
+        }],
+    }
+    semantic = artifact(
+        "semantic-beats-v1", "semantic-beats", parents=["narration-v1"],
+        **semantic_record,
+    )
+    exact = bind_semantic_beats(semantic_record, records[-1], [anchor])
+    timed = artifact(
+        "timed-beats-v1", "timed-semantic-beats",
+        parents=["semantic-beats-v1", "voice-timing-v1"],
+        semantic_beats_id="semantic-beats-v1", **exact,
+    )
+    scene = artifact(
+        "scenes-v1", "scene-timing-contracts", parents=["timed-beats-v1"],
+        timed_semantic_beats_id="timed-beats-v1",
+        scenes=[{
+            "scene_id": "S01", "scene_window_ms": [1080, 1800],
+            "beat_ids": ["B01"], "primary_carrier": "motion-graphics",
+            "support_layer": "caption-emphasis",
+            "visual_window_ms": [1080, 1800],
+        }],
+    )
+    rows = build_compact_timing_rows(
+        scene, timed, current_voice_timing_id="voice-timing-v1",
+        current_timed_semantic_beats_id="timed-beats-v1",
+    )
+    compact = validate_timing_rows(
+        rows, minimum_readable_duration_ms=minimum_readable_duration_ms
+    )
+    return [*records, semantic, timed, scene], compact
+
+
 def synthetic_wav(duration_ms, sample_rate=8_000):
     sample_count = duration_ms * sample_rate // 1_000
     audio = b"\0\0" * sample_count
@@ -662,6 +713,29 @@ class V3CoordinatorTimingTests(unittest.TestCase):
         )
         self.assertTrue(
             all(len(beat_ids) <= 3 for beat_ids in result["examples"].values())
+        )
+
+    def test_null_anchor_maps_to_one_bounded_repair_envelope(self):
+        """Routes the explicit missing-anchor sentinel once for its affected Beat."""
+        row = self.timing_row("B01")
+        row["keyword_anchor_ms"] = None
+        compact = validate_timing_rows([row], minimum_readable_duration_ms=500)
+
+        self.assertEqual(
+            {"KEYWORD_ANCHOR_MISSING": 1}, compact["issue_counts"]
+        )
+        repair = build_timing_repair_envelope(
+            "repair-missing-anchor", "timing-validation-v1", ["B01"], compact,
+            voice_timing_id="voice-timing-v1",
+            timed_semantic_beats_id="timed-beats-v1",
+            scene_timing_contracts_id="scenes-v1",
+        )
+
+        self.assertEqual("timing-repair", repair["capability"])
+        self.assertEqual(["B01"], repair["constraints"]["affected_beat_ids"])
+        self.assertEqual(
+            {"KEYWORD_ANCHOR_MISSING": ["B01"]},
+            repair["constraints"]["examples"],
         )
 
 
@@ -1767,19 +1841,17 @@ class CoordinatorTests(unittest.TestCase):
 
     def test_public_v3_route_prioritizes_one_bounded_timing_repair_action(self):
         """A blocked validation result owns one repair action, not seven tasks."""
+        timing_lineage, blocked = timing_repair_lineage()
         validation_id = "timing-validation-v1"
         repair = build_timing_repair_envelope(
             "timing-repair-v1",
             validation_id,
-            [f"B{index:02d}" for index in range(1, 8)],
-            {
-                "status": "blocked",
-                "checks_run": 7,
-                "issue_counts": {"VISUAL_BEFORE_ALLOWED_WINDOW": 7},
-                "examples": {
-                    "VISUAL_BEFORE_ALLOWED_WINDOW": ["B01", "B02", "B03"]
-                },
-            },
+            ["B01"],
+            blocked,
+            voice_timing_id="voice-timing-v1",
+            timed_semantic_beats_id="timed-beats-v1",
+            scene_timing_contracts_id="scenes-v1",
+            minimum_readable_duration_ms=900,
         )
         unrelated = {
             "task_id": "project-follow-up-v1",
@@ -1793,31 +1865,8 @@ class CoordinatorTests(unittest.TestCase):
             validation_id,
             "timing-validation",
             parents=["scenes-v1"],
-            timing_validation={
-                "status": "blocked",
-                "checks_run": 7,
-                "issue_counts": {"VISUAL_BEFORE_ALLOWED_WINDOW": 7},
-                "examples": {
-                    "VISUAL_BEFORE_ALLOWED_WINDOW": ["B01", "B02", "B03"]
-                },
-            },
+            timing_validation=blocked,
         )
-        timing_lineage = [
-            artifact("voice-timing-v1", "voice-timing", timing_kind="real"),
-            artifact(
-                "timed-beats-v1",
-                "timed-semantic-beats",
-                parents=["voice-timing-v1"],
-                voice_timing_id="voice-timing-v1",
-                timing_kind="real",
-            ),
-            artifact(
-                "scenes-v1",
-                "scene-timing-contracts",
-                parents=["timed-beats-v1"],
-                timed_semantic_beats_id="timed-beats-v1",
-            ),
-        ]
 
         self.assertEqual(
             ["timing-repair"],
@@ -1832,7 +1881,7 @@ class CoordinatorTests(unittest.TestCase):
         )
 
         self.assertLessEqual(
-            len(repair["constraints"]["examples"]["VISUAL_BEFORE_ALLOWED_WINDOW"]),
+            len(repair["constraints"]["examples"]["SCENE_TOO_SHORT"]),
             3,
         )
 
@@ -1853,26 +1902,13 @@ class CoordinatorTests(unittest.TestCase):
 
     def test_timing_repair_route_requires_declared_current_validated_lineage(self):
         """Catches repair authority drifting from its declared current validation."""
-        lineage = [
-            artifact("voice-timing-v1", "voice-timing", timing_kind="real"),
-            artifact(
-                "timed-beats-v1", "timed-semantic-beats",
-                parents=["voice-timing-v1"], voice_timing_id="voice-timing-v1",
-                timing_kind="real",
-            ),
-            artifact(
-                "scenes-v1", "scene-timing-contracts",
-                parents=["timed-beats-v1"], timed_semantic_beats_id="timed-beats-v1",
-            ),
-        ]
-        blocked = {
-            "status": "blocked",
-            "checks_run": 1,
-            "issue_counts": {"SCENE_TOO_SHORT": 1},
-            "examples": {"SCENE_TOO_SHORT": ["B01"]},
-        }
+        lineage, blocked = timing_repair_lineage()
         repair = build_timing_repair_envelope(
-            "repair-current", "validation-v1", ["B01"], blocked
+            "repair-current", "validation-v1", ["B01"], blocked,
+            voice_timing_id="voice-timing-v1",
+            timed_semantic_beats_id="timed-beats-v1",
+            scene_timing_contracts_id="scenes-v1",
+            minimum_readable_duration_ms=900,
         )
         validation_v1 = artifact(
             "validation-v1", "timing-validation", parents=["scenes-v1"],
@@ -1901,35 +1937,24 @@ class CoordinatorTests(unittest.TestCase):
             )
 
     def test_timing_repair_projection_uses_the_current_artifact_compact_result(self):
-        lineage = [
-            artifact("voice-timing-v1", "voice-timing", timing_kind="real"),
-            artifact(
-                "timed-beats-v1", "timed-semantic-beats",
-                parents=["voice-timing-v1"], voice_timing_id="voice-timing-v1",
-                timing_kind="real",
-            ),
-            artifact(
-                "scenes-v1", "scene-timing-contracts",
-                parents=["timed-beats-v1"], timed_semantic_beats_id="timed-beats-v1",
-            ),
-        ]
+        lineage, blocked = timing_repair_lineage()
         validation = artifact(
             "validation-v1", "timing-validation", parents=["scenes-v1"],
-            timing_validation={
-                "status": "blocked", "checks_run": 1,
-                "issue_counts": {"SCENE_TOO_SHORT": 2},
-                "examples": {"SCENE_TOO_SHORT": ["B01"]},
-            },
+            timing_validation=blocked,
         )
         repair = build_timing_repair_envelope(
             "repair-projection", "validation-v1", ["B01"],
             validation["timing_validation"],
+            voice_timing_id="voice-timing-v1",
+            timed_semantic_beats_id="timed-beats-v1",
+            scene_timing_contracts_id="scenes-v1",
+            minimum_readable_duration_ms=900,
         )
         projected = _coordinator_safe_task_projection(
             repair, [*lineage, validation]
         )
         self.assertEqual(
-            {"SCENE_TOO_SHORT": 2},
+            {"SCENE_TOO_SHORT": 1},
             projected["constraints"]["issue_counts"],
         )
         fabricated = {**repair, "constraints": {**repair["constraints"]}}

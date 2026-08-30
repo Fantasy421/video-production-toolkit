@@ -13,6 +13,7 @@ from jsonschema import Draft202012Validator
 
 from scripts.toolkit import artifacts
 from scripts.toolkit.artifacts import approve_artifact, create_artifact, read_approval
+from scripts.toolkit.timed_semantic_beats import bind_semantic_beats
 from tests.encoding_boundary_cases import (
     HARMLESS_PROSE_CONTROLS,
     STRUCTURAL_ENCODING_CASES,
@@ -197,6 +198,77 @@ class ArtifactTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             artifacts.validate_artifact_record(timing)
+
+    def test_persisted_timed_beats_require_exact_authoritative_anchors_and_parents(self):
+        """Catches generic Artifact creation persisting a recommitted invented anchor."""
+        narration = {
+            "artifact_id": "narration-v1", "type": "narration", "version": 1,
+            "status": "approved", "parents": [], "path": "metadata/narration-v1.json",
+        }
+        voiceover = {
+            "artifact_id": "voiceover-v1", "type": "voiceover", "version": 1,
+            "status": "approved", "parents": ["narration-v1"],
+            "path": "metadata/voiceover-v1.json",
+        }
+        semantic = {
+            "artifact_id": "semantic-beats-v1", "type": "semantic-beats", "version": 1,
+            "status": "approved", "parents": ["narration-v1"],
+            "path": "metadata/semantic-beats-v1.json", "narration_id": "narration-v1",
+            "beats": [{
+                "beat_id": "B01", "text_ref": "narration-v1:S01:L1",
+                "keyword": "timing", "intent": "core-concept-emphasis",
+                "priority": "primary", "preferred_carrier": "motion-graphics",
+                "approval_provenance": "user:keyword-review-v1",
+            }],
+        }
+        timing = {
+            "artifact_id": "voice-timing-v1", "type": "voice-timing", "version": 1,
+            "status": "approved", "parents": ["voiceover-v1"],
+            "path": "metadata/voice-timing-v1.json", "voiceover_id": "voiceover-v1",
+            "timing_kind": "real", "duration_ms": 2_400,
+            "segments": [{"start_ms": 0, "end_ms": 2_400, "text": "segment"}],
+            "keyword_anchors": [{
+                "beat_id": "B01", "keyword": "timing", "start_ms": 1_200,
+                "end_ms": 1_500,
+            }],
+        }
+        for record in (narration, voiceover, semantic, timing):
+            create_artifact(self.root, record)
+        create_artifact(
+            self.root,
+            {
+                "artifact_id": "unrelated-v1", "type": "report", "version": 1,
+                "status": "approved", "parents": [], "path": "metadata/unrelated-v1.json",
+            },
+        )
+        semantic_record = {
+            "narration_id": semantic["narration_id"], "beats": semantic["beats"]
+        }
+        invented_timing = json.loads(json.dumps(timing))
+        invented_timing["keyword_anchors"][0].update(start_ms=1_600, end_ms=1_700)
+        invented = bind_semantic_beats(
+            semantic_record,
+            invented_timing,
+            invented_timing["keyword_anchors"],
+        )
+        timed_artifact = {
+            "artifact_id": "timed-semantic-beats-v1", "type": "timed-semantic-beats",
+            "version": 1, "status": "approved",
+            "parents": ["semantic-beats-v1", "voice-timing-v1"],
+            "path": "metadata/timed-semantic-beats-v1.json",
+            "semantic_beats_id": "semantic-beats-v1", **invented,
+        }
+
+        with self.assertRaisesRegex(ValueError, "authoritative"):
+            create_artifact(self.root, timed_artifact)
+
+        exact = bind_semantic_beats(
+            semantic_record, timing, timing["keyword_anchors"]
+        )
+        timed_artifact.update(exact)
+        timed_artifact["parents"].append("unrelated-v1")
+        with self.assertRaisesRegex(ValueError, "exact"):
+            create_artifact(self.root, timed_artifact)
 
     @staticmethod
     def legacy_voice_timing():

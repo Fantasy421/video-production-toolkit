@@ -9,7 +9,7 @@ from copy import deepcopy
 import re
 from typing import Any
 
-from .artifacts import validate_artifact_record
+from .artifacts import TIMING_SUPPORT_LAYERS, validate_artifact_record
 from .contracts import SCENE_CARRIERS
 
 
@@ -161,7 +161,10 @@ def _validate_scene(
         raise ValueError("scene timing contracts require exactly one registered primary carrier")
     support = scene["support_layer"]
     if support is not None and (
-        not isinstance(support, str) or not support.strip() or len(support) > 128
+        not isinstance(support, str)
+        or support not in TIMING_SUPPORT_LAYERS
+        or not support.strip()
+        or len(support) > 128
     ):
         raise ValueError("scene timing contracts permit at most one support layer")
 
@@ -170,6 +173,10 @@ def _validate_scene(
     if not _contains(scene_window, visual_window):
         raise ValueError("scene timing visual window must remain inside its scene window")
     assigned = [beat_by_id[beat_id] for beat_id in beat_ids]
+    canonical_visual_window = [
+        min(beat["visual_window_ms"][0] for beat in assigned),
+        max(beat["visual_window_ms"][1] for beat in assigned),
+    ]
     spoken_window = [
         min(beat["speech_start_ms"] for beat in assigned),
         max(beat["speech_end_ms"] for beat in assigned),
@@ -185,6 +192,10 @@ def _validate_scene(
             raise ValueError("scene timing keyword window crosses its scene boundary")
         if not _contains(visual_window, beat_window):
             raise ValueError("scene timing visual window must contain every beat visual window")
+    if visual_window != canonical_visual_window:
+        raise ValueError(
+            "scene timing visual window must equal the assigned timed beat window"
+        )
 
 
 def _window(value: Any, label: str) -> list[int]:

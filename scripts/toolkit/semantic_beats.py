@@ -121,6 +121,8 @@ def _validate_beat(beat: Any) -> dict[str, Any]:
     _require_text(normalized["keyword"], "keyword", 256)
     _require_text(normalized["intent"], "intent", 128)
     _require_text(normalized["approval_provenance"], "approval_provenance", 500)
+    if not normalized["approval_provenance"].startswith("user:"):
+        raise ValueError("semantic beats approval provenance must be user-scoped")
     if normalized["priority"] not in _PRIORITIES:
         raise ValueError("semantic beat priority is not recognized")
     if normalized["preferred_carrier"] not in TIMING_CARRIERS:

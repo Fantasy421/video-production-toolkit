@@ -14,17 +14,23 @@ Owned capability: `structure.validate`
 Timing-repair relay: this same isolated child also accepts the coordinator's
 `timing-repair` envelope. This is a delegated timing-only operation, not a
 second owned capability. The envelope must declare `timing_validation_id` in
-`inputs`, use `output_contract: timing-validation-v1`, and contain only the
-closed `visual_media_operation`, `timing_validation_id`, `affected_beat_ids`,
-`issue_counts`, and `examples` constraint fields. The child validates the
-compact blocked result, repairs timing assignments only, and returns a compact
-task-result envelope.
+`inputs`, name the exact `voice_timing_id`, `timed_semantic_beats_id`, and
+`scene_timing_contracts_id` lineage in both `inputs` and constraints, use
+`output_contract: timing-validation-v1`, and contain only the closed
+`visual_media_operation`, `timing_validation_id`, `voice_timing_id`,
+`timed_semantic_beats_id`, `scene_timing_contracts_id`,
+`minimum_readable_duration_ms`, `affected_beat_ids`, `issue_counts`, and
+`examples` constraint fields. The child validates the compact blocked result
+against freshly derived rows from that exact lineage, repairs timing
+assignments only, and returns a new scene-timing Artifact plus its recomputed
+compact timing-validation Artifact.
 
 The shipped Draft 2020-12 schemas express the bounded structural subset. The
 runtime task and timing validators are normative for cross-field equality:
-`timing_validation_id` must be declared in `inputs`, the relay counts and
-examples must exactly match the selected current validation Artifact, and every
-example key must have a corresponding issue-count key.
+all four lineage IDs must be declared in `inputs`, the relay counts and
+examples must exactly match the selected current validation Artifact, the
+minimum duration must match the recomputation policy, and every example key
+must have a corresponding issue-count key.
 
 Allowed inputs: accept only one claimed task-envelope with capability
 `structure.validate`, or the exact delegated `timing-repair` envelope above,

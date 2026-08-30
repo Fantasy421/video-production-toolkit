@@ -3,6 +3,7 @@ import unittest
 
 from scripts.plan_representative_slice import select_representative_slice
 from scripts.toolkit.contracts import validate_scene_contract
+from scripts.toolkit.timed_semantic_beats import _anchor_commitment
 
 
 class RepresentativeSliceTests(unittest.TestCase):
@@ -156,7 +157,9 @@ class RepresentativeSliceTests(unittest.TestCase):
             "beats": [
                 {
                     "beat_id": beat_id,
-                    "text_ref": f"{artifacts[0]['artifact_id']}:{beat_id}",
+                    "text_ref": (
+                        f"{artifacts[0]['artifact_id']}:S01:L{int(beat_id[1:])}"
+                    ),
                     "keyword": beat_id,
                     "intent": "core-concept-emphasis",
                     "priority": "primary",
@@ -166,6 +169,46 @@ class RepresentativeSliceTests(unittest.TestCase):
                 for beat_id, contract in zip(beat_ids, contracts)
             ],
         }
+        timing = artifacts[-1]
+        anchors = [
+            {
+                "beat_id": beat_id,
+                "keyword": beat_id,
+                "start_ms": contract["start_ms"] + 250,
+                "end_ms": contract["start_ms"] + 550,
+            }
+            for beat_id, contract in zip(beat_ids, contracts)
+        ]
+        timing["keyword_anchors"] = anchors
+        timed_rows = []
+        for beat_id, contract, anchor in zip(beat_ids, contracts, anchors):
+            matches = [
+                segment
+                for segment in timing["segments"]
+                if segment["start_ms"] <= anchor["start_ms"]
+                < anchor["end_ms"] <= segment["end_ms"]
+            ]
+            segment = matches[0] if len(matches) == 1 else {
+                "start_ms": contract["start_ms"],
+                "end_ms": contract["end_ms"],
+            }
+            timed_rows.append(
+                {
+                    "beat_id": beat_id,
+                    "speech_start_ms": segment["start_ms"],
+                    "speech_end_ms": segment["end_ms"],
+                    "keyword_start_ms": anchor["start_ms"],
+                    "keyword_end_ms": anchor["end_ms"],
+                    "emphasis_ms": anchor["start_ms"] + 150,
+                    "visual_window_ms": [anchor["start_ms"] - 120, anchor["end_ms"] + 200],
+                    "approved_anchor_commitment": _anchor_commitment(
+                        {"narration_id": semantic["narration_id"], "beats": semantic["beats"]},
+                        beat_id,
+                        anchor["start_ms"],
+                        anchor["end_ms"],
+                    ),
+                }
+            )
         timed = {
             "artifact_id": timed_id,
             "type": "timed-semantic-beats",
@@ -176,19 +219,7 @@ class RepresentativeSliceTests(unittest.TestCase):
             "semantic_beats_id": "semantic-beats-v1",
             "voice_timing_id": timing_id,
             "timing_kind": "real",
-            "beats": [
-                {
-                    "beat_id": beat_id,
-                    "speech_start_ms": contract["start_ms"],
-                    "speech_end_ms": contract["end_ms"],
-                    "keyword_start_ms": contract["start_ms"] + 1,
-                    "keyword_end_ms": contract["end_ms"] - 1,
-                    "emphasis_ms": (contract["start_ms"] + contract["end_ms"]) // 2,
-                    "visual_window_ms": [contract["start_ms"], contract["end_ms"]],
-                    "approved_anchor_commitment": "sha256:" + "0" * 64,
-                }
-                for beat_id, contract in zip(beat_ids, contracts)
-            ],
+            "beats": timed_rows,
         }
         current_contracts = [
             {
@@ -214,10 +245,10 @@ class RepresentativeSliceTests(unittest.TestCase):
                     "scene_window_ms": [contract["start_ms"], contract["end_ms"]],
                     "beat_ids": [beat_id],
                     "primary_carrier": contract["primary_carrier"],
-                    "support_layer": None,
-                    "visual_window_ms": [contract["start_ms"], contract["end_ms"]],
+                    "support_layer": contract.get("secondary_layer"),
+                    "visual_window_ms": timed_row["visual_window_ms"],
                 }
-                for beat_id, contract in zip(beat_ids, contracts)
+                for beat_id, contract, timed_row in zip(beat_ids, contracts, timed_rows)
             ],
         }
         return current_contracts, [*artifacts, semantic, timed, scene_timing]
@@ -297,8 +328,34 @@ class RepresentativeSliceTests(unittest.TestCase):
             if item.get("artifact_id") == "semantic-beats-v1"
         )
         semantic_record["beats"][0]["beat_id"] = "B99"
-        with self.assertRaisesRegex(ValueError, "exact semantic"):
+        with self.assertRaisesRegex(ValueError, "valid timing artifact"):
             validate_scene_contract(current_contracts[0], artifacts=changed_semantic)
+        invented_anchor = copy.deepcopy(current_artifacts)
+        invented_semantic = next(
+            item for item in invented_anchor
+            if item.get("artifact_id") == "semantic-beats-v1"
+        )
+        invented_timed = next(
+            item for item in invented_anchor
+            if item.get("artifact_id") == "timed-semantic-beats-v1"
+        )
+        invented_timed["beats"][0].update(
+            keyword_start_ms=600,
+            keyword_end_ms=900,
+            emphasis_ms=750,
+            visual_window_ms=[480, 1100],
+            approved_anchor_commitment=_anchor_commitment(
+                {
+                    "narration_id": invented_semantic["narration_id"],
+                    "beats": invented_semantic["beats"],
+                },
+                "B01",
+                600,
+                900,
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "valid timing artifact lineage"):
+            validate_scene_contract(current_contracts[0], artifacts=invented_anchor)
         with self.assertRaisesRegex(ValueError, "authoritative voice timing"):
             validate_scene_contract(
                 {**current_contracts[0], "voice_timing_id": "voice-timing-v1"},
@@ -318,9 +375,21 @@ class RepresentativeSliceTests(unittest.TestCase):
         silent_contracts, silent_artifacts = self.currentize(
             [{**contract, "start_ms": 5000, "end_ms": 7000}], artifacts
         )
-        with self.assertRaisesRegex(ValueError, "spoken timing segment"):
+        with self.assertRaisesRegex(ValueError, "valid timing artifact"):
             validate_scene_contract(
                 silent_contracts[0], artifacts=silent_artifacts
+            )
+
+        layered = {**contract, "secondary_layer": "annotation"}
+        layered_contracts, layered_artifacts = self.currentize([layered], artifacts)
+        self.assertEqual(
+            layered_contracts[0],
+            validate_scene_contract(layered_contracts[0], artifacts=layered_artifacts),
+        )
+        with self.assertRaisesRegex(ValueError, "exactly match"):
+            validate_scene_contract(
+                {**layered_contracts[0], "secondary_layer": "callout"},
+                artifacts=layered_artifacts,
             )
 
         current_contracts, current_artifacts = self.currentize(

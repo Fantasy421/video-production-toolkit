@@ -30,7 +30,11 @@ from scripts.toolkit.tasks import (
     validate_persisted_task_envelope,
     timing_contract_inputs_are_current,
 )
-from scripts.toolkit.timing_validation import validate_timing_validation_result
+from scripts.toolkit.timing_validation import (
+    build_compact_timing_rows,
+    validate_timing_rows,
+    validate_timing_validation_result,
+)
 from scripts.toolkit.visual_media_context import SAFE_ID_RE
 
 
@@ -167,7 +171,7 @@ def _calculate_ready_tasks(
             or phase in set(V3_PHASES) - {"production_ready"}
             or "timing_validation_id" in candidate["constraints"]
         )
-        if not _timing_route_is_current(candidate, by_id, phase, v3_project):
+        if not _timing_route_is_current(candidate, by_id, phase, v3_project, root):
             continue
         gate = _required_gate(candidate)
         if gate is not None and not _has_gate_approval(
@@ -195,10 +199,11 @@ def _timing_route_is_current(
     artifacts: Mapping[str, Mapping[str, Any]],
     phase: Optional[str],
     v3_project: bool,
+    root: Optional[Path],
 ) -> bool:
     """Gate v3 visual work on the worker's compact current validation result."""
     capability = candidate["capability"]
-    current = _current_timing_validation(candidate, artifacts)
+    current = _current_timing_validation(candidate, artifacts, root=root)
     if capability == "timing-repair":
         return current is not None and current["timing_validation"]["status"] == "blocked"
     if (
@@ -222,16 +227,23 @@ def _timing_route_is_current(
 def _current_timing_validation(
     candidate: Mapping[str, Any],
     artifacts: Mapping[str, Mapping[str, Any]],
+    *,
+    root: Optional[Path] = None,
 ) -> Optional[dict[str, Any]]:
-    """Resolve the latest validated result on the current timing DAG."""
+    """Resolve validation only on the declared authoritative narration DAG."""
     constraints = candidate.get("constraints", {})
     validation_id = constraints.get("timing_validation_id")
+    voice_id = constraints.get("voice_timing_id")
+    timed_id = constraints.get("timed_semantic_beats_id")
+    scene_id = constraints.get("scene_timing_contracts_id")
     inputs = candidate.get("inputs")
     if (
-        not isinstance(validation_id, str)
-        or SAFE_ID_RE.fullmatch(validation_id) is None
+        any(
+            not isinstance(value, str) or SAFE_ID_RE.fullmatch(value) is None
+            for value in (validation_id, voice_id, timed_id, scene_id)
+        )
         or not isinstance(inputs, list)
-        or validation_id not in inputs
+        or not {validation_id, voice_id, timed_id, scene_id}.issubset(set(inputs))
     ):
         return None
 
@@ -251,56 +263,39 @@ def _current_timing_validation(
             ),
         )
 
-    def has_parent(record: Mapping[str, Any], parent_id: Any) -> bool:
-        parents = record.get("parents")
-        return isinstance(parents, list) and parent_id in parents
+    voice = artifacts.get(voice_id)
+    timed = artifacts.get(timed_id)
+    scene = artifacts.get(scene_id)
+    semantic_id = timed.get("semantic_beats_id") if isinstance(timed, Mapping) else None
+    semantic = artifacts.get(semantic_id) if isinstance(semantic_id, str) else None
+    if not all(isinstance(value, Mapping) for value in (voice, timed, scene, semantic)):
+        return None
+    from scripts.toolkit.timed_semantic_beats import (
+        validate_timed_semantic_beats_artifact,
+    )
+    from scripts.toolkit.voice import (
+        validate_authoritative_voice_bundle,
+        validate_project_authoritative_voice_bundle,
+    )
 
-    voice = latest(
-        [
-            item
-            for item in artifacts.values()
-            if item.get("type") == "voice-timing"
-            and item.get("status") == "approved"
-            and item.get("timing_kind") == "real"
-        ]
+    bundle = (
+        validate_project_authoritative_voice_bundle(root, artifacts.values())
+        if root is not None
+        else validate_authoritative_voice_bundle(artifacts.values())
     )
-    if voice is None:
-        return None
-    timed = latest(
-        [
-            item
-            for item in artifacts.values()
-            if item.get("type") == "timed-semantic-beats"
-            and item.get("status") == "approved"
-            and item.get("timing_kind") == "real"
-            and item.get("voice_timing_id") == voice.get("artifact_id")
-            and has_parent(item, voice.get("artifact_id"))
-        ]
-    )
-    if timed is None:
-        return None
-    scene = latest(
-        [
-            item
-            for item in artifacts.values()
-            if item.get("type") == "scene-timing-contracts"
-            and item.get("status") == "approved"
-            and item.get("timed_semantic_beats_id") == timed.get("artifact_id")
-            and has_parent(item, timed.get("artifact_id"))
-        ]
-    )
-    if scene is None:
-        return None
-
-    expected_lineage = {
-        "voice_timing_id": voice.get("artifact_id"),
-        "timed_semantic_beats_id": timed.get("artifact_id"),
-        "scene_timing_contracts_id": scene.get("artifact_id"),
-    }
-    if any(
-        key in constraints and constraints.get(key) != value
-        for key, value in expected_lineage.items()
+    if (
+        not bundle.get("ok")
+        or bundle.get("voice_timing_id") != voice_id
+        or bundle.get("narration_id") != semantic.get("narration_id")
+        or scene.get("type") != "scene-timing-contracts"
+        or scene.get("status") != "approved"
+        or scene.get("timed_semantic_beats_id") != timed_id
+        or scene.get("parents") != [timed_id]
     ):
+        return None
+    try:
+        validate_timed_semantic_beats_artifact(timed, semantic, voice)
+    except ValueError:
         return None
 
     candidates: list[dict[str, Any]] = []
@@ -308,7 +303,7 @@ def _current_timing_validation(
         if (
             item.get("type") != "timing-validation"
             or item.get("status") != "approved"
-            or not has_parent(item, scene.get("artifact_id"))
+            or item.get("parents") != [scene_id]
         ):
             continue
         candidates.append(dict(item))
@@ -321,13 +316,31 @@ def _current_timing_validation(
         )
     except (KeyError, TypeError, ValueError):
         return None
-    # Keep the exact chain selected above attached to the validated result.  A
-    # timing-validation Artifact may have more than one generic parent, so
-    # callers must not infer the current scene from ``current["parents"]``.
+    try:
+        rows = build_compact_timing_rows(
+            scene,
+            timed,
+            current_voice_timing_id=voice_id,
+            current_timed_semantic_beats_id=timed_id,
+        )
+        expected = validate_timing_rows(
+            rows,
+            minimum_readable_duration_ms=(
+                constraints.get("minimum_readable_duration_ms", 500)
+                if candidate.get("capability") == "timing-repair"
+                else 500
+            ),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    if current["timing_validation"] != expected:
+        return None
+    # Keep the exact chain selected above attached to the validated result so
+    # callers do not have to reconstruct authority from generic Artifact data.
     current["lineage"] = {
-        "voice_timing_id": voice.get("artifact_id"),
-        "timed_semantic_beats_id": timed.get("artifact_id"),
-        "scene_timing_contracts_id": scene.get("artifact_id"),
+        "voice_timing_id": voice_id,
+        "timed_semantic_beats_id": timed_id,
+        "scene_timing_contracts_id": scene_id,
     }
     if candidate.get("capability") == "timing-repair":
         compact = current["timing_validation"]

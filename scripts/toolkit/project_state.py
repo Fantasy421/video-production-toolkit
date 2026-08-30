@@ -13,6 +13,7 @@ from .runtime_paths import project_path, project_root, storage_directory
 from .voice import validate_project_authoritative_voice_bundle
 from .invalidation import invalidated_artifact_ids
 from .artifacts import validate_artifact_record
+from .timing_validation import validate_authoritative_timing_chain
 
 
 PHASES = (
@@ -263,50 +264,38 @@ def _v3_recovery_issues(
     ):
         issues.append("VOICE_TIMING_REQUIRED")
         return issues
-    timed = max(
-        (
-            item
-            for item in approved
-            if item.get("type") == "timed-semantic-beats"
-            and item.get("voice_timing_id") == voice.get("artifact_id")
-        ),
-        key=lambda item: (item.get("version", 0), item.get("artifact_id", "")),
-        default=None,
-    )
-    if timed is None:
-        issues.append("TIMED_SEMANTIC_BEATS_REQUIRED")
-        return issues
-    if voice.get("artifact_id") not in timed.get("parents", []):
+    narration_id = voice_bundle.get("narration_id")
+    try:
+        validate_authoritative_timing_chain(
+            records,
+            narration_id=narration_id,
+            voice_timing_id=voice_timing_id,
+            through="timed",
+        )
+    except (TypeError, ValueError):
         issues.append("TIMED_SEMANTIC_BEATS_REQUIRED")
         return issues
     if V3_PHASES.index(phase) >= V3_PHASES.index("storyboard_timed"):
-        scenes = max(
-            (
-                item
-                for item in approved
-                if item.get("type") == "scene-timing-contracts"
-                and item.get("timed_semantic_beats_id") == timed.get("artifact_id")
-            ),
-            key=lambda item: (item.get("version", 0), item.get("artifact_id", "")),
-            default=None,
-        )
-        if scenes is None or timed.get("artifact_id") not in scenes.get("parents", []):
-            issues.append("SCENE_TIMING_CONTRACTS_REQUIRED")
-        elif phase == "production_ready":
-            validations = [
-                item
-                for item in approved
-                if item.get("type") == "timing-validation"
-                and scenes.get("artifact_id") in item.get("parents", [])
-            ]
-            validation = max(
-                validations,
-                key=lambda item: (item.get("version", 0), item.get("artifact_id", "")),
-                default=None,
+        try:
+            validate_authoritative_timing_chain(
+                records,
+                narration_id=narration_id,
+                voice_timing_id=voice_timing_id,
+                through="scene",
             )
-            compact = validation.get("timing_validation") if validation else None
-            if not isinstance(compact, Mapping) or compact.get("status") != "passed":
-                issues.append("TIMING_VALIDATION_REQUIRED")
+        except (TypeError, ValueError):
+            issues.append("SCENE_TIMING_CONTRACTS_REQUIRED")
+        else:
+            if phase == "production_ready":
+                try:
+                    validate_authoritative_timing_chain(
+                        records,
+                        narration_id=narration_id,
+                        voice_timing_id=voice_timing_id,
+                        through="validation",
+                    )
+                except (TypeError, ValueError):
+                    issues.append("TIMING_VALIDATION_REQUIRED")
     return issues
 
 
@@ -486,44 +475,43 @@ def _validate_v3_phase_gate(root: Path, phase: str) -> None:
     voice_bundle = validate_project_authoritative_voice_bundle(root, records)
     if not voice_bundle.get("ok"):
         raise ValueError("production_ready requires current real voice timing")
-    by_type: dict[str, list[dict[str, Any]]] = {}
-    for record in records:
-        if record.get("status") == "approved":
-            by_type.setdefault(record.get("type", ""), []).append(record)
-
-    def latest(artifact_type: str) -> Optional[dict[str, Any]]:
-        candidates = by_type.get(artifact_type, [])
-        return max(candidates, key=lambda item: (item.get("version", 0), item["artifact_id"]), default=None)
-
     voice_timing_id = voice_bundle.get("voice_timing_id")
     voice_timing_matches = [
         item
-        for item in by_type.get("voice-timing", [])
-        if item.get("artifact_id") == voice_timing_id
+        for item in records
+        if item.get("type") == "voice-timing"
+        and item.get("status") == "approved"
+        and item.get("artifact_id") == voice_timing_id
     ]
     voice_timing = voice_timing_matches[0] if len(voice_timing_matches) == 1 else None
     if voice_timing is None or voice_timing.get("timing_kind") != "real":
         raise ValueError("production_ready requires current real voice timing")
-    timed = latest("timed-semantic-beats")
-    if (
-        timed is None
-        or timed.get("voice_timing_id") != voice_timing.get("artifact_id")
-        or voice_timing.get("artifact_id") not in timed.get("parents", [])
-    ):
+    try:
+        validate_authoritative_timing_chain(
+            records,
+            narration_id=voice_bundle.get("narration_id"),
+            voice_timing_id=voice_timing_id,
+            through="timed",
+        )
+    except (TypeError, ValueError):
         raise ValueError("production_ready requires current timed semantic beats")
-    scenes = latest("scene-timing-contracts")
-    if (
-        scenes is None
-        or scenes.get("timed_semantic_beats_id") != timed.get("artifact_id")
-        or timed.get("artifact_id") not in scenes.get("parents", [])
-    ):
+    try:
+        validate_authoritative_timing_chain(
+            records,
+            narration_id=voice_bundle.get("narration_id"),
+            voice_timing_id=voice_timing_id,
+            through="scene",
+        )
+    except (TypeError, ValueError):
         raise ValueError("production_ready requires current scene timing contracts")
-
-    validation = latest("timing-validation")
-    if validation is None or scenes.get("artifact_id") not in validation.get("parents", []):
-        raise ValueError("production_ready requires passed timing validation")
-    compact = validation.get("timing_validation")
-    if not isinstance(compact, Mapping) or compact.get("status") != "passed":
+    try:
+        validate_authoritative_timing_chain(
+            records,
+            narration_id=voice_bundle.get("narration_id"),
+            voice_timing_id=voice_timing_id,
+            through="validation",
+        )
+    except (TypeError, ValueError):
         raise ValueError("production_ready requires passed timing validation")
 
 

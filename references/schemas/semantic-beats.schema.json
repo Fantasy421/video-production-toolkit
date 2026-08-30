@@ -30,7 +30,7 @@
         "intent": {"type": "string", "minLength": 1, "maxLength": 128},
         "priority": {"enum": ["primary", "secondary"]},
         "preferred_carrier": {"$ref": "#/$defs/carrier"},
-        "approval_provenance": {"type": "string", "minLength": 1, "maxLength": 500}
+        "approval_provenance": {"type": "string", "minLength": 6, "maxLength": 500, "pattern": "^user:.+"}
       },
       "additionalProperties": false
     },

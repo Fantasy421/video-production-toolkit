@@ -39,6 +39,18 @@ TIMING_ARTIFACT_TYPES = frozenset(
 TIMING_CARRIERS = frozenset(
     {"a-roll", "b-roll", "scene", "demo", "motion-graphics", "evidence"}
 )
+TIMING_SUPPORT_LAYERS = frozenset(
+    {
+        "annotation",
+        "callout",
+        "caption-emphasis",
+        "connection",
+        "label",
+        "number-animation",
+        "progress-state",
+        "subtitle-emphasis",
+    }
+)
 APPROVAL_REQUIRED_KEYS = (
     "approval_id",
     "target_id",
@@ -177,7 +189,6 @@ def create_artifact(root: Path, artifact: dict[str, Any]) -> Path:
     ):
         raise ValueError("legacy semantic-beats projection is read-only")
     project_path(root, artifact["path"])
-    payload = _serialize_json(artifact)
     artifacts_root = storage_directory(root, "artifacts", create=True)
     existing = _artifact_paths_by_id(artifacts_root)
     artifact_id = artifact["artifact_id"]
@@ -187,6 +198,8 @@ def create_artifact(root: Path, artifact: dict[str, Any]) -> Path:
     missing_parents = [parent for parent in artifact["parents"] if parent not in existing]
     if missing_parents:
         raise ValueError(f"artifact parents do not exist: {', '.join(missing_parents)}")
+    _validate_timing_graph_admission(artifact, existing)
+    payload = _serialize_json(artifact)
 
     destination = artifacts_root / artifact["type"] / f"{artifact_id}.json"
     _require_within(artifacts_root, destination)
@@ -198,6 +211,62 @@ def create_artifact(root: Path, artifact: dict[str, Any]) -> Path:
     finally:
         _release_artifact_lock(lock)
     return destination
+
+
+def _validate_timing_graph_admission(
+    artifact: Mapping[str, Any], existing: Mapping[str, Path]
+) -> None:
+    """Bind newly persisted timing authority to exact already-persisted parents."""
+    def persisted(artifact_id: Any) -> Optional[dict[str, Any]]:
+        path = existing.get(artifact_id) if isinstance(artifact_id, str) else None
+        return _read_valid_artifact(path) if path is not None else None
+
+    artifact_type = artifact.get("type")
+    if artifact_type == "semantic-beats":
+        if artifact.get("parents") != [artifact.get("narration_id")]:
+            raise ValueError("semantic-beats parents must exactly match narration_id")
+        return
+    if artifact_type == "timed-semantic-beats":
+        from .timed_semantic_beats import validate_timed_semantic_beats_artifact
+
+        semantic_id = artifact.get("semantic_beats_id")
+        voice_id = artifact.get("voice_timing_id")
+        semantic = persisted(semantic_id)
+        timing = persisted(voice_id)
+        if semantic is None or timing is None:
+            raise ValueError("timed-semantic-beats requires exact persisted authority parents")
+        validate_timed_semantic_beats_artifact(artifact, semantic, timing)
+        return
+    if artifact_type == "scene-timing-contracts":
+        from .scene_timing import validate_scene_timing_contracts
+        from .timed_semantic_beats import validate_timed_semantic_beats_artifact
+
+        timed_id = artifact.get("timed_semantic_beats_id")
+        if artifact.get("parents") != [timed_id]:
+            raise ValueError("scene-timing-contracts parents must exactly match timed_semantic_beats_id")
+        timed = persisted(timed_id)
+        if timed is None:
+            raise ValueError("scene-timing-contracts requires its exact persisted timed parent")
+        semantic = persisted(timed.get("semantic_beats_id"))
+        timing = persisted(timed.get("voice_timing_id"))
+        if semantic is None or timing is None:
+            raise ValueError("scene-timing-contracts requires the complete persisted timing DAG")
+        validate_timed_semantic_beats_artifact(timed, semantic, timing)
+        validate_scene_timing_contracts(
+            {
+                "timed_semantic_beats_id": artifact["timed_semantic_beats_id"],
+                "scenes": artifact["scenes"],
+            },
+            timed,
+        )
+        return
+    if artifact_type == "timing-validation":
+        parents = artifact.get("parents")
+        if not isinstance(parents, list) or len(parents) != 1:
+            raise ValueError("timing-validation must name exactly one scene-timing parent")
+        parent = persisted(parents[0])
+        if parent is None or parent.get("type") != "scene-timing-contracts":
+            raise ValueError("timing-validation parent must be a persisted scene-timing-contracts artifact")
 
 
 def validate_artifact_record(artifact: Mapping[str, Any]) -> None:
@@ -753,6 +822,8 @@ def _validate_semantic_beats(beats: Any) -> None:
         _require_timing_text(beat["keyword"], "keyword", 256)
         _require_timing_text(beat["intent"], "intent", 128)
         _require_timing_text(beat["approval_provenance"], "approval_provenance", 500)
+        if not beat["approval_provenance"].startswith("user:"):
+            raise ValueError("semantic beat approval provenance must be user-scoped")
         if beat["priority"] not in {"primary", "secondary"}:
             raise ValueError("semantic beat priority is not recognized")
         if beat["preferred_carrier"] not in TIMING_CARRIERS:
@@ -808,6 +879,8 @@ def _validate_scene_timing_contracts(scenes: Any) -> None:
         support = scene["support_layer"]
         if support is not None:
             _require_timing_text(support, "support_layer", 128)
+            if support not in TIMING_SUPPORT_LAYERS:
+                raise ValueError("scene timing support layer is not recognized")
 
 
 def _validate_timing_record_list(value: Any, label: str) -> None:

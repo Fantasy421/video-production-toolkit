@@ -1,5 +1,6 @@
 """Behavioral tests for binding frozen beats to real voice-timing metadata."""
 
+import hashlib
 import json
 import unittest
 
@@ -165,7 +166,39 @@ class TimedSemanticBeatTests(unittest.TestCase):
             visual_window_ms=[1_480, 1_900],
         )
 
-        with self.assertRaisesRegex(ValueError, "anchor commitment"):
+        with self.assertRaisesRegex(ValueError, "authoritative.*anchor|anchor.*authoritative"):
+            validate_timed_semantic_beats(
+                substituted, self.semantic(), self.real_timing()
+            )
+
+    def test_validation_rejects_a_recommitted_interval_that_is_not_the_authoritative_anchor(self):
+        """Catches a caller inventing a same-segment range and hashing that invention."""
+        timed = bind_semantic_beats(
+            self.semantic(), self.real_timing(), self.keyword_anchors()
+        )
+        substituted = json.loads(json.dumps(timed))
+        substituted["beats"][0].update(
+            keyword_start_ms=1_600,
+            keyword_end_ms=1_700,
+            emphasis_ms=1_650,
+            visual_window_ms=[1_480, 1_900],
+        )
+        commitment_payload = {
+            "approval_provenance": "user:keyword-review-v3",
+            "beat_id": "B07",
+            "end_ms": 1_700,
+            "keyword": "context isolation",
+            "narration_id": "narration-v3",
+            "start_ms": 1_600,
+        }
+        encoded = json.dumps(
+            commitment_payload, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        substituted["beats"][0]["approved_anchor_commitment"] = (
+            f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+        )
+
+        with self.assertRaisesRegex(ValueError, "authoritative.*anchor|anchor.*authoritative"):
             validate_timed_semantic_beats(
                 substituted, self.semantic(), self.real_timing()
             )

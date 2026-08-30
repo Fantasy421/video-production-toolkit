@@ -153,10 +153,14 @@
     "safeId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)*$"},
     "timingRepairConstraints": {
       "type": "object",
-      "required": ["visual_media_operation", "timing_validation_id", "affected_beat_ids", "issue_counts", "examples"],
+      "required": ["visual_media_operation", "timing_validation_id", "voice_timing_id", "timed_semantic_beats_id", "scene_timing_contracts_id", "minimum_readable_duration_ms", "affected_beat_ids", "issue_counts", "examples"],
       "properties": {
         "visual_media_operation": {"const": "none"},
         "timing_validation_id": {"$ref": "#/$defs/safeId"},
+        "voice_timing_id": {"$ref": "#/$defs/safeId"},
+        "timed_semantic_beats_id": {"$ref": "#/$defs/safeId"},
+        "scene_timing_contracts_id": {"$ref": "#/$defs/safeId"},
+        "minimum_readable_duration_ms": {"type": "integer", "minimum": 0, "maximum": 36000000},
         "affected_beat_ids": {"type": "array", "minItems": 1, "maxItems": 512, "items": {"$ref": "#/$defs/safeId"}, "uniqueItems": true},
         "issue_counts": {
           "type": "object",

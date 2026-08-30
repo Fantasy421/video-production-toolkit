@@ -110,6 +110,14 @@ class SceneTimingContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "support layer"):
             build_scene_timing_contracts(self.timed_beats(), assignments)
 
+    def test_rejects_an_unregistered_support_layer_at_scene_admission(self):
+        """Catches scene authoring accepting a layer compact validation cannot consume."""
+        assignments = self.assignments()
+        assignments[0]["support_layer"] = "unregistered-overlay"
+
+        with self.assertRaisesRegex(ValueError, "support layer"):
+            build_scene_timing_contracts(self.timed_beats(), assignments)
+
     def test_rejects_a_keyword_window_that_crosses_its_scene_boundary(self):
         """Catches approved emphasis entry or exit being cut by the scene window."""
         assignments = self.assignments()

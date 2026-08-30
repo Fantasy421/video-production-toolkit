@@ -23,7 +23,7 @@
     "milliseconds": {"type": "integer", "minimum": 0, "maximum": 36000000},
     "window": {"type": "array", "prefixItems": [{"$ref": "#/$defs/milliseconds"}, {"$ref": "#/$defs/milliseconds"}], "items": false, "minItems": 2, "maxItems": 2},
     "carrier": {"type": "string", "minLength": 1, "enum": ["a-roll", "b-roll", "scene", "demo", "motion-graphics", "evidence"]},
-    "supportLayer": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+    "supportLayer": {"type": ["string", "null"], "enum": [null, "annotation", "callout", "caption-emphasis", "connection", "label", "number-animation", "progress-state", "subtitle-emphasis"]},
     "scene": {
       "type": "object",
       "required": ["scene_id", "scene_window_ms", "beat_ids", "primary_carrier", "support_layer", "visual_window_ms"],

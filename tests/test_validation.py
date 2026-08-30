@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from scripts.toolkit.validation import validate_project
+from scripts.toolkit.timed_semantic_beats import bind_semantic_beats
 from tests.encoding_boundary_cases import (
     HARMLESS_PROSE_CONTROLS,
     STRUCTURAL_ENCODING_CASES,
@@ -1012,15 +1013,16 @@ class ValidationTests(unittest.TestCase):
 
     def write_timed_semantic_graph(self):
         self.write_voice_bundle()
-        self.write_artifact(
-            "semantic-beats-v1",
-            "semantic-beats",
-            1,
-            "approved",
-            "metadata/semantic-beats-v1.json",
-            parents=["narration-v1"],
-            narration_id="narration-v1",
-            beats=[
+        timing_path = self.timing_artifact_path("voice-timing", "voice-timing-v1")
+        voice_timing = json.loads(timing_path.read_text(encoding="utf-8"))
+        voice_timing["keyword_anchors"] = [{
+            "beat_id": "B01", "keyword": "timing", "start_ms": 1200,
+            "end_ms": 1600,
+        }]
+        timing_path.write_text(json.dumps(voice_timing), encoding="utf-8")
+        semantic_record = {
+            "narration_id": "narration-v1",
+            "beats": [
                 {
                     "beat_id": "B01",
                     "text_ref": "narration-v1:S01:L1",
@@ -1031,6 +1033,19 @@ class ValidationTests(unittest.TestCase):
                     "approval_provenance": "user:keyword-review-v1",
                 }
             ],
+        }
+        exact_timed = bind_semantic_beats(
+            semantic_record, voice_timing, voice_timing["keyword_anchors"]
+        )
+        self.write_artifact(
+            "semantic-beats-v1",
+            "semantic-beats",
+            1,
+            "approved",
+            "metadata/semantic-beats-v1.json",
+            parents=["narration-v1"],
+            narration_id="narration-v1",
+            beats=semantic_record["beats"],
         )
         self.write_artifact(
             "timed-semantic-beats-v1",
@@ -1042,18 +1057,7 @@ class ValidationTests(unittest.TestCase):
             semantic_beats_id="semantic-beats-v1",
             voice_timing_id="voice-timing-v1",
             timing_kind="real",
-            beats=[
-                {
-                    "beat_id": "B01",
-                    "speech_start_ms": 1000,
-                    "speech_end_ms": 2000,
-                    "keyword_start_ms": 1200,
-                    "keyword_end_ms": 1600,
-                    "emphasis_ms": 1400,
-                    "visual_window_ms": [1080, 1900],
-                    "approved_anchor_commitment": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-                }
-            ],
+            beats=exact_timed["beats"],
         )
         self.write_artifact(
             "scene-timing-contracts-v1",
@@ -1066,11 +1070,11 @@ class ValidationTests(unittest.TestCase):
             scenes=[
                 {
                     "scene_id": "S01",
-                    "scene_window_ms": [1000, 2000],
+                    "scene_window_ms": [0, 10_000],
                     "beat_ids": ["B01"],
                     "primary_carrier": "motion-graphics",
                     "support_layer": "caption-emphasis",
-                    "visual_window_ms": [1080, 1900],
+                    "visual_window_ms": exact_timed["beats"][0]["visual_window_ms"],
                 }
             ],
         )
@@ -1100,6 +1104,13 @@ class ValidationTests(unittest.TestCase):
                 "timed-semantic-beats",
                 "timed-semantic-beats-v1",
                 lambda record: record.update({"parents": ["voice-timing-v1"]}),
+                "timed-semantic-lineage-mismatch",
+            ),
+            (
+                "timed-extra-parent",
+                "timed-semantic-beats",
+                "timed-semantic-beats-v1",
+                lambda record: record["parents"].append("unrelated-v1"),
                 "timed-semantic-lineage-mismatch",
             ),
             (
@@ -1142,6 +1153,34 @@ class ValidationTests(unittest.TestCase):
                 result = validate_project(self.root)
 
                 self.assertIn(expected, {item["code"] for item in result["errors"]})
+
+    def test_project_rejects_a_recommitted_timed_range_not_on_the_voice_anchor(self):
+        """Catches persisted graph validation trusting a self-consistent invented range."""
+        self.write_timed_semantic_graph()
+        semantic_path = self.timing_artifact_path("semantic-beats", "semantic-beats-v1")
+        voice_path = self.timing_artifact_path("voice-timing", "voice-timing-v1")
+        timed_path = self.timing_artifact_path(
+            "timed-semantic-beats", "timed-semantic-beats-v1"
+        )
+        semantic = json.loads(semantic_path.read_text(encoding="utf-8"))
+        voice = json.loads(voice_path.read_text(encoding="utf-8"))
+        invented_voice = json.loads(json.dumps(voice))
+        invented_voice["keyword_anchors"][0].update(start_ms=1600, end_ms=1700)
+        invented = bind_semantic_beats(
+            {"narration_id": semantic["narration_id"], "beats": semantic["beats"]},
+            invented_voice,
+            invented_voice["keyword_anchors"],
+        )
+        timed = json.loads(timed_path.read_text(encoding="utf-8"))
+        timed["beats"] = invented["beats"]
+        timed_path.write_text(json.dumps(timed), encoding="utf-8")
+
+        result = validate_project(self.root)
+
+        self.assertIn(
+            "timed-semantic-authority-mismatch",
+            {item["code"] for item in result["errors"]},
+        )
 
     def test_timed_semantic_graph_rejects_duplicate_ids_and_invalid_windows(self):
         """Catches changed-content duplicate beat IDs and reversed or escaping windows."""
@@ -1406,7 +1445,12 @@ class ValidationTests(unittest.TestCase):
         )
         with patch(
             "scripts.toolkit.validation.validate_project_authoritative_voice_bundle",
-            return_value={"ok": True, "voice_timing_id": "voice-timing-v1", "issues": []},
+            return_value={
+                "ok": True,
+                "narration_id": "narration-v1",
+                "voice_timing_id": "voice-timing-v1",
+                "issues": [],
+            },
         ):
             result = validate_project(self.root)
 

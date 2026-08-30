@@ -109,6 +109,11 @@ def build_timing_repair_envelope(
     timing_validation_id: str,
     affected_beat_ids: list[str],
     validation_result: Mapping[str, Any],
+    *,
+    voice_timing_id: str,
+    timed_semantic_beats_id: str,
+    scene_timing_contracts_id: str,
+    minimum_readable_duration_ms: int = 500,
 ) -> dict[str, Any]:
     """Build the single bounded repair envelope from a compact worker result."""
     from scripts.toolkit.timing_validation import validate_timing_validation_result
@@ -119,12 +124,21 @@ def build_timing_repair_envelope(
     envelope = {
         "task_id": task_id,
         "capability": "timing-repair",
-        "inputs": [timing_validation_id],
+        "inputs": [
+            timing_validation_id,
+            scene_timing_contracts_id,
+            timed_semantic_beats_id,
+            voice_timing_id,
+        ],
         "adapter_preferences": ["chatcut"],
         "output_contract": "timing-validation-v1",
         "constraints": {
             "visual_media_operation": "none",
             "timing_validation_id": timing_validation_id,
+            "voice_timing_id": voice_timing_id,
+            "timed_semantic_beats_id": timed_semantic_beats_id,
+            "scene_timing_contracts_id": scene_timing_contracts_id,
+            "minimum_readable_duration_ms": minimum_readable_duration_ms,
             "affected_beat_ids": list(affected_beat_ids),
             "issue_counts": compact["issue_counts"],
             "examples": compact["examples"],
@@ -196,6 +210,19 @@ def timing_contract_inputs_are_current(
     motion, and assembly consumers name the current scene timing contract.
     """
     _validate_envelope_shape(envelope)
+    if envelope["capability"] == "timing-repair":
+        from scripts.toolkit.orchestrator import _current_timing_validation
+
+        records = _artifact_values(artifacts)
+        current = _current_timing_validation(
+            envelope,
+            {item["artifact_id"]: item for item in records},
+            root=root,
+        )
+        return (
+            current is not None
+            and current["timing_validation"]["status"] == "blocked"
+        )
     if root is None or not _is_v3_project(root):
         return voice_timing_input_is_current(envelope, artifacts, root=root)
     capability = envelope["capability"]
@@ -341,7 +368,7 @@ def complete_task(root: Path, result: dict[str, Any]) -> str:
         )
         produced_artifacts = _validate_result_artifacts(envelope, result, artifacts)
         _validate_timing_repair_completion(
-            envelope, result, produced_artifacts, artifacts
+            root, envelope, result, produced_artifacts, artifacts
         )
         _validate_conditional_visual_media_result(
             envelope,
@@ -455,7 +482,15 @@ def active_claim_task_ids(root: Path) -> list[str]:
 def _is_current_result(root: Path, envelope: dict[str, Any], result: dict[str, Any]) -> bool:
     if result["inputs"] != envelope["inputs"]:
         return False
-    return _task_inputs_are_current(root, envelope, _effective_artifacts_by_id(root))
+    artifacts = _effective_artifacts_by_id(root)
+    if envelope["capability"] == "timing-repair":
+        produced_ids = set(result.get("artifacts", []))
+        artifacts = {
+            artifact_id: artifact
+            for artifact_id, artifact in artifacts.items()
+            if artifact_id not in produced_ids
+        }
+    return _task_inputs_are_current(root, envelope, artifacts)
 
 
 def _task_inputs_are_current(
@@ -556,87 +591,138 @@ def _validate_result_artifacts(
 
 
 def _validate_timing_repair_completion(
+    root: Path,
     envelope: dict[str, Any],
     result: dict[str, Any],
     produced_artifacts: list[dict[str, Any]],
     artifacts: dict[str, dict[str, Any]],
 ) -> None:
-    """Require repair success to publish the current passed timing result."""
+    """Require immutable repaired timing authority and recomputed validation."""
     if envelope["capability"] != "timing-repair" or result["status"] != "succeeded":
         return
     from scripts.toolkit.orchestrator import _current_timing_validation
-    from scripts.toolkit.timing_validation import validate_timing_validation_result
+    from scripts.toolkit.timed_semantic_beats import (
+        validate_timed_semantic_beats_artifact,
+    )
+    from scripts.toolkit.timing_validation import (
+        build_compact_timing_rows,
+        validate_timing_rows,
+        validate_timing_validation_result,
+    )
 
+    produced_ids = {item.get("artifact_id") for item in produced_artifacts}
     authority_artifacts = {
         artifact_id: artifact
         for artifact_id, artifact in artifacts.items()
-        if artifact_id not in {item.get("artifact_id") for item in produced_artifacts}
+        if artifact_id not in produced_ids
     }
-    current = _current_timing_validation(envelope, authority_artifacts)
+    current = _current_timing_validation(
+        envelope, authority_artifacts, root=root
+    )
     if current is None or current["timing_validation"]["status"] != "blocked":
         raise ValueError("timing-repair requires the current blocked timing validation")
-    outputs = [
-        artifact
-        for artifact in produced_artifacts
+
+    validation_outputs = [
+        artifact for artifact in produced_artifacts
         if artifact.get("type") == "timing-validation"
     ]
-    if len(outputs) != len(produced_artifacts) or not outputs:
-        raise ValueError("timing-repair must return a timing-validation artifact")
+    scene_outputs = [
+        artifact for artifact in produced_artifacts
+        if artifact.get("type") == "scene-timing-contracts"
+    ]
+    timed_outputs = [
+        artifact for artifact in produced_artifacts
+        if artifact.get("type") == "timed-semantic-beats"
+    ]
+    if (
+        len(validation_outputs) != 1
+        or len(scene_outputs) != 1
+        or len(timed_outputs) > 1
+        or len(validation_outputs) + len(scene_outputs) + len(timed_outputs)
+        != len(produced_artifacts)
+    ):
+        raise ValueError(
+            "timing-repair must return one new scene-timing contract and one timing-validation artifact"
+        )
 
-    for artifact in outputs:
-        if artifact.get("output_contract") != "timing-validation-v1":
-            raise ValueError("timing-repair output contract is invalid")
-        try:
-            compact = validate_timing_validation_result(artifact["timing_validation"])
-        except (KeyError, TypeError, ValueError) as error:
-            raise ValueError("timing-repair output timing validation is invalid") from error
-        if compact["status"] != "passed":
-            raise ValueError("timing-repair output timing validation must be passed")
-        parents = artifact.get("parents")
-        if not isinstance(parents, list) or len(parents) != 1:
-            raise ValueError("timing-repair output must name one scene-timing parent")
-        scene_id = parents[0]
-        lineage = current.get("lineage")
-        if not isinstance(lineage, Mapping):
-            raise ValueError("timing-repair current lineage is invalid")
-        selected_scene_id = lineage.get("scene_timing_contracts_id")
-        selected_timed_id = lineage.get("timed_semantic_beats_id")
-        selected_voice_id = lineage.get("voice_timing_id")
-        if scene_id != selected_scene_id:
-            raise ValueError("timing-repair output is not on the selected current scene lineage")
-        scene = artifacts.get(scene_id)
+    lineage = current.get("lineage")
+    if not isinstance(lineage, Mapping):
+        raise ValueError("timing-repair current lineage is invalid")
+    selected_scene_id = lineage.get("scene_timing_contracts_id")
+    selected_timed_id = lineage.get("timed_semantic_beats_id")
+    selected_voice_id = lineage.get("voice_timing_id")
+    old_scene = authority_artifacts.get(selected_scene_id)
+    old_timed = authority_artifacts.get(selected_timed_id)
+    voice = authority_artifacts.get(selected_voice_id)
+    semantic = (
+        authority_artifacts.get(old_timed.get("semantic_beats_id"))
+        if isinstance(old_timed, Mapping)
+        else None
+    )
+    if not all(
+        isinstance(value, Mapping)
+        for value in (old_scene, old_timed, voice, semantic)
+    ):
+        raise ValueError("timing-repair current lineage is incomplete")
+    validate_timed_semantic_beats_artifact(old_timed, semantic, voice)
+    minimum = envelope["constraints"]["minimum_readable_duration_ms"]
+    old_rows = build_compact_timing_rows(
+        old_scene,
+        old_timed,
+        current_voice_timing_id=selected_voice_id,
+        current_timed_semantic_beats_id=selected_timed_id,
+    )
+    expected_blocked = validate_timing_rows(
+        old_rows, minimum_readable_duration_ms=minimum
+    )
+    if expected_blocked != current["timing_validation"]:
+        raise ValueError("timing-repair input validation does not match derived current rows")
+
+    repaired_timed = old_timed
+    if timed_outputs:
+        repaired_timed = timed_outputs[0]
         if (
-            scene is None
-            or scene.get("type") != "scene-timing-contracts"
-            or scene.get("status") != "approved"
-            or scene.get("timed_semantic_beats_id") != selected_timed_id
-            or not isinstance(scene.get("parents"), list)
-            or selected_timed_id not in scene.get("parents", [])
+            repaired_timed.get("artifact_id") == selected_timed_id
+            or repaired_timed.get("version", 0) <= old_timed.get("version", 0)
+            or repaired_timed.get("semantic_beats_id") != semantic.get("artifact_id")
+            or repaired_timed.get("voice_timing_id") != selected_voice_id
         ):
-            raise ValueError("timing-repair output scene-timing lineage is invalid")
-        timed_id = scene.get("timed_semantic_beats_id")
-        timed = artifacts.get(timed_id)
-        if (
-            timed is None
-            or timed.get("type") != "timed-semantic-beats"
-            or timed.get("status") != "approved"
-            or timed.get("timing_kind") != "real"
-            or timed.get("voice_timing_id") != selected_voice_id
-            or not isinstance(timed.get("parents"), list)
-            or selected_voice_id not in timed.get("parents", [])
-        ):
-            raise ValueError("timing-repair output timed-beats lineage is invalid")
-        voice_id = timed.get("voice_timing_id")
-        voice = artifacts.get(voice_id)
-        if (
-            voice is None
-            or voice.get("type") != "voice-timing"
-            or voice.get("status") != "approved"
-            or voice.get("timing_kind") != "real"
-        ):
-            raise ValueError("timing-repair output voice-timing lineage is invalid")
-        if scene_id not in current.get("parents", []):
-            raise ValueError("timing-repair output is not on the current scene lineage")
+            raise ValueError("timing-repair timed-beat output is not a new exact lineage")
+        validate_timed_semantic_beats_artifact(repaired_timed, semantic, voice)
+
+    repaired_scene = scene_outputs[0]
+    repaired_timed_id = repaired_timed.get("artifact_id")
+    if (
+        repaired_scene.get("artifact_id") == selected_scene_id
+        or repaired_scene.get("version", 0) <= old_scene.get("version", 0)
+        or repaired_scene.get("timed_semantic_beats_id") != repaired_timed_id
+        or repaired_scene.get("parents") != [repaired_timed_id]
+    ):
+        raise ValueError("timing-repair scene output is not a new immutable exact lineage")
+    repaired_rows = build_compact_timing_rows(
+        repaired_scene,
+        repaired_timed,
+        current_voice_timing_id=selected_voice_id,
+        current_timed_semantic_beats_id=repaired_timed_id,
+    )
+    expected_passed = validate_timing_rows(
+        repaired_rows, minimum_readable_duration_ms=minimum
+    )
+    validation = validation_outputs[0]
+    try:
+        compact = validate_timing_validation_result(validation["timing_validation"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("timing-repair output timing validation is invalid") from error
+    if (
+        validation.get("output_contract") != "timing-validation-v1"
+        or validation.get("parents") != [repaired_scene.get("artifact_id")]
+        or validation.get("version", 0) <= current.get("version", 0)
+        or compact != expected_passed
+        or compact.get("status") != "passed"
+    ):
+        raise ValueError(
+            "timing-repair passed validation must exactly match freshly derived repaired rows"
+        )
 
 
 def _compatible_retry_fallback(
@@ -953,8 +1039,14 @@ def _validate_envelope_shape(envelope: dict[str, Any]) -> None:
         if envelope["output_contract"] != "timing-validation-v1":
             raise ValueError("timing-repair output_contract must be timing-validation-v1")
         _validate_timing_repair_constraints(envelope["constraints"])
-        if envelope["constraints"]["timing_validation_id"] not in envelope["inputs"]:
-            raise ValueError("timing-repair must declare timing_validation_id as an input")
+        for field in (
+            "timing_validation_id",
+            "scene_timing_contracts_id",
+            "timed_semantic_beats_id",
+            "voice_timing_id",
+        ):
+            if envelope["constraints"][field] not in envelope["inputs"]:
+                raise ValueError(f"timing-repair must declare {field} as an input")
 
 
 def _validate_current_envelope(envelope: dict[str, Any]) -> None:
@@ -976,6 +1068,10 @@ def _validate_timing_repair_constraints(constraints: dict[str, Any]) -> None:
     allowed = {
         "visual_media_operation",
         "timing_validation_id",
+        "voice_timing_id",
+        "timed_semantic_beats_id",
+        "scene_timing_contracts_id",
+        "minimum_readable_duration_ms",
         "affected_beat_ids",
         "issue_counts",
         "examples",
@@ -985,6 +1081,17 @@ def _validate_timing_repair_constraints(constraints: dict[str, Any]) -> None:
     if constraints.get("visual_media_operation") != "none":
         raise ValueError("timing-repair must be non-visual")
     _require_safe_id(constraints.get("timing_validation_id"), "timing_validation_id")
+    for field in (
+        "voice_timing_id", "timed_semantic_beats_id", "scene_timing_contracts_id"
+    ):
+        _require_safe_id(constraints.get(field), field)
+    minimum = constraints.get("minimum_readable_duration_ms")
+    if (
+        isinstance(minimum, bool)
+        or not isinstance(minimum, int)
+        or not 0 <= minimum <= 36_000_000
+    ):
+        raise ValueError("timing-repair minimum readable duration is invalid")
     beat_ids = constraints.get("affected_beat_ids")
     if not isinstance(beat_ids, list) or not beat_ids or len(beat_ids) > 512:
         raise ValueError("timing-repair affected Beat IDs are invalid")

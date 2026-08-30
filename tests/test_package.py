@@ -86,6 +86,10 @@ class PackageTests(unittest.TestCase):
         voice_timing = self.schema("voice-timing.schema.json")
 
         self.assertFalse(semantic["additionalProperties"])
+        self.assertEqual(
+            "^user:.+",
+            semantic["$defs"]["beat"]["properties"]["approval_provenance"]["pattern"],
+        )
         self.assertEqual("real", timed["properties"]["timing_kind"]["const"])
         self.assertIn("approved_anchor_commitment", timed["$defs"]["beat"]["required"])
         self.assertNotIn("keyword_anchors", voice_timing["required"])
@@ -102,6 +106,20 @@ class PackageTests(unittest.TestCase):
                 "maxItems"
             ],
         )
+        self.assertEqual(
+            [
+                None,
+                "annotation",
+                "callout",
+                "caption-emphasis",
+                "connection",
+                "label",
+                "number-animation",
+                "progress-state",
+                "subtitle-emphasis",
+            ],
+            scenes["$defs"]["supportLayer"]["enum"],
+        )
 
     def test_timing_repair_schema_matches_runtime_authority_boundary(self):
         envelope = build_timing_repair_envelope(
@@ -114,6 +132,9 @@ class PackageTests(unittest.TestCase):
                 "issue_counts": {"SCENE_TOO_SHORT": 1},
                 "examples": {"SCENE_TOO_SHORT": ["B01"]},
             },
+            voice_timing_id="voice-timing-v1",
+            timed_semantic_beats_id="timed-beats-v1",
+            scene_timing_contracts_id="scene-timing-v1",
         )
         validator = self.task_envelope_validator()
         self.assertTrue(list(validator.iter_errors({**envelope, "inputs": []})))
@@ -232,8 +253,10 @@ class PackageTests(unittest.TestCase):
         cases = (
             ("estimated-timing", "timed-semantic-beats.schema.json", timed, lambda record: record.update({"timing_kind": "estimated"})),
             ("missing-approval", "semantic-beats.schema.json", semantic, lambda record: record["beats"][0].pop("approval_provenance")),
+            ("non-user-approval", "semantic-beats.schema.json", semantic, lambda record: record["beats"][0].update({"approval_provenance": "system-generated"})),
             ("duplicate-beat", "semantic-beats.schema.json", semantic, lambda record: record["beats"].append(dict(record["beats"][0]))),
             ("multiple-support-layers", "scene-timing-contracts.schema.json", scenes, lambda record: record["scenes"][0].update({"support_layer": ["caption-emphasis", "annotation"]})),
+            ("unregistered-support-layer", "scene-timing-contracts.schema.json", scenes, lambda record: record["scenes"][0].update({"support_layer": "unregistered-overlay"})),
             ("four-examples", "timing-validation.schema.json", validation, lambda record: record["examples"]["BEAT_OUTSIDE_SCENE"].append("B04")),
         )
         for name, schema_name, fixture, mutate in cases:
@@ -1053,6 +1076,18 @@ class PackageTests(unittest.TestCase):
             "skills/video-project-manager/SKILL.md",
             package_validation.REQUIRED_FILES,
         )
+        for relative in (
+            "references/schemas/motion-contract.schema.json",
+            "scripts/plan_representative_slice.py",
+            "scripts/toolkit/coverage.py",
+            "skills/narration-planner/SKILL.md",
+            "tests/test_invalidation.py",
+            "tests/test_project_state.py",
+            "tests/test_representative_slice.py",
+            "tests/test_voice.py",
+        ):
+            with self.subTest(relative=relative):
+                self.assertIn(relative, package_validation.REQUIRED_FILES)
 
     def test_timing_runtime_contract_mutations_fail_after_fingerprint_refresh(self):
         """A refreshed hash cannot bless a weakened timing runtime boundary."""

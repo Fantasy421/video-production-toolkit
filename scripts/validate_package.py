@@ -182,6 +182,7 @@ REQUIRED_FILES = (
     "references/schemas/event.schema.json",
     "references/schemas/image-task-context.schema.json",
     "references/schemas/layout-pack.schema.json",
+    "references/schemas/motion-contract.schema.json",
     "references/schemas/project.schema.json",
     "references/schemas/scene-contract.schema.json",
     "references/schemas/scene-timing-contracts.schema.json",
@@ -202,12 +203,14 @@ REQUIRED_FILES = (
     "scripts/build_review_pack.py",
     "scripts/install_personal_plugin.py",
     "scripts/migration_audit.py",
+    "scripts/plan_representative_slice.py",
     "scripts/retire_legacy_skill.py",
     "scripts/validate_package.py",
     "scripts/verify_installation.py",
     "scripts/toolkit/adapters.py",
     "scripts/toolkit/artifacts.py",
     "scripts/toolkit/contracts.py",
+    "scripts/toolkit/coverage.py",
     "scripts/toolkit/image_context.py",
     "scripts/toolkit/invalidation.py",
     "scripts/toolkit/orchestrator.py",
@@ -223,6 +226,7 @@ REQUIRED_FILES = (
     "scripts/toolkit/voice_tasks.py",
     "skills/scene-producer/SKILL.md",
     "skills/motion-director/SKILL.md",
+    "skills/narration-planner/SKILL.md",
     "skills/storyboard-director/SKILL.md",
     "skills/structural-validator/SKILL.md",
     "skills/timeline-assembler/SKILL.md",
@@ -235,7 +239,10 @@ REQUIRED_FILES = (
     "tests/encoding_boundary_cases.py",
     "tests/test_artifacts.py",
     "tests/test_image_context.py",
+    "tests/test_invalidation.py",
     "tests/test_package.py",
+    "tests/test_project_state.py",
+    "tests/test_representative_slice.py",
     "tests/test_review_pack.py",
     "tests/test_semantic_beats.py",
     "tests/test_skill_contracts.py",
@@ -245,6 +252,7 @@ REQUIRED_FILES = (
     "tests/test_timing_validation.py",
     "tests/test_validation.py",
     "tests/test_visual_media_context.py",
+    "tests/test_voice.py",
     "tests/test_voice_tasks.py",
 )
 
@@ -587,6 +595,11 @@ def _validate_semantic_beats_schema(
         }
         or beat_properties.get("priority") != {"enum": ["primary", "secondary"]}
         or beat_properties.get("preferred_carrier") != {"$ref": "#/$defs/carrier"}
+        or beat_properties.get("approval_provenance")
+        != {
+            "type": "string", "minLength": 6, "maxLength": 500,
+            "pattern": "^user:.+",
+        }
         or definitions.get("carrier") != _carrier_definition()
     ):
         errors.append("invalid:semantic-beats-contract")
@@ -652,7 +665,14 @@ def _validate_scene_timing_contracts_schema(
         or scene_properties.get("primary_carrier")
         != {"$ref": "#/$defs/carrier", "minLength": 1}
         or definitions.get("carrier") != _carrier_definition()
-        or support != {"type": ["string", "null"], "minLength": 1, "maxLength": 128}
+        or support
+        != {
+            "type": ["string", "null"],
+            "enum": [
+                None, "annotation", "callout", "caption-emphasis", "connection",
+                "label", "number-animation", "progress-state", "subtitle-emphasis",
+            ],
+        }
         or not _timing_window_ruling(schema)
         or not _bounded_windows(definitions)
     ):
@@ -696,6 +716,7 @@ def _validate_timing_runtime_contracts(root: Path, errors: list[str]) -> None:
             (
                 'normalized["decision"] != "approved"',
                 "keyword not in approved_keywords",
+                'normalized["approval_provenance"].startswith("user:")',
             ),
             "invalid:semantic-beats-runtime-contract",
         ),
@@ -705,6 +726,10 @@ def _validate_timing_runtime_contracts(root: Path, errors: list[str]) -> None:
                 'timing.get("timing_kind") != "real"',
                 'timing.get("status") != "approved"',
                 'normalized["voice_timing_id"] != timing["artifact_id"]',
+                'keyword_anchors != timing["keyword_anchors"]',
+                'anchors[beat_id]',
+                'timed.get("parents") != [semantic_id, voice_id]',
+                "if validated != expected:",
             ),
             "invalid:timed-semantic-beats-runtime-contract",
         ),
@@ -723,7 +748,16 @@ def _validate_timing_runtime_contracts(root: Path, errors: list[str]) -> None:
         except (OSError, UnicodeError):
             errors.append(error_code)
             continue
-        if any(fragment not in source for fragment in required_fragments):
+        if any(fragment not in source for fragment in required_fragments) or (
+            relative == "scripts/toolkit/timed_semantic_beats.py"
+            and any(
+                source.count(fragment) != 2
+                for fragment in (
+                    'timing.get("timing_kind") != "real"',
+                    'timing.get("status") != "approved"',
+                )
+            )
+        ):
             errors.append(error_code)
 
 

@@ -107,7 +107,6 @@ class TimingValidationTests(unittest.TestCase):
     def test_malformed_structural_rows_are_rejected_before_rules(self):
         cases = (
             ("missing scene", "scene_id", None),
-            ("missing keyword", "keyword_anchor_ms", None),
             ("missing visual", "visual_window_ms", None),
             ("missing scene window", "scene_window_ms", None),
             ("reversed visual", "visual_window_ms", [1_400, 880]),
@@ -119,6 +118,35 @@ class TimingValidationTests(unittest.TestCase):
                 row = _row()
                 row.pop(field, None) if value is None else row.__setitem__(field, value)
                 with self.assertRaisesRegex(ValueError, "compact|timing row"):
+                    validate_timing_rows([row], minimum_readable_duration_ms=500)
+
+    def test_explicit_null_keyword_anchor_returns_the_closed_missing_issue(self):
+        """Catches nullable missing-anchor state raising before bounded repair routing."""
+        row = _row()
+        row["keyword_anchor_ms"] = None
+
+        result = validate_timing_rows([row], minimum_readable_duration_ms=500)
+
+        self.assertEqual("blocked", result["status"])
+        self.assertEqual(1, result["issue_counts"]["KEYWORD_ANCHOR_MISSING"])
+        self.assertEqual(["B01"], result["examples"]["KEYWORD_ANCHOR_MISSING"])
+
+    def test_missing_or_wrong_typed_keyword_anchor_is_not_nullable(self):
+        """Catches the missing sentinel broadening into omitted or malformed payloads."""
+        cases = (
+            ("omitted", object()),
+            ("string", "1000..1200"),
+            ("mapping", {"start_ms": 1000, "end_ms": 1200}),
+            ("wrong-list", [1000]),
+        )
+        for name, value in cases:
+            with self.subTest(name=name):
+                row = _row()
+                if name == "omitted":
+                    row.pop("keyword_anchor_ms")
+                else:
+                    row["keyword_anchor_ms"] = value
+                with self.assertRaisesRegex(ValueError, "compact|keyword_anchor"):
                     validate_timing_rows([row], minimum_readable_duration_ms=500)
 
     def test_carrier_and_support_are_canonical_scalars(self):

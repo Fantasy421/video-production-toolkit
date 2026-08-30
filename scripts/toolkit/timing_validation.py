@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 import re
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
+from .artifacts import TIMING_SUPPORT_LAYERS
 from .contracts import SCENE_CARRIERS
 
 
@@ -68,18 +69,6 @@ _LINEAGE_FIELDS = frozenset(
         "current_voice_timing_id",
         "timed_semantic_beats_id",
         "current_timed_semantic_beats_id",
-    }
-)
-_SUPPORT_LAYERS = frozenset(
-    {
-        "caption-emphasis",
-        "callout",
-        "number-animation",
-        "label",
-        "subtitle-emphasis",
-        "connection",
-        "progress-state",
-        "annotation",
     }
 )
 _SAFE_ID = re.compile(
@@ -208,6 +197,185 @@ def validate_timing_rows(
     }
 
 
+def build_compact_timing_rows(
+    scene_timing: Mapping[str, Any],
+    timed_beats: Mapping[str, Any],
+    *,
+    current_voice_timing_id: str,
+    current_timed_semantic_beats_id: str,
+) -> list[dict[str, Any]]:
+    """Derive the only compact validation rows from one exact scene lineage."""
+    from .scene_timing import validate_scene_timing_contracts
+
+    if not isinstance(scene_timing, Mapping) or not isinstance(timed_beats, Mapping):
+        raise ValueError("compact timing rows require scene and timed mappings")
+    scene = dict(scene_timing)
+    timed = dict(timed_beats)
+    if (
+        scene.get("type") != "scene-timing-contracts"
+        or scene.get("parents") != [timed.get("artifact_id")]
+        or scene.get("timed_semantic_beats_id") != timed.get("artifact_id")
+        or timed.get("artifact_id") != current_timed_semantic_beats_id
+        or timed.get("voice_timing_id") != current_voice_timing_id
+    ):
+        raise ValueError("compact timing rows require the exact current lineage")
+    validate_scene_timing_contracts(
+        {
+            "timed_semantic_beats_id": scene["timed_semantic_beats_id"],
+            "scenes": scene["scenes"],
+        },
+        timed,
+    )
+    by_id = {beat["beat_id"]: beat for beat in timed["beats"]}
+    rows: list[dict[str, Any]] = []
+    for assignment in scene["scenes"]:
+        for beat_id in assignment["beat_ids"]:
+            beat = by_id[beat_id]
+            rows.append(
+                {
+                    "beat_id": beat_id,
+                    "scene_id": assignment["scene_id"],
+                    "keyword_anchor_ms": [
+                        beat["keyword_start_ms"], beat["keyword_end_ms"]
+                    ],
+                    "visual_window_ms": list(assignment["visual_window_ms"]),
+                    "scene_window_ms": list(assignment["scene_window_ms"]),
+                    "primary_carrier": assignment["primary_carrier"],
+                    "support_layer": assignment["support_layer"],
+                    "timing_kind": timed["timing_kind"],
+                    "voice_timing_status": "approved",
+                    "voice_timing_id": timed["voice_timing_id"],
+                    "current_voice_timing_id": current_voice_timing_id,
+                    "timed_semantic_beats_id": timed["artifact_id"],
+                    "current_timed_semantic_beats_id": current_timed_semantic_beats_id,
+                }
+            )
+    return [_copy_row(row) for row in rows]
+
+
+def validate_authoritative_timing_chain(
+    artifacts: Iterable[Mapping[str, Any]],
+    *,
+    narration_id: str,
+    voice_timing_id: str,
+    through: Literal["timed", "scene", "validation"] = "validation",
+    minimum_readable_duration_ms: int = 500,
+) -> dict[str, dict[str, Any]]:
+    """Resolve and validate the one exact current timing authority chain.
+
+    Approved metadata is not sufficient authority on its own.  Each selected
+    head must have exact parents, the timed record must equal a recomputation
+    from the authoritative voice anchors, and a persisted compact validation
+    must equal a fresh validation of rows derived from its exact scene parent.
+    """
+    if through not in {"timed", "scene", "validation"}:
+        raise ValueError("timing authority boundary is not recognized")
+    if isinstance(artifacts, (Mapping, str, bytes, bytearray)):
+        raise ValueError("timing authority requires an artifact sequence")
+    try:
+        records = [dict(item) for item in artifacts]
+    except (TypeError, ValueError) as error:
+        raise ValueError("timing authority requires mapping artifacts") from error
+    if not all(isinstance(item, Mapping) for item in records):
+        raise ValueError("timing authority requires mapping artifacts")
+
+    def latest(candidates: list[dict[str, Any]], label: str) -> dict[str, Any]:
+        if not candidates:
+            raise ValueError(f"authoritative {label} is required")
+        return max(
+            candidates,
+            key=lambda item: (
+                item.get("version")
+                if isinstance(item.get("version"), int)
+                and not isinstance(item.get("version"), bool)
+                else -1,
+                item.get("artifact_id")
+                if isinstance(item.get("artifact_id"), str)
+                else "",
+            ),
+        )
+
+    voice_matches = [
+        item for item in records
+        if item.get("type") == "voice-timing"
+        and item.get("status") == "approved"
+        and item.get("artifact_id") == voice_timing_id
+        and item.get("timing_kind") == "real"
+    ]
+    if len(voice_matches) != 1:
+        raise ValueError("authoritative real voice timing is required")
+    voice = voice_matches[0]
+    semantic = latest(
+        [
+            item for item in records
+            if item.get("type") == "semantic-beats"
+            and item.get("status") == "approved"
+            and item.get("narration_id") == narration_id
+            and item.get("parents") == [narration_id]
+        ],
+        "semantic beats",
+    )
+    semantic_id = semantic.get("artifact_id")
+    timed = latest(
+        [
+            item for item in records
+            if item.get("type") == "timed-semantic-beats"
+            and item.get("status") == "approved"
+            and item.get("semantic_beats_id") == semantic_id
+            and item.get("voice_timing_id") == voice_timing_id
+        ],
+        "timed semantic beats",
+    )
+    from .timed_semantic_beats import validate_timed_semantic_beats_artifact
+
+    validate_timed_semantic_beats_artifact(timed, semantic, voice)
+    chain = {"semantic": semantic, "voice": voice, "timed": timed}
+    if through == "timed":
+        return chain
+
+    timed_id = timed.get("artifact_id")
+    scene = latest(
+        [
+            item for item in records
+            if item.get("type") == "scene-timing-contracts"
+            and item.get("status") == "approved"
+            and item.get("timed_semantic_beats_id") == timed_id
+        ],
+        "scene timing contracts",
+    )
+    rows = build_compact_timing_rows(
+        scene,
+        timed,
+        current_voice_timing_id=voice_timing_id,
+        current_timed_semantic_beats_id=timed_id,
+    )
+    chain["scene"] = scene
+    if through == "scene":
+        return chain
+
+    scene_id = scene.get("artifact_id")
+    validation = latest(
+        [
+            item for item in records
+            if item.get("type") == "timing-validation"
+            and item.get("status") == "approved"
+            and item.get("parents") == [scene_id]
+        ],
+        "timing validation",
+    )
+    compact = validate_timing_validation_result(validation.get("timing_validation"))
+    expected = validate_timing_rows(
+        rows,
+        minimum_readable_duration_ms=minimum_readable_duration_ms,
+    )
+    if compact != expected:
+        raise ValueError(
+            "authoritative timing validation must equal freshly derived compact rows"
+        )
+    chain["validation"] = validation
+    return chain
+
+
 def _copy_row(row: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(row, Mapping):
         raise ValueError("timing rows must be compact mapping records")
@@ -240,7 +408,9 @@ def _copy_row(row: Mapping[str, Any]) -> dict[str, Any]:
         if field in copied and copied[field] not in (None, "") and not _safe_id(copied[field]):
             raise ValueError(f"timing row {field} must be a safe lineage ID")
 
-    for field in ("keyword_anchor_ms", "visual_window_ms", "scene_window_ms"):
+    if copied["keyword_anchor_ms"] is not None and _window(copied["keyword_anchor_ms"]) is None:
+        raise ValueError("timing row keyword_anchor_ms must be null or an ordered bounded window")
+    for field in ("visual_window_ms", "scene_window_ms"):
         if _window(copied[field]) is None:
             raise ValueError(f"timing row {field} must be an ordered bounded window")
 
@@ -260,7 +430,7 @@ def _copy_row(row: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError("timing row support_layer must be one scalar or null")
     elif support is not None and (
         not isinstance(support, str)
-        or support not in _SUPPORT_LAYERS
+        or support not in TIMING_SUPPORT_LAYERS
         or not 0 < len(support) <= 128
         or not support.strip()
     ):

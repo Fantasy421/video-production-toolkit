@@ -29,6 +29,8 @@ from .tasks import (
     _validate_result,
     _validate_result_artifacts,
 )
+from .timed_semantic_beats import validate_timed_semantic_beats_artifact
+from .timing_validation import validate_authoritative_timing_chain
 from .visual_media_context import (
     ACTIVE_VISUAL_MEDIA_OPERATIONS,
     classify_visual_media_task,
@@ -247,20 +249,6 @@ def _check_v3_phase_gates(
     if phase not in V3_PHASES or V3_PHASES.index(phase) < V3_PHASES.index("timing_bound"):
         return
 
-    def current(artifact_type: str, **lineage: Any) -> Optional[dict[str, Any]]:
-        candidates = [
-            item
-            for item in artifacts.values()
-            if item.get("type") == artifact_type
-            and item.get("status") == "approved"
-            and all(item.get(key) == value for key, value in lineage.items())
-        ]
-        return max(
-            candidates,
-            key=lambda item: (item.get("version", 0), item.get("artifact_id", "")),
-            default=None,
-        )
-
     voice_bundle = validate_project_authoritative_voice_bundle(root, artifacts.values())
     voice_timing_id = voice_bundle.get("voice_timing_id")
     voice_timing = artifacts.get(voice_timing_id) if isinstance(voice_timing_id, str) else None
@@ -273,36 +261,38 @@ def _check_v3_phase_gates(
     ):
         errors.append(_issue("voice-timing-required"))
         return
-    timed = current(
-        "timed-semantic-beats", voice_timing_id=voice_timing.get("artifact_id")
-    )
-    if timed is None or voice_timing.get("artifact_id") not in timed.get("parents", []):
+    try:
+        validate_authoritative_timing_chain(
+            artifacts.values(),
+            narration_id=voice_bundle.get("narration_id"),
+            voice_timing_id=voice_timing_id,
+            through="timed",
+        )
+    except (TypeError, ValueError):
         errors.append(_issue("timed-semantic-beats-required"))
         return
     if V3_PHASES.index(phase) < V3_PHASES.index("storyboard_timed"):
         return
-    scenes = current(
-        "scene-timing-contracts", timed_semantic_beats_id=timed.get("artifact_id")
-    )
-    if scenes is None or timed.get("artifact_id") not in scenes.get("parents", []):
+    try:
+        validate_authoritative_timing_chain(
+            artifacts.values(),
+            narration_id=voice_bundle.get("narration_id"),
+            voice_timing_id=voice_timing_id,
+            through="scene",
+        )
+    except (TypeError, ValueError):
         errors.append(_issue("scene-timing-contracts-required"))
         return
     if phase != "production_ready":
         return
-    validation_candidates = [
-        item
-        for item in artifacts.values()
-        if item.get("type") == "timing-validation"
-        and item.get("status") == "approved"
-        and scenes.get("artifact_id") in item.get("parents", [])
-    ]
-    validation = max(
-        validation_candidates,
-        key=lambda item: (item.get("version", 0), item.get("artifact_id", "")),
-        default=None,
-    )
-    compact = validation.get("timing_validation") if validation else None
-    if not isinstance(compact, dict) or compact.get("status") != "passed":
+    try:
+        validate_authoritative_timing_chain(
+            artifacts.values(),
+            narration_id=voice_bundle.get("narration_id"),
+            voice_timing_id=voice_timing_id,
+            through="validation",
+        )
+    except (TypeError, ValueError):
         errors.append(_issue("timing-validation-required"))
 
 
@@ -498,7 +488,7 @@ def _check_semantic_beats_artifact(
     narration = artifacts.get(narration_id) if isinstance(narration_id, str) else None
     if (
         not _is_approved_artifact(narration, "narration")
-        or narration_id not in artifact["parents"]
+        or artifact["parents"] != [narration_id]
     ):
         errors.append(
             _issue("semantic-beats-lineage-mismatch", artifact_id=artifact["artifact_id"])
@@ -533,10 +523,13 @@ def _valid_timed_beat(beat: Any) -> bool:
         and re.fullmatch(r"sha256:[0-9a-f]{64}", beat["approved_anchor_commitment"])
     ):
         return False
+    visual_window = beat["visual_window_ms"]
     return (
         beat["speech_start_ms"] <= beat["keyword_start_ms"]
         <= beat["emphasis_ms"] <= beat["keyword_end_ms"]
         <= beat["speech_end_ms"]
+        and visual_window[0] <= beat["keyword_start_ms"]
+        < beat["keyword_end_ms"] <= visual_window[1]
     )
 
 
@@ -554,8 +547,7 @@ def _check_timed_semantic_artifact(
         not _is_approved_artifact(semantic, "semantic-beats")
         or not _is_approved_artifact(voice_timing, "voice-timing")
         or voice_timing.get("timing_kind") != "real"
-        or semantic_id not in artifact["parents"]
-        or voice_timing_id not in artifact["parents"]
+        or artifact["parents"] != [semantic_id, voice_timing_id]
     ):
         errors.append(_issue("timed-semantic-lineage-mismatch", artifact_id=artifact_id))
     timed_ids = _timing_beat_ids(artifact.get("beats"))
@@ -570,6 +562,18 @@ def _check_timed_semantic_artifact(
         not _valid_timed_beat(beat) for beat in artifact["beats"]
     ):
         errors.append(_issue("invalid-timed-semantic-timing", artifact_id=artifact_id))
+    if (
+        _is_approved_artifact(semantic, "semantic-beats")
+        and _is_approved_artifact(voice_timing, "voice-timing")
+    ):
+        try:
+            validate_timed_semantic_beats_artifact(
+                artifact, semantic, voice_timing
+            )
+        except ValueError:
+            errors.append(
+                _issue("timed-semantic-authority-mismatch", artifact_id=artifact_id)
+            )
 
 
 def _check_scene_timing_artifact(
@@ -580,7 +584,7 @@ def _check_scene_timing_artifact(
     timed = artifacts.get(timed_id) if isinstance(timed_id, str) else None
     if (
         not _is_approved_artifact(timed, "timed-semantic-beats")
-        or timed_id not in artifact["parents"]
+        or artifact["parents"] != [timed_id]
     ):
         errors.append(_issue("scene-timing-lineage-mismatch", artifact_id=artifact_id))
     if not _is_approved_artifact(timed, "timed-semantic-beats") or not isinstance(timed_id, str):

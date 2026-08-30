@@ -22,6 +22,7 @@ from scripts.toolkit.tasks import (
     timing_contract_inputs_are_current,
 )
 from scripts.toolkit.project_state import initialize_project
+from scripts.toolkit.timed_semantic_beats import bind_semantic_beats
 from scripts.toolkit.visual_media_context import ACTIVE_VISUAL_MEDIA_OPERATIONS
 from tests.encoding_boundary_cases import (
     HARMLESS_PROSE_CONTROLS,
@@ -63,12 +64,18 @@ class CurrentTaskEnvelopeMetadataTests(unittest.TestCase):
                 "issue_counts": {"SCENE_TOO_SHORT": 1},
                 "examples": {"SCENE_TOO_SHORT": ["B01"]},
             },
+            voice_timing_id="voice-timing-v1",
+            timed_semantic_beats_id="timed-beats-v1",
+            scene_timing_contracts_id="scene-timing-v1",
         )
         envelope["inputs"] = []
         with self.assertRaisesRegex(ValueError, "timing_validation_id.*input"):
             tasks.validate_current_task_envelope(envelope)
 
-        envelope["inputs"] = ["timing-validation-v1"]
+        envelope["inputs"] = [
+            "timing-validation-v1", "scene-timing-v1", "timed-beats-v1",
+            "voice-timing-v1",
+        ]
         envelope["output_contract"] = "task-result-v1"
         with self.assertRaisesRegex(ValueError, "output_contract"):
             tasks.validate_current_task_envelope(envelope)
@@ -2552,8 +2559,18 @@ class TaskTests(unittest.TestCase):
             )
         self.assertTrue((self.root / "tasks" / "locks" / "preview-S03-v2.lock").exists())
 
-    def test_timing_repair_success_requires_current_passed_timing_artifact(self):
-        """Catches generic output artifacts terminating a repair without new timing authority."""
+    def create_timing_repair_graph(self):
+        anchor = {
+            "beat_id": "B01", "keyword": "timing", "start_ms": 1200,
+            "end_ms": 1600,
+        }
+        voice = self.create_artifact(
+            "voice-timing-repair", "voice-timing", 2,
+            parents=["voiceover-v1"], voiceover_id="voiceover-v1",
+            timing_kind="real", duration_ms=12000,
+            segments=[{"start_ms": 0, "end_ms": 12000, "text": "narration"}],
+            keyword_anchors=[anchor],
+        )
         semantic = self.create_artifact(
             "semantic-beats-v1", "semantic-beats", 1,
             parents=["narration-v1"], narration_id="narration-v1",
@@ -2564,30 +2581,35 @@ class TaskTests(unittest.TestCase):
                 "approval_provenance": "user:keyword-review-v1",
             }],
         )
-        commitment = "sha256:" + hashlib.sha256(b"B01").hexdigest()
+        semantic_record = {
+            "narration_id": "narration-v1",
+            "beats": [{
+                "beat_id": "B01", "text_ref": "narration-v1:S01:L1",
+                "keyword": "timing", "intent": "core-concept-emphasis",
+                "priority": "primary", "preferred_carrier": "motion-graphics",
+                "approval_provenance": "user:keyword-review-v1",
+            }],
+        }
+        exact = bind_semantic_beats(
+            semantic_record,
+            tasks._effective_artifacts_by_id(self.root)[voice],
+            [anchor],
+        )
         timed = self.create_artifact(
             "timed-beats-v1", "timed-semantic-beats", 1,
-            parents=[semantic, "voice-timing-v1"],
-            semantic_beats_id=semantic, voice_timing_id="voice-timing-v1",
-            timing_kind="real", beats=[{
-                "beat_id": "B01", "speech_start_ms": 1000,
-                "speech_end_ms": 2000, "keyword_start_ms": 1200,
-                "keyword_end_ms": 1600, "emphasis_ms": 1400,
-                "visual_window_ms": [1080, 1900],
-                "approved_anchor_commitment": commitment,
-            }],
+            parents=[semantic, voice], semantic_beats_id=semantic, **exact,
         )
         scene = self.create_artifact(
             "scene-timing-v1", "scene-timing-contracts", 1,
             parents=[timed], timed_semantic_beats_id=timed,
             scenes=[{
-                "scene_id": "S01", "scene_window_ms": [1000, 2000],
+                "scene_id": "S01", "scene_window_ms": [1080, 1800],
                 "beat_ids": ["B01"], "primary_carrier": "motion-graphics",
-                "support_layer": "caption-emphasis", "visual_window_ms": [1080, 1900],
+                "support_layer": "caption-emphasis", "visual_window_ms": [1080, 1800],
             }],
         )
         blocked = {
-            "status": "blocked", "checks_run": 1,
+            "status": "blocked", "checks_run": 9,
             "issue_counts": {"SCENE_TOO_SHORT": 1},
             "examples": {"SCENE_TOO_SHORT": ["B01"]},
         }
@@ -2596,8 +2618,17 @@ class TaskTests(unittest.TestCase):
             parents=[scene], timing_validation=blocked,
         )
         envelope = build_timing_repair_envelope(
-            "timing-repair-v1", validation, ["B01"], blocked
+            "timing-repair-v1", validation, ["B01"], blocked,
+            voice_timing_id=voice,
+            timed_semantic_beats_id=timed,
+            scene_timing_contracts_id=scene,
+            minimum_readable_duration_ms=900,
         )
+        return envelope, semantic, voice, timed, scene, validation
+
+    def test_timing_repair_rejects_passed_only_validation(self):
+        """Catches a passed-only result authorizing an unchanged invalid scene."""
+        envelope, _, _, timed, scene, _ = self.create_timing_repair_graph()
         create_task(self.root, envelope)
         claim = claim_task(self.root, envelope["task_id"], "worker-a")
         result = {
@@ -2606,123 +2637,96 @@ class TaskTests(unittest.TestCase):
         }
 
         self.create_artifact(
-            "fake-timing-result", "report", 1, parents=[scene],
-            output_contract="timing-validation-v1",
-        )
-        with self.assertRaisesRegex(ValueError, "timing-validation artifact"):
-            complete_task(self.root, {**result, "artifacts": ["fake-timing-result"]})
-
-        self.create_artifact(
-            "timing-validation-v2", "timing-validation", 2,
+            "timing-validation-passed-only", "timing-validation", 2,
             parents=[scene], output_contract="timing-validation-v1",
-            timing_validation={"status": "passed", "checks_run": 2},
+            timing_validation={"status": "passed", "checks_run": 9},
         )
-        self.assertEqual(
-            "completed",
-            complete_task(self.root, {**result, "artifacts": ["timing-validation-v2"]}),
-        )
-
-    def test_timing_repair_completion_binds_selected_scene_lineage(self):
-        """Rejects alternate or metadata-only scene parents on a passed result."""
-        semantic = self.create_artifact(
-            "semantic-beats-lineage", "semantic-beats", 1,
-            parents=["narration-v1"], narration_id="narration-v1",
-            beats=[{
-                "beat_id": "B01", "text_ref": "narration-v1:S01:L1",
-                "keyword": "lineage", "intent": "core-concept-emphasis",
-                "priority": "primary", "preferred_carrier": "motion-graphics",
-                "approval_provenance": "user:keyword-review-v1",
-            }],
-        )
-        commitment = "sha256:" + hashlib.sha256(b"lineage").hexdigest()
-        beat = {
-            "beat_id": "B01", "speech_start_ms": 1000,
-            "speech_end_ms": 2000, "keyword_start_ms": 1200,
-            "keyword_end_ms": 1600, "emphasis_ms": 1400,
-            "visual_window_ms": [1080, 1900],
-            "approved_anchor_commitment": commitment,
-        }
-        timed = self.create_artifact(
-            "timed-beats-lineage", "timed-semantic-beats", 1,
-            parents=[semantic, "voice-timing-v1"],
-            semantic_beats_id=semantic, voice_timing_id="voice-timing-v1",
-            timing_kind="real", beats=[beat],
-        )
-        scene = self.create_artifact(
-            "scene-timing-lineage", "scene-timing-contracts", 1,
-            parents=[timed], timed_semantic_beats_id=timed,
-            scenes=[{
-                "scene_id": "S01", "scene_window_ms": [1000, 2000],
-                "beat_ids": ["B01"], "primary_carrier": "motion-graphics",
-                "support_layer": "caption-emphasis", "visual_window_ms": [1080, 1900],
-            }],
-        )
-
-        # Build a second approved real chain that is intentionally not selected
-        # by the resolver (the current voice ID sorts after this alternate ID).
-        voice_alt = self.create_artifact(
-            "voice-timing-alt", "voice-timing", 1,
-            parents=["voiceover-v1"], voiceover_id="voiceover-v1",
-            timing_kind="real", duration_ms=12000,
-            segments=[{"start_ms": 0, "end_ms": 12000, "text": "narration"}],
-            keyword_anchors=[],
-        )
-        timed_alt = self.create_artifact(
-            "timed-beats-alt", "timed-semantic-beats", 1,
-            parents=[semantic, voice_alt], semantic_beats_id=semantic,
-            voice_timing_id=voice_alt, timing_kind="real", beats=[beat],
-        )
-        scene_alt = self.create_artifact(
-            "scene-timing-alt", "scene-timing-contracts", 1,
-            parents=[timed_alt], timed_semantic_beats_id=timed_alt,
-            scenes=[{
-                "scene_id": "S01", "scene_window_ms": [1000, 2000],
-                "beat_ids": ["B01"], "primary_carrier": "motion-graphics",
-                "support_layer": "caption-emphasis", "visual_window_ms": [1080, 1900],
-            }],
-        )
-        blocked = {
-            "status": "blocked", "checks_run": 1,
-            "issue_counts": {"SCENE_TOO_SHORT": 1},
-            "examples": {"SCENE_TOO_SHORT": ["B01"]},
-        }
-        validation = self.create_artifact(
-            "timing-validation-lineage", "timing-validation", 1,
-            parents=[scene, scene_alt], timing_validation=blocked,
-        )
-        envelope = build_timing_repair_envelope(
-            "timing-repair-lineage", validation, ["B01"], blocked
-        )
-        create_task(self.root, envelope)
-        claim = claim_task(self.root, envelope["task_id"], "worker-a")
-        result = {
-            "task_id": envelope["task_id"], "status": "succeeded",
-            "inputs": envelope["inputs"], "checks": [], "warnings": [], **claim,
-        }
-
-        self.create_artifact(
-            "timing-validation-alt-output", "timing-validation", 2,
-            parents=[scene_alt], output_contract="timing-validation-v1",
-            timing_validation={"status": "passed", "checks_run": 2},
-        )
-        with self.assertRaisesRegex(ValueError, "selected current scene lineage"):
+        with self.assertRaisesRegex(ValueError, "new scene-timing"):
             complete_task(
                 self.root,
-                {**result, "artifacts": ["timing-validation-alt-output"]},
+                {**result, "artifacts": ["timing-validation-passed-only"]},
             )
 
+    def test_timing_repair_success_requires_a_new_scene_and_recomputed_pass(self):
+        """Accepts only an immutable repaired scene with a freshly derived pass."""
+        envelope, _, _, timed, _, _ = self.create_timing_repair_graph()
+        create_task(self.root, envelope)
+        claim = claim_task(self.root, envelope["task_id"], "worker-a")
+        result = {
+            "task_id": envelope["task_id"], "status": "succeeded",
+            "inputs": envelope["inputs"], "checks": [], "warnings": [], **claim,
+        }
+        repaired_scene = self.create_artifact(
+            "scene-timing-v2", "scene-timing-contracts", 2,
+            parents=[timed], timed_semantic_beats_id=timed,
+            output_contract="timing-validation-v1",
+            scenes=[{
+                "scene_id": "S01", "scene_window_ms": [0, 2000],
+                "beat_ids": ["B01"], "primary_carrier": "motion-graphics",
+                "support_layer": "caption-emphasis", "visual_window_ms": [1080, 1800],
+            }],
+        )
         self.create_artifact(
-            "timing-validation-lineage-output", "timing-validation", 2,
-            parents=[scene], output_contract="timing-validation-v1",
-            timing_validation={"status": "passed", "checks_run": 2},
+            "timing-validation-v2", "timing-validation", 2,
+            parents=[repaired_scene], output_contract="timing-validation-v1",
+            timing_validation={"status": "passed", "checks_run": 9},
         )
         self.assertEqual(
             "completed",
             complete_task(
                 self.root,
-                {**result, "artifacts": ["timing-validation-lineage-output"]},
+                {**result, "artifacts": [repaired_scene, "timing-validation-v2"]},
             ),
         )
+
+    def test_timing_repair_uses_authoritative_narration_not_global_latest_voice(self):
+        """Catches an unrelated higher voice ID taking repair-route authority."""
+        self.create_artifact(
+            "narration-orphan", "narration", 1, status="stale"
+        )
+        self.create_artifact(
+            "voice-source-orphan", "voice-source-decision", 99,
+            parents=["narration-orphan"], narration_id="narration-orphan",
+            mode="tts", decision="approved",
+            decision_provenance="user:orphan-source",
+        )
+        self.create_artifact(
+            "voice-profile-orphan", "voice-profile", 99,
+            parents=["narration-orphan", "voice-source-orphan"],
+            narration_id="narration-orphan",
+            source_decision_id="voice-source-orphan", mode="tts", language="en",
+            provider="test", voice_id="orphan", speaking_rate=1.0,
+            emotion="calm", pronunciations=[], approved=True,
+            consent_provenance="user:orphan-consent",
+            profile_provenance="user:orphan-profile",
+        )
+        self.create_artifact(
+            "voiceover-orphan", "voiceover", 99,
+            parents=[
+                "narration-orphan", "voice-source-orphan", "voice-profile-orphan",
+            ],
+            narration_id="narration-orphan",
+            source_decision_id="voice-source-orphan", mode="tts",
+            profile_id="voice-profile-orphan", media_path="media/orphan.wav",
+            media_format="wav", duration_ms=12000, provenance="generated-orphan",
+        )
+        orphan = self.create_artifact(
+            "voice-timing-zz-orphan", "voice-timing", 99,
+            parents=["voiceover-orphan"], voiceover_id="voiceover-orphan",
+            timing_kind="real", duration_ms=12000,
+            segments=[{"start_ms": 0, "end_ms": 12000, "text": "orphan"}],
+            keyword_anchors=[],
+        )
+        envelope, _, voice, _, _, _ = self.create_timing_repair_graph()
+        create_task(self.root, envelope)
+
+        mismatched = json.loads(json.dumps(envelope))
+        mismatched["task_id"] = "timing-repair-orphan"
+        mismatched["constraints"]["voice_timing_id"] = orphan
+        mismatched["inputs"][-1] = orphan
+        with self.assertRaisesRegex(ValueError, "current real voice_timing_id"):
+            create_task(self.root, mismatched)
+        self.assertEqual(voice, envelope["constraints"]["voice_timing_id"])
 
     def test_succeeded_result_requires_at_least_one_returned_artifact(self):
         """Catches a success marker terminating work without its contracted output."""

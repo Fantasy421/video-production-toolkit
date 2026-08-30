@@ -193,9 +193,11 @@ class SkillContractTests(unittest.TestCase):
         for requirement in (
             "also accepts the coordinator's `timing-repair` envelope",
             "declare `timing_validation_id` in `inputs`",
+            "name the exact `voice_timing_id`, `timed_semantic_beats_id`, and `scene_timing_contracts_id` lineage",
             "output_contract: timing-validation-v1",
-            "closed `visual_media_operation`, `timing_validation_id`, `affected_beat_ids`, `issue_counts`, and `examples`",
+            "`minimum_readable_duration_ms`, `affected_beat_ids`, `issue_counts`, and `examples` constraint fields",
             "compact blocked result",
+            "freshly derived rows from that exact lineage",
         ):
             with self.subTest(requirement=requirement):
                 self.assertIn(requirement, normalized)

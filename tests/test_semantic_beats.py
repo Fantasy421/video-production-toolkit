@@ -117,6 +117,16 @@ class SemanticBeatTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             freeze_semantic_beats("narration-v3", self.candidates(), malformed)
 
+    def test_generic_validation_rejects_non_user_approval_provenance(self):
+        """Catches generic Artifact callers bypassing the user-approved freeze helper."""
+        frozen = freeze_semantic_beats(
+            "narration-v3", self.candidates(), self.approval()
+        )
+        frozen["beats"][0]["approval_provenance"] = "system-generated"
+
+        with self.assertRaisesRegex(ValueError, "user"):
+            validate_semantic_beats(frozen)
+
     def test_legacy_projection_is_read_only_and_defensive(self):
         """Catches a compatibility projection becoming an authorable timing record."""
         legacy = {
