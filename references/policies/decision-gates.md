@@ -50,12 +50,20 @@ phase/scope combinations:
 
 | Project phase | Legal production capability |
 | --- | --- |
-| `initialized` | `narration.plan` |
-| `content_ready` | `visual.preview` |
-| `direction_ready` | `voice.prepare` |
-| `voice_ready` | `storyboard.plan` |
-| `storyboard_ready` | representative-slice `scene.produce`, `motion.preview`, `motion.produce`, or `timeline.assemble`; representative-slice `captions.produce`; `representative-slice.produce` |
-| `production_ready` | full-production `scene.produce`, `motion.produce`, or `timeline.assemble`; full-production `captions.produce` |
+| `initialized` | `narration.plan` (v1/v2 compatibility) |
+| `content_ready` | `visual.preview` (v1/v2 compatibility) |
+| `direction_ready` | `voice.prepare` (v1/v2 compatibility) |
+| `voice_ready` | `storyboard.plan` (v1/v2 compatibility) |
+| `storyboard_ready` | representative-slice `scene.produce`, `motion.preview`, `motion.produce`, or `timeline.assemble`; representative-slice `captions.produce`; `representative-slice.produce` (v1/v2 compatibility) |
+| `production_ready` | full-production `scene.produce`, `motion.produce`, or `timeline.assemble`; full-production `captions.produce` (v1/v2 compatibility) |
+| `script_confirmed` | semantic-beat planning and confirmation |
+| `semantic_beats_confirmed` | optional untimed `visual.preview`, then `voice.prepare` |
+| `visual_direction_previewed` | `voice.prepare` only; preview timing cannot authorize formal work |
+| `voiceover_ready` | timing binding |
+| `timing_bound` | formal `storyboard.plan` with current real timing |
+| `storyboard_timed` | representative-slice scene/motion/assembly with current scene timing |
+| `representative_scene_ready` | production readiness review |
+| `production_ready` (v3) | full production only after current real voice timing, timed beats, scene timing contracts, and passed compact timing validation |
 | `assembled` | `structure.validate` |
 | `review_ready` | `review.package` |
 | any valid phase | `project.manage` |

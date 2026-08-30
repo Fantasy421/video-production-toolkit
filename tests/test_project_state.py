@@ -154,6 +154,92 @@ class ProjectStateTests(unittest.TestCase):
 
         self.assertEqual("voice_ready", replay_events(self.root)["phase"])
 
+    def test_v3_projects_replay_the_voice_timed_phase_order(self):
+        """V3 starts at script confirmation and keeps preview optional."""
+        initialize_project(
+            self.root, "kv-v3", "knowledge-video", schema_version=3
+        )
+        for phase in (
+            "semantic_beats_confirmed",
+            "voiceover_ready",
+            "timing_bound",
+            "storyboard_timed",
+            "representative_scene_ready",
+        ):
+            append_event(
+                self.root, {"event": "project.phase_changed", "phase": phase}
+            )
+        self.assertEqual("representative_scene_ready", replay_events(self.root)["phase"])
+
+    def test_v3_visual_preview_cannot_skip_timing(self):
+        initialize_project(
+            self.root, "kv-v3-preview", "knowledge-video", schema_version=3
+        )
+        append_event(
+            self.root,
+            {"event": "project.phase_changed", "phase": "semantic_beats_confirmed"},
+        )
+        append_event(
+            self.root,
+            {"event": "project.phase_changed", "phase": "visual_direction_previewed"},
+        )
+        with self.assertRaisesRegex(ValueError, "illegal project phase transition"):
+            append_event(
+                self.root,
+                {"event": "project.phase_changed", "phase": "storyboard_timed"},
+            )
+
+    def test_v3_production_ready_requires_the_current_timing_chain(self):
+        initialize_project(
+            self.root, "kv-v3-production", "knowledge-video", schema_version=3
+        )
+        for phase in (
+            "semantic_beats_confirmed",
+            "voiceover_ready",
+            "timing_bound",
+            "storyboard_timed",
+            "representative_scene_ready",
+        ):
+            append_event(
+                self.root, {"event": "project.phase_changed", "phase": phase}
+            )
+        with self.assertRaisesRegex(ValueError, "current real voice timing"):
+            append_event(
+                self.root,
+                {"event": "project.phase_changed", "phase": "production_ready"},
+            )
+
+    def test_v3_recovery_is_read_only_and_reports_compact_timing_blocker(self):
+        event_log = self.root / "events" / "events.jsonl"
+        event_log.parent.mkdir(parents=True)
+        events = [
+            {
+                "event": "project.initialized",
+                "schema_version": 3,
+                "project_id": "kv-v3-recovery",
+                "workflow": "knowledge-video",
+            },
+            *(
+                {"event": "project.phase_changed", "phase": phase}
+                for phase in (
+                    "semantic_beats_confirmed",
+                    "voiceover_ready",
+                    "timing_bound",
+                    "storyboard_timed",
+                    "representative_scene_ready",
+                    "production_ready",
+                )
+            ),
+        ]
+        event_log.write_text(
+            "\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8"
+        )
+        original = event_log.read_bytes()
+        view = project_recovery_view(self.root, artifacts=[])
+        self.assertEqual("semantic_beats_confirmed", view["phase"])
+        self.assertEqual("timing-recovery-blocked", view["migration_requirement"]["code"])
+        self.assertEqual(original, event_log.read_bytes())
+
     def test_direction_cannot_skip_voice_ready(self):
         """Catches a new phase event using the pre-voice transition order."""
         self.advance_to("direction_ready")

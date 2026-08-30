@@ -6,6 +6,8 @@ stage.  The helpers return fresh dictionaries so callers cannot mutate input
 objects through a shared reference.
 """
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 import re
 from typing import Any

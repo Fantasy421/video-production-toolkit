@@ -12,7 +12,14 @@ from unittest.mock import patch
 
 from scripts.toolkit.artifacts import create_artifact
 from scripts.toolkit import tasks
-from scripts.toolkit.tasks import claim_task, complete_task, create_task, retry_decision
+from scripts.toolkit.tasks import (
+    claim_task,
+    complete_task,
+    create_task,
+    retry_decision,
+    timing_contract_inputs_are_current,
+)
+from scripts.toolkit.project_state import initialize_project
 from scripts.toolkit.visual_media_context import ACTIVE_VISUAL_MEDIA_OPERATIONS
 from tests.encoding_boundary_cases import (
     HARMLESS_PROSE_CONTROLS,
@@ -42,6 +49,36 @@ class CurrentTaskEnvelopeMetadataTests(unittest.TestCase):
         ):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 tasks.validate_current_task_envelope(self.envelope(**{key: value}))
+
+    def test_v3_formal_tasks_require_current_timed_beats_and_scene_contract(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            initialize_project(root, "v3-task-gate", "knowledge-video", schema_version=3)
+            envelope = {
+                "task_id": "v3-scene",
+                "capability": "scene.produce",
+                "inputs": ["voice-timing-v2", "timed-beats-v2", "scene-timing-v2"],
+                "adapter_preferences": ["chatcut"],
+                "output_contract": "scene-video-v1",
+                "constraints": {
+                    "voice_timing_id": "voice-timing-v2",
+                    "timed_semantic_beats_id": "timed-beats-v2",
+                    "scene_timing_contracts_id": "scene-timing-v2",
+                    "visual_media_operation": "none",
+                },
+            }
+            records = [
+                {"artifact_id": "voice-timing-v2", "type": "voice-timing", "status": "approved"},
+                {"artifact_id": "timed-beats-v2", "type": "timed-semantic-beats", "status": "approved", "version": 2, "voice_timing_id": "voice-timing-v2"},
+                {"artifact_id": "scene-timing-v2", "type": "scene-timing-contracts", "status": "approved", "version": 2, "timed_semantic_beats_id": "timed-beats-v2"},
+            ]
+            with patch(
+                "scripts.toolkit.tasks.voice_timing_input_is_current",
+                return_value=True,
+            ):
+                self.assertTrue(timing_contract_inputs_are_current(envelope, records, root=root))
+                envelope["constraints"].pop("scene_timing_contracts_id")
+                self.assertFalse(timing_contract_inputs_are_current(envelope, records, root=root))
 
     def test_persisted_validator_keeps_explicit_legacy_separate_from_current(self):
         tasks._validate_persisted_envelope(

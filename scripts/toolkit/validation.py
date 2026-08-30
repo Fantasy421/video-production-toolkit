@@ -12,6 +12,8 @@ from .project_state import (
     LEGACY_PHASES,
     LEGACY_PROJECT_SCHEMA_VERSION,
     PHASES,
+    V3_PHASES,
+    V3_PROJECT_SCHEMA_VERSION,
     PROJECT_SCHEMA_VERSIONS,
     replay_events,
 )
@@ -98,6 +100,7 @@ def validate_project(root: Path) -> dict[str, list[dict[str, Any]]]:
     _check_artifact_graph(root, artifacts, errors)
     _check_timed_semantic_graph(artifacts, errors)
     _check_voice_lineage(root, project, schema_origin, artifacts, errors)
+    _check_v3_phase_gates(root, project, artifacts, errors)
     _check_packs(root, artifacts, errors)
     _check_promoted_assets(root, artifacts, errors)
     tasks = _check_tasks(root, artifacts, errors)
@@ -218,7 +221,8 @@ def _read_project(root: Path, errors: list[dict[str, Any]]) -> dict[str, Any]:
     if not all(isinstance(project.get(key), str) and project[key] for key in ("project_id", "workflow", "phase")):
         errors.append(_issue("invalid-project-state", path="project.json"))
         return {}
-    if project["phase"] not in PHASES or (
+    valid_phases = V3_PHASES if project.get("schema_version") == V3_PROJECT_SCHEMA_VERSION else PHASES
+    if project["phase"] not in valid_phases or (
         project["schema_version"] == LEGACY_PROJECT_SCHEMA_VERSION
         and project["phase"] not in LEGACY_PHASES
     ):
@@ -228,6 +232,62 @@ def _read_project(root: Path, errors: list[dict[str, Any]]) -> dict[str, Any]:
         errors.append(_issue("invalid-project-state", path="project.json"))
         return {}
     return project
+
+
+def _check_v3_phase_gates(
+    root: Path,
+    project: dict[str, Any],
+    artifacts: dict[str, dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> None:
+    """Validate current timing authority for v3 readiness phases."""
+    if project.get("schema_version") != V3_PROJECT_SCHEMA_VERSION:
+        return
+    phase = project.get("phase")
+    if phase not in V3_PHASES or V3_PHASES.index(phase) < V3_PHASES.index("timing_bound"):
+        return
+
+    def current(artifact_type: str, **lineage: Any) -> Optional[dict[str, Any]]:
+        candidates = [
+            item
+            for item in artifacts.values()
+            if item.get("type") == artifact_type
+            and item.get("status") == "approved"
+            and all(item.get(key) == value for key, value in lineage.items())
+        ]
+        return max(
+            candidates,
+            key=lambda item: (item.get("version", 0), item.get("artifact_id", "")),
+            default=None,
+        )
+
+    voice_timing = current("voice-timing")
+    if voice_timing is None or voice_timing.get("timing_kind") != "real":
+        errors.append(_issue("voice-timing-required"))
+        return
+    timed = current(
+        "timed-semantic-beats", voice_timing_id=voice_timing.get("artifact_id")
+    )
+    if timed is None:
+        errors.append(_issue("timed-semantic-beats-required"))
+        return
+    if V3_PHASES.index(phase) < V3_PHASES.index("storyboard_timed"):
+        return
+    scenes = current(
+        "scene-timing-contracts", timed_semantic_beats_id=timed.get("artifact_id")
+    )
+    if scenes is None:
+        errors.append(_issue("scene-timing-contracts-required"))
+        return
+    if phase != "production_ready":
+        return
+    validation = current("timing-validation")
+    payload = None
+    if validation is not None and scenes.get("artifact_id") in validation.get("parents", []):
+        source = _safe_project_path(root, validation.get("path"))
+        payload = _read_json_object(source) if source is not None else None
+    if not isinstance(payload, dict) or payload.get("status") != "passed":
+        errors.append(_issue("timing-validation-required"))
 
 
 def _read_artifacts(root: Path, errors: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

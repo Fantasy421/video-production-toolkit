@@ -16,6 +16,7 @@ from scripts.toolkit.invalidation import (
 )
 from scripts.toolkit.project_state import (
     PHASES,
+    V3_PHASES,
     append_event,
     project_recovery_view,
     replay_events,
@@ -27,7 +28,7 @@ from scripts.toolkit.tasks import (
     authorize_declared_visual_media_task,
     validate_current_task_envelope,
     validate_persisted_task_envelope,
-    voice_timing_input_is_current,
+    timing_contract_inputs_are_current,
 )
 
 
@@ -120,7 +121,7 @@ def _calculate_ready_tasks(
     if not isinstance(state, Mapping):
         raise ValueError("state must be a mapping")
     phase = state.get("phase")
-    if phase is not None and phase not in PHASES:
+    if phase is not None and phase not in {*PHASES, *V3_PHASES}:
         raise ValueError("project phase is not recognized")
     candidates = state.get("candidate_tasks", [])
     if not isinstance(candidates, list):
@@ -156,7 +157,7 @@ def _calculate_ready_tasks(
             continue
         if not _parents_are_current(candidate["inputs"], by_id):
             continue
-        if not voice_timing_input_is_current(candidate, by_id, root=root):
+        if not timing_contract_inputs_are_current(candidate, by_id, root=root):
             continue
         gate = _required_gate(candidate)
         if gate is not None and not _has_gate_approval(
@@ -184,6 +185,30 @@ def _capability_is_legal_in_phase(candidate: Mapping[str, Any], phase: str) -> b
     if allowed is None:
         raise ValueError(f"unknown coordinator capability: {capability}")
     scope = candidate["constraints"].get("production_scope")
+    if phase in V3_PHASES:
+        v3_allowed = {
+            "narration.plan": {"script_confirmed"},
+            "visual.preview": {"semantic_beats_confirmed", "visual_direction_previewed"},
+            "voice.prepare": {"semantic_beats_confirmed", "visual_direction_previewed"},
+            "storyboard.plan": {"timing_bound"},
+            "representative-slice.produce": {"storyboard_timed"},
+            "motion.preview": {"storyboard_timed"},
+            "scene.produce": {"storyboard_timed", "production_ready"},
+            "motion.produce": {"storyboard_timed", "production_ready"},
+            "timeline.assemble": {"storyboard_timed", "production_ready"},
+            "captions.produce": {"storyboard_timed", "production_ready"},
+            "structure.validate": set(),
+            "review.package": set(),
+            "project.manage": set(V3_PHASES),
+        }
+        allowed_v3 = v3_allowed.get(capability)
+        if allowed_v3 is None:
+            raise ValueError(f"unknown coordinator capability: {capability}")
+        scope = candidate["constraints"].get("production_scope")
+        if capability in {"scene.produce", "motion.produce", "timeline.assemble", "captions.produce"}:
+            return phase == "production_ready" if scope in _EXPANSION_SCOPES else phase == "storyboard_timed"
+        return phase in allowed_v3
+
     if capability in {
         "scene.produce",
         "motion.produce",
@@ -260,6 +285,10 @@ def resume_project(root: Path) -> dict[str, Any]:
         "visual-media-input-forbidden",
         "visual-media-isolation-required",
         "visual-media-result-invalid",
+        "voice-timing-required",
+        "timed-semantic-beats-required",
+        "scene-timing-contracts-required",
+        "timing-validation-required",
     }
     persisted_issues = [
         {
@@ -270,14 +299,26 @@ def resume_project(root: Path) -> dict[str, Any]:
         for issue in persisted["errors"]
         if issue.get("code") in blocking_codes
     ]
+    state_recovery_issues = [
+        {"code": code}
+        for code in state.get("migration_requirement", {}).get("issues", [])
+        if isinstance(code, str)
+    ]
     recovery_issues = _deduplicate_recovery_issues(
-        [*load_issues, *authority_issues, *persisted_issues]
+        [*state_recovery_issues, *load_issues, *authority_issues, *persisted_issues]
     )
     if recovery_issues:
-        recorded_phase = state["phase"]
+        recorded_phase = state.get("migration_requirement", {}).get(
+            "recorded_phase", state["phase"]
+        )
+        recovery_floor = (
+            "semantic_beats_confirmed"
+            if state.get("schema_version") == 3
+            else "direction_ready"
+        )
         safe_phase = (
-            "direction_ready"
-            if PHASES.index(recorded_phase) > PHASES.index("direction_ready")
+            recovery_floor
+            if _phase_position(recorded_phase) > _phase_position(recovery_floor)
             else recorded_phase
         )
         state = {
@@ -286,6 +327,8 @@ def resume_project(root: Path) -> dict[str, Any]:
             "migration_requirement": {
                 "code": "visual-media-recovery-blocked",
                 "recorded_phase": recorded_phase,
+                **({"issues": [item["code"] for item in recovery_issues if "code" in item]}
+                   if state.get("schema_version") == 3 else {}),
             },
         }
         candidate_tasks = []
@@ -529,3 +572,12 @@ def _string_set(value: Any, label: str) -> set[str]:
     if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
         raise ValueError(f"{label} must be a string list")
     return set(value)
+
+
+def _phase_position(phase: str) -> int:
+    """Return a comparable position across historical and v3 recovery views."""
+    if phase in V3_PHASES:
+        return V3_PHASES.index(phase)
+    if phase in PHASES:
+        return PHASES.index(phase)
+    return -1

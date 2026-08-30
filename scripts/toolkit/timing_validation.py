@@ -7,6 +7,8 @@ coordinator: a result contains counts and no more than three Beat IDs per
 issue code.
 """
 
+from __future__ import annotations
+
 from collections.abc import Iterable, Mapping
 import re
 from typing import Any, Callable

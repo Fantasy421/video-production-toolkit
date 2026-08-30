@@ -18,7 +18,11 @@ from scripts.toolkit.image_context import (
     validate_image_result_envelope,
     validate_image_task_constraints,
 )
-from scripts.toolkit.project_state import _state_lock
+from scripts.toolkit.project_state import (
+    V3_PROJECT_SCHEMA_VERSION,
+    _state_lock,
+    replay_events,
+)
 from scripts.toolkit.runtime_paths import project_path, project_root, storage_directory
 from scripts.toolkit.visual_media_context import (
     SAFE_ID_RE,
@@ -106,8 +110,10 @@ def create_task(root: Path, envelope: dict[str, Any]) -> Path:
     storage_directory(root, "events", create=True)
     with _state_lock(root, exclusive=False):
         artifacts = _effective_artifacts_by_id(root)
-        if not voice_timing_input_is_current(envelope, artifacts, root=root):
-            raise ValueError("task envelope requires the current real voice_timing_id")
+        if not timing_contract_inputs_are_current(envelope, artifacts, root=root):
+            raise ValueError(
+                "task envelope requires the current real voice_timing_id and timing contracts"
+            )
         if not _artifact_inputs_are_current(envelope, artifacts):
             raise ValueError("task envelope requires current approved inputs")
         _authorize_declared_visual_media_inputs(envelope, artifacts)
@@ -146,6 +152,84 @@ def voice_timing_input_is_current(
     return (
         bundle["ok"]
         and bundle["voice_timing_id"] == timing_id
+    )
+
+
+def timing_contract_inputs_are_current(
+    envelope: dict[str, Any], artifacts: Any, *, root: Optional[Path] = None
+) -> bool:
+    """Check the complete timing lineage required by a v3 task.
+
+    V2 tasks retain their historical voice-timing-only contract. V3 formal
+    visual work additionally names the current timed-beat record, and scene,
+    motion, and assembly consumers name the current scene timing contract.
+    """
+    _validate_envelope_shape(envelope)
+    if root is None or not _is_v3_project(root):
+        return voice_timing_input_is_current(envelope, artifacts, root=root)
+    capability = envelope["capability"]
+    if capability not in VOICE_TIMING_CAPABILITIES:
+        return True
+    records = _artifact_values(artifacts)
+    by_id = {record.get("artifact_id"): record for record in records}
+    if not voice_timing_input_is_current(envelope, records, root=root):
+        return False
+    voice_id = envelope["constraints"].get("voice_timing_id")
+    current_timed = _latest_current_timing(
+        records, "timed-semantic-beats", voice_timing_id=voice_id
+    )
+    timed_id = envelope["constraints"].get("timed_semantic_beats_id")
+    if current_timed is None or timed_id != current_timed.get("artifact_id"):
+        return False
+    if timed_id not in envelope["inputs"] or by_id.get(timed_id) is None:
+        return False
+    scene_consumers = {
+        "scene.produce",
+        "motion.preview",
+        "motion.produce",
+        "timeline.assemble",
+        "captions.produce",
+        "representative-slice.produce",
+    }
+    if capability in scene_consumers:
+        current_scene = _latest_current_timing(
+            records,
+            "scene-timing-contracts",
+            timed_semantic_beats_id=timed_id,
+        )
+        scene_id = envelope["constraints"].get(
+            "scene_timing_contracts_id",
+            envelope["constraints"].get("scene_timing_id"),
+        )
+        if current_scene is None or scene_id != current_scene.get("artifact_id"):
+            return False
+        if scene_id not in envelope["inputs"] or by_id.get(scene_id) is None:
+            return False
+    return True
+
+
+def _is_v3_project(root: Path) -> bool:
+    try:
+        return replay_events(root).get("schema_version") == V3_PROJECT_SCHEMA_VERSION
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _latest_current_timing(
+    records: list[dict[str, Any]], artifact_type: str, **lineage: Any
+) -> Optional[dict[str, Any]]:
+    candidates = [
+        record
+        for record in records
+        if record.get("type") == artifact_type
+        and record.get("status") == "approved"
+        and all(record.get(key) == value for key, value in lineage.items())
+    ]
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda record: (record.get("version", 0), record.get("artifact_id", "")),
     )
 
 
@@ -345,7 +429,7 @@ def _task_inputs_are_current(
     envelope: dict[str, Any],
     artifacts: dict[str, dict[str, Any]],
 ) -> bool:
-    if not voice_timing_input_is_current(envelope, artifacts, root=root):
+    if not timing_contract_inputs_are_current(envelope, artifacts, root=root):
         return False
     if not _artifact_inputs_are_current(envelope, artifacts):
         return False
