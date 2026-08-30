@@ -9,7 +9,7 @@ release.
   bump reflects the public Artifact and workflow-state contract changes.
 - Updated the manifest, package validator, README, and installed visual-smoke
   expectations to `0.2.0`.
-- Release fingerprint: `sha256:10294c0933cdb8110d1f4bd5e8f4befd2278f9672889c7bb0dba57b0dcb6e50c`.
+- Release fingerprint: `sha256:5b4fc51dc4d3dabb01199158ded7ec8bc25807fa096aeacc153c03b30d005e25`.
 - Added semantic-beats and timing-validation runtime/test files to the
   distributable fingerprint surface.
 - Added refreshed-fingerprint mutation guards for approval freeze, real timing,
@@ -36,3 +36,17 @@ does not open or play audio or visual payloads.
 
 Installation, host-cache replacement, media operations, and remote push were
 not performed, as explicitly out of scope for this task.
+
+## Review fix round 1 (I1/I2)
+
+- Added `references/policies/narration-and-coverage.md` and
+  `skills/video-project-manager/SKILL.md` to `REQUIRED_FILES` and release
+  fingerprint coverage, with content-mutation assertions.
+- Added the fail-closed runtime sentinel for
+  `scripts/toolkit/timing_validation.py::_MAX_EXAMPLES = 3` and a
+  refreshed-fingerprint mutation test proving `3 -> 4` is rejected.
+- Refreshed 0.2.0 fingerprint: `sha256:5b4fc51dc4d3dabb01199158ded7ec8bc25807fa096aeacc153c03b30d005e25`.
+- Full offline matrix: 577 passed, 4 documented skips.
+- Plain-Python matrix: 577 passed, 4 documented skips.
+- Package validation, timing smoke (all 8 checks), forbidden scans, and
+  `git diff --check`: passed.

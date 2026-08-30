@@ -1045,6 +1045,14 @@ class PackageTests(unittest.TestCase):
         self.assertIn("scripts/toolkit/semantic_beats.py", package_validation.REQUIRED_FILES)
         self.assertIn("scripts/migration_audit.py", package_validation.REQUIRED_FILES)
         self.assertIn("scripts/toolkit/timed_semantic_beats.py", package_validation.REQUIRED_FILES)
+        self.assertIn(
+            "references/policies/narration-and-coverage.md",
+            package_validation.REQUIRED_FILES,
+        )
+        self.assertIn(
+            "skills/video-project-manager/SKILL.md",
+            package_validation.REQUIRED_FILES,
+        )
 
     def test_timing_runtime_contract_mutations_fail_after_fingerprint_refresh(self):
         """A refreshed hash cannot bless a weakened timing runtime boundary."""
@@ -1070,6 +1078,13 @@ class PackageTests(unittest.TestCase):
                 'False',
                 "invalid:timed-semantic-beats-runtime-contract",
             ),
+            (
+                "bounded-examples",
+                "scripts/toolkit/timing_validation.py",
+                "_MAX_EXAMPLES = 3",
+                "_MAX_EXAMPLES = 4",
+                "invalid:timing-validation-runtime-contract",
+            ),
         )
         for name, relative, original, replacement, expected in cases:
             with self.subTest(name=name), TemporaryDirectory() as folder:
@@ -1082,6 +1097,19 @@ class PackageTests(unittest.TestCase):
                 errors = validate_package(package)
                 self.assertNotIn("invalid:release-fingerprint", errors)
                 self.assertIn(expected, errors)
+
+    def test_timing_policy_and_recovery_skill_are_fingerprint_inputs(self):
+        """Catches normative timing guidance being omitted from release identity."""
+        for relative in (
+            "references/policies/narration-and-coverage.md",
+            "skills/video-project-manager/SKILL.md",
+        ):
+            with self.subTest(relative=relative), TemporaryDirectory() as folder:
+                package = self.copy_package(folder)
+                path = package / relative
+                original = path.read_text(encoding="utf-8")
+                path.write_text(original + "\nrelease-policy-mutation\n", encoding="utf-8")
+                self.assertIn("invalid:release-fingerprint", validate_package(package))
 
     def test_each_required_file_is_content_fingerprinted(self):
         """Catches any required release file being present but changed or deleted."""

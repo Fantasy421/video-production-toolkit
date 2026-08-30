@@ -175,6 +175,7 @@ REQUIRED_FILES = (
     "previews/layouts/talking-head-left-explainer-right-v1.html",
     "references/policies/decision-gates.md",
     "references/policies/invalidation.json",
+    "references/policies/narration-and-coverage.md",
     "references/policies/project-assets.md",
     "references/policies/visual-media-isolation.md",
     "references/schemas/artifact.schema.json",
@@ -228,6 +229,7 @@ REQUIRED_FILES = (
     "skills/video-director/SKILL.md",
     "skills/video-review-packager/SKILL.md",
     "skills/visual-system-designer/SKILL.md",
+    "skills/video-project-manager/SKILL.md",
     "skills/voiceover-producer/SKILL.md",
     "tests/test_end_to_end.py",
     "tests/encoding_boundary_cases.py",
@@ -705,6 +707,11 @@ def _validate_timing_runtime_contracts(root: Path, errors: list[str]) -> None:
                 'normalized["voice_timing_id"] != timing["artifact_id"]',
             ),
             "invalid:timed-semantic-beats-runtime-contract",
+        ),
+        (
+            "scripts/toolkit/timing_validation.py",
+            ("_MAX_EXAMPLES = 3",),
+            "invalid:timing-validation-runtime-contract",
         ),
     )
     for relative, required_fragments, error_code in contracts:
