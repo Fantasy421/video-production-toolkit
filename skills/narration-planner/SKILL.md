@@ -37,6 +37,12 @@ Stopping conditions: do not rewrite approved content, infer missing voice
 timing as production timing, or consume undeclared artifacts. Stop at the
 Content gate without a scoped approval and return `waiting_user`.
 
-Follow `../../references/schemas/task-envelope.schema.json`,
-`../../references/schemas/task-result.schema.json`, and
-`../../references/policies/decision-gates.md`.
+## Deterministic contract boundary
+
+Run `python3 scripts/validate_task_packet.py build <envelope.json>` before
+reasoning. Read only its capability, declared Artifact IDs, time window, and
+contract summary; never load common Schemas or policy bodies. Return no more
+than eight checks and eight warnings of 64 characters each, then run
+`python3 scripts/validate_task_packet.py result <result.json>`. Runtime
+validators remain authoritative for approvals, immutable artifacts, and
+recovery.

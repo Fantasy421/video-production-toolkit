@@ -60,7 +60,7 @@ VISUAL_MEDIA_OPERATIONS = frozenset(
 )
 ACTIVE_VISUAL_MEDIA_OPERATIONS = VISUAL_MEDIA_OPERATIONS - {"none"}
 VISUAL_MEDIA_SCOPE_KINDS = frozenset(
-    {"scene-contract", "character-asset-batch", "review-batch"}
+    {"scene-contract", "scene-batch", "character-asset-batch", "review-batch"}
 )
 VISUAL_MEDIA_CAPABILITIES = frozenset(
     {
@@ -277,6 +277,7 @@ MEDIA_KINDS = frozenset({"audio", "data", "document", "image", "video"})
 VISUAL_RESULT_BUDGET_BYTES = 32_768
 MAX_ALLOWED_ARTIFACT_IDS = 16
 MAX_REVIEW_BATCH_IDS = 8
+MAX_SCENE_BATCH_IDS = 6
 MAX_HANDOFF_ITEMS = 8
 
 CONTEXT_FIELDS = frozenset(
@@ -474,16 +475,22 @@ def validate_visual_media_context(context: Mapping[str, Any]) -> dict[str, Any]:
     scope_id = scope.get("id")
     if scope_kind not in VISUAL_MEDIA_SCOPE_KINDS:
         raise ValueError("scope_identity kind is not recognized")
-    if scope_kind == "review-batch":
+    if scope_kind in {"review-batch", "scene-batch"}:
+        label = f"{scope_kind} scope_identity id"
+        maximum = (
+            MAX_REVIEW_BATCH_IDS
+            if scope_kind == "review-batch"
+            else MAX_SCENE_BATCH_IDS
+        )
         try:
             scope_id = _id_list(
                 scope_id,
-                "review-batch scope_identity id",
+                label,
                 min_items=1,
-                max_items=MAX_REVIEW_BATCH_IDS,
+                max_items=maximum,
             )
         except ValueError as error:
-            raise ValueError(f"review-batch scope is invalid: {error}") from error
+            raise ValueError(f"{scope_kind} scope is invalid: {error}") from error
     elif not _safe_id(scope_id):
         raise ValueError("scope_identity id must be one safe Artifact ID")
     normalized["scope_identity"] = {"kind": scope_kind, "id": scope_id}
@@ -768,6 +775,19 @@ def validate_declared_visual_media_inputs(
         if review_ids != input_set:
             raise PermissionError(
                 "review-batch scope must be the exact declared task input set"
+            )
+    elif scope_kind == "scene-batch":
+        scene_ids = set(scope["id"])
+        declared_scene_ids = {
+            item
+            for item in inputs
+            if artifacts[item].get("type") == "scene-contract"
+        }
+        if scene_ids != declared_scene_ids or any(
+            artifacts[item].get("status") != "approved" for item in scene_ids
+        ):
+            raise PermissionError(
+                "scene-batch scope must be the exact approved scene-contract input set"
             )
     else:
         scope_id = scope["id"]

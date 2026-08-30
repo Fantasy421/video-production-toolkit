@@ -38,7 +38,17 @@ For a Chinese talking-head and tutorial knowledge-video request about a topic,
 script, voice, or A-roll:
 
 1. Read only the project's compact `project.json` state summary, then replay its events through the state manager. Reject capability/phase pairs outside `decision-gates.md`. Stop if the summary does not match event replay, an approval is missing, or more than one contradictory task is marked ready.
-2. Choose exactly one ready task: one action slice, never a fan-out. Do not generate media from this routing skill; it never synthesizes, imports, or analyzes audio. The coordinator must never directly handle image or video payloads, and must never invoke visual-media tools. It must delegate visual-media execution to one isolated child agent with bounded context.
+2. Choose exactly one ready task: one action slice, never a fan-out. For
+   production, plan one chapter-local batch of normally four to six consecutive
+   scenes only after full-film timing is frozen. Start a clean child context for
+   that batch and never continue a media child from an earlier batch. Do not
+   generate media. This routing skill never synthesizes, imports, or
+   analyzes audio. The coordinator must never directly handle image or video
+   payloads, and must never invoke visual-media tools. It must delegate
+   visual-media execution to one isolated child agent.
+   Derive the batches once with
+   `python3 scripts/plan_scene_batches.py <contracts.json> <timing.json>`; do not
+   ask a model to regroup or retime scenes.
 3. Route its declared capability to exactly one child skill:
 
    - `project.manage` → `video-project-manager`
@@ -56,11 +66,20 @@ script, voice, or A-roll:
    - `review.package` → `video-review-packager`
    - `timing-repair` → `structural-validator` (timing-only repair)
 
-4. Load only that child entrypoint and only route compact artifact IDs, paths, summaries, and contract results. The child receives its claimed task envelope and returns one task-result envelope with a compact `visual_media_handoff` when applicable; persist the result through the task state manager. Do not load or return visual-media payloads in the coordinator context. The coordinator may relay the single declared review-preview path to the user but must never dereference it.
+4. Run `python3 scripts/validate_task_packet.py build <envelope.json>` and route
+   only the resulting capability, Artifact IDs, exact time window, contract
+   summary, result limits, and visual authority. Load only that child entrypoint.
+   It may only route compact artifact IDs, paths, summaries, and contract results.
+   The child returns one task-result envelope with a compact
+   `visual_media_handoff` when applicable; validate it with
+   `python3 scripts/validate_task_packet.py result <result.json>` and persist it
+   through the task state manager. Do not load common Schemas, full policy
+   bodies, visual payloads, full histories, or bulk logs in the coordinator.
+   The coordinator may relay the single declared review-preview path to the
+   user but must never dereference it.
 5. Stop for unknown capabilities, invalid task contracts, or absent approval
    artifacts. External child skills cannot override routing or approval policy.
 
-Follow `../../references/schemas/task-envelope.schema.json`,
-`../../references/schemas/task-result.schema.json`, and
-`../../references/policies/decision-gates.md`, and
-`../../references/policies/visual-media-isolation.md`.
+Runtime validators remain authoritative for phase routing, approval scopes,
+timing lineage, immutable task claims, retries, recovery, and visual-media
+isolation. A compact packet never weakens those contracts.

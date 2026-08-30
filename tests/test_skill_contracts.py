@@ -30,8 +30,8 @@ class SkillContractTests(unittest.TestCase):
             self.assertIn(f"Owned capability: `{capability}`", text)
             self.assertEqual(1, text.count("Owned capability:"))
             self.assertIn("Return a task-result envelope", text)
-            self.assertIn("task-envelope.schema.json", text)
-            self.assertIn("task-result.schema.json", text)
+            self.assertIn("scripts/validate_task_packet.py build", text)
+            self.assertIn("scripts/validate_task_packet.py result", text)
 
     def test_motion_production_is_explicitly_delegated_from_preview_owner(self):
         """Catches a second motion skill becoming an ambiguous route owner."""
@@ -59,8 +59,8 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("waiting_user", text)
         self.assertIn("waiting_external", text)
         self.assertIn("silently change voice/profile/provider", text)
-        self.assertIn("task-envelope.schema.json", text)
-        self.assertIn("task-result.schema.json", text)
+        self.assertIn("scripts/validate_task_packet.py build", text)
+        self.assertIn("scripts/validate_task_packet.py result", text)
 
     def test_narration_planner_freezes_user_approved_untimed_semantic_beats(self):
         """Catches narration planning fabricating formal timing before voice evidence exists."""
@@ -99,10 +99,11 @@ class SkillContractTests(unittest.TestCase):
     def test_video_director_routes_voice_prepare_once(self):
         """Catches duplicate or absent voice routing in the one-action coordinator."""
         text = (ROOT / "skills/video-director/SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
 
         self.assertEqual(1, text.count("`voice.prepare` → `voiceover-producer`"))
-        self.assertIn("Do not generate media", text)
-        self.assertIn("never synthesizes, imports, or analyzes audio", text)
+        self.assertIn("Do not generate media", normalized)
+        self.assertIn("never synthesizes, imports, or analyzes audio", normalized)
 
     def test_timeline_assembler_owns_secondary_caption_and_slice_routes(self):
         """Catches accepted capabilities with no declared child-skill route."""
@@ -251,15 +252,16 @@ class SkillContractTests(unittest.TestCase):
         )
         for worker in workers:
             text = (ROOT / "skills" / worker / "SKILL.md").read_text(encoding="utf-8")
+            normalized = " ".join(text.split())
             with self.subTest(worker=worker):
-                self.assertIn("isolated child agent only", text)
-                self.assertIn("one exact `scope_identity`", text)
-                self.assertIn("must not crawl the project", text)
-                self.assertRegex(
-                    text, r"must not crawl the project or discover neighboring\s+scenes"
+                self.assertIn("isolated child agent only", normalized)
+                self.assertIn("one exact `scope_identity`", normalized)
+                self.assertIn(
+                    "must not crawl the project or discover neighboring scenes",
+                    normalized,
                 )
-                self.assertIn("visual_media_handoff", text)
-                self.assertIn("visual-media-task-context.schema.json", text)
+                self.assertIn("visual_media_handoff", normalized)
+                self.assertIn("scripts/validate_task_packet.py build", normalized)
 
     def test_visual_adapters_are_limited_to_the_isolated_child_boundary(self):
         """Catches primary-context routing gaining a visual adapter execution path."""
@@ -384,11 +386,12 @@ class SkillContractTests(unittest.TestCase):
     def test_director_routes_one_ready_capability_and_stops_on_unsafe_state(self):
         """Catches a coordinator fan-out, media generation, or unreconciled dispatch."""
         text = (ROOT / "skills/video-director/SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
 
         for skill, capability in EXPECTED.items():
             self.assertIn(f"`{capability}` → `{skill}`", text)
         self.assertIn("one action slice", text)
-        self.assertIn("Do not generate media", text)
+        self.assertIn("Do not generate media", normalized)
         self.assertIn("more than one contradictory task", text)
         self.assertIn("approval is missing", text)
         self.assertIn("does not match event replay", text)

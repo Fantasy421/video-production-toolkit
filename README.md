@@ -2,7 +2,14 @@
 
 一个面向中文口播与教程类知识视频的 Codex 插件。它把脚本、真实配音时序、视觉方案、分镜、素材生产、时间线装配、结构校验和审阅拆成可恢复、可审批、可追踪的工作流。
 
-当前版本：`0.2.0`
+当前版本：`0.3.0`
+
+### 0.3.0 重点
+
+- 通过确定性 Python 校验器把完整任务合同投影为不超过 8 KiB 的 compact task packet。
+- 生产以同章节连续 4–6 镜为常规批次，每批使用干净子代理上下文。
+- 全片真实配音时序、关键词和场景时序冻结后才允许生产。
+- 时长、A/V、黑帧、cue 顺序和 JSON 由批量脚本检查，模型只接收紧凑失败摘要。
 
 ## 主要能力
 
@@ -58,7 +65,7 @@
 | `voiceover-producer` | 准备上传配音或已批准的 ChatCut TTS，并发布真实时长 |
 | `visual-system-designer` | 定义 Style Pack、Layout Pack 和低成本方向预览 |
 | `storyboard-director` | 生成视觉编排与不可变 Scene Contract |
-| `scene-producer` | 按单个合同生产场景或视觉素材 |
+| `scene-producer` | 按同章节 4–6 镜的精确合同批次生产场景或视觉素材 |
 | `motion-director` | 选择动效预览，并委派已批准的可编辑动效生产 |
 | `timeline-assembler` | 装配配音、字幕、素材与动效，不重新设计 |
 | `structural-validator` | 执行客观结构校验，不做主观审美判断 |

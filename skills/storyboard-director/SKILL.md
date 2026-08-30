@@ -24,6 +24,12 @@ Scene Contract must name its exact `timed_semantic_beats_id`,
 `scene_timing_contracts_id`, and `beat_ids`; a `voice_timing_id` alone is a
 legacy recovery projection and MUST NOT be authored for new work.
 
+Freeze the full film before production: every approved keyword anchor, real
+voice time, timed Beat, scene assignment, and scene time window must be current
+and covered by one passed compact timing validation. Only then emit all scene
+contracts and the deterministic chapter-batch metadata; never alternate
+per-scene analysis and production.
+
 Visual-media boundary: visual execution is isolated child agent only. A child
 uses one claimed immutable envelope, one exact `scope_identity`, and its exact
 Artifact allowlist; it must not crawl the project or discover neighboring
@@ -45,9 +51,11 @@ metadata-only contract. Stop for a missing Visual direction approval and return
 storyboard and cost artifact, then return `waiting_user` to request Storyboard
 and cost approval; do not require that approval before producing its request.
 
-Follow `../../references/schemas/task-envelope.schema.json`,
-`../../references/schemas/task-result.schema.json`,
-`../../references/policies/decision-gates.md`, and
-`../../references/policies/visual-carriers.md`.
-Follow `../../references/schemas/visual-media-task-context.schema.json` and
-`../../references/policies/visual-media-isolation.md` for visual execution.
+## Deterministic contract boundary
+
+Run `python3 scripts/validate_task_packet.py build <envelope.json>` before
+reasoning. Read only the emitted packet and declared metadata; do not open
+common Schemas, policy bodies, narration arrays, or media. Return no more than
+eight checks and warnings, then run
+`python3 scripts/validate_task_packet.py result <result.json>`. Runtime timing,
+approval, carrier, and visual-isolation validators remain authoritative.

@@ -50,10 +50,12 @@ Stopping conditions: do not generate unrelated media, fan out a shot, or use an
 undeclared adapter. Stop when either operation lacks its stated approval and
 return `waiting_user`.
 
-Follow `../../references/schemas/task-envelope.schema.json`,
-`../../references/schemas/task-result.schema.json`,
-`../../references/policies/decision-gates.md`,
-`../../references/policies/visual-carriers.md`, and
-`../../references/policies/retry.md`,
-`../../references/schemas/visual-media-task-context.schema.json`, and
-`../../references/policies/visual-media-isolation.md`.
+## Deterministic contract boundary
+
+Run `python3 scripts/validate_task_packet.py build <envelope.json>` before
+reasoning. Use a fresh child context for each declared chapter batch; never
+continue prior batch history. Read only the emitted packet and declared
+Artifact IDs, not common Schemas or policy bodies. Return no more than eight
+checks and warnings, then run
+`python3 scripts/validate_task_packet.py result <result.json>`. Runtime approval,
+retry, timing, carrier, and visual-isolation validators remain authoritative.

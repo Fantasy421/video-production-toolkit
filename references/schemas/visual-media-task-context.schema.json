@@ -18,6 +18,7 @@
         "kind": {
           "enum": [
             "scene-contract",
+            "scene-batch",
             "character-asset-batch",
             "review-batch"
           ]
@@ -25,6 +26,15 @@
         "id": {}
       },
       "allOf": [
+        {
+          "if": {
+            "properties": {"kind": {"const": "scene-batch"}},
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": {"id": {"$ref": "#/$defs/sceneBatchIds"}}
+          }
+        },
         {
           "if": {
             "properties": {
@@ -97,6 +107,13 @@
       "uniqueItems": true,
       "minItems": 1,
       "maxItems": 8
+    },
+    "sceneBatchIds": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/safeId"},
+      "uniqueItems": true,
+      "minItems": 1,
+      "maxItems": 6
     }
   }
 }

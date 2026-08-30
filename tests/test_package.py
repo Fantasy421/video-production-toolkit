@@ -366,6 +366,7 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(
             [
                 "scene-contract",
+                "scene-batch",
                 "character-asset-batch",
                 "review-batch",
             ],
@@ -1053,8 +1054,8 @@ class PackageTests(unittest.TestCase):
             (ROOT / ".codex-plugin/plugin.json").read_text(encoding="utf-8")
         )
 
-        self.assertEqual("0.2.0", manifest["version"])
-        self.assertEqual("0.2.0", package_validation.PLUGIN_VERSION)
+        self.assertEqual("0.3.0", manifest["version"])
+        self.assertEqual("0.3.0", package_validation.PLUGIN_VERSION)
         self.assertRegex(
             manifest.get("release_fingerprint", ""), r"^sha256:[0-9a-f]{64}$"
         )
@@ -1339,14 +1340,14 @@ class PackageTests(unittest.TestCase):
         cases = (
             (
                 "single-id",
-                lambda schema: schema["properties"]["scope_identity"]["allOf"][0][
+                lambda schema: schema["properties"]["scope_identity"]["allOf"][1][
                     "then"
                 ]["properties"].update({"id": {}}),
                 "invalid:visual-media-scope-mapping",
             ),
             (
                 "review-id-list",
-                lambda schema: schema["properties"]["scope_identity"]["allOf"][1][
+                lambda schema: schema["properties"]["scope_identity"]["allOf"][2][
                     "then"
                 ]["properties"].update({"id": {"$ref": "#/$defs/safeId"}}),
                 "invalid:visual-media-scope-mapping",

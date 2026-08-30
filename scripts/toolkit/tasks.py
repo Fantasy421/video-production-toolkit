@@ -1174,6 +1174,18 @@ def _validate_current_visual_operation_subset(envelope: dict[str, Any]) -> None:
 
 
 def _validate_result(result: dict[str, Any]) -> None:
+    _validate_result_shape(result)
+    from scripts.toolkit.task_packets import validate_task_result_summary
+
+    validate_task_result_summary(result)
+
+
+def _validate_persisted_result(result: dict[str, Any]) -> None:
+    """Keep historical task results readable without granting new authority."""
+    _validate_result_shape(result)
+
+
+def _validate_result_shape(result: dict[str, Any]) -> None:
     if not isinstance(result, dict):
         raise ValueError("task result must be an object")
     _reject_unknown_keys(result, RESULT_KEYS, "task result")

@@ -71,8 +71,13 @@ Stopping conditions: do not mutate the timeline, repair source media, or clear
 a failed validation. Stop when an input is missing, stale, or malformed, and
 return `blocked`; leave subjective findings for the review package.
 
-Follow `../../references/schemas/task-envelope.schema.json`,
-`../../references/schemas/task-result.schema.json`, and
-`../../references/schemas/visual-media-task-context.schema.json`,
-`../../references/policies/decision-gates.md`, and
-`../../references/policies/visual-media-isolation.md`.
+## Deterministic contract boundary
+
+Run `python3 scripts/validate_task_packet.py build <envelope.json>` before
+reasoning. For batch media checks run
+`python3 scripts/validate_media_batch.py <project> <manifest.json>` once; relay
+only stable issue counts and at most three Scene IDs per code. Do not load
+common Schemas, full diagnostics, or prior batch histories. Return no more than
+eight checks and warnings, then run
+`python3 scripts/validate_task_packet.py result <result.json>`. Runtime approval,
+timing, path, immutable-state, and visual-isolation checks remain authoritative.
